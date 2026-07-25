@@ -1,0 +1,13 @@
+{
+  "name": "server",
+  "type": "module",
+  "scripts": { "dev": "node --watch index.js", "start": "node index.js" },
+  "dependencies": {
+    "express": "^4.19.0",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.0",
+    "helmet": "^8.0.0",
+    "express-rate-limit": "^7.4.0",
+    "@simplewebauthn/server": "^13.1.0"
+  }
+}

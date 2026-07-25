@@ -1,0 +1,22 @@
+node_modules/
+
+# secrets — never commit
+.env
+.env.*
+!.env.example
+server/certs/
+*.pem
+*.key
+
+# user data — never commit
+server/users.json
+server/data.json
+server/data.json.tmp
+server/data-*.json
+server/ai-usage.json
+*.json.tmp
+
+# build output / scratch
+client/dist/
+*.tgz
+__smoke*

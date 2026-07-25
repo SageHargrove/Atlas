@@ -1,0 +1,12 @@
+{
+  "name": "cache-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w client",
+    "start": "npm run start -w server"
+  },
+  "workspaces": ["server", "client"],
+  "devDependencies": { "concurrently": "^9.0.0" }
+}
