@@ -136,6 +136,54 @@ sudo crontab -e
 Restore with: `openssl enc -d -aes-256-cbc -pbkdf2 -pass file:/root/.cache-backup-pass -in cache-backup-N.tar.gz.enc | tar xzf - -C /restore/dir`.
 For off-box safety, `scp` the `.enc` files somewhere else periodically.
 
+## 6b. Connecting real banks (Teller go-live)
+
+Sandbox uses fake data and needs no certificates. Real banks need a Teller
+application plus a client certificate (mutual TLS).
+
+**1. Create the Teller app** — sign up at <https://teller.io>, then in the
+dashboard create an application. Note the **Application ID** (`app_...`).
+
+**2. Download the certificate + private key.** In the Teller dashboard under
+your application's **Certificates** section, generate and download:
+`certificate.pem` and `private_key.pem`. These are the credentials that prove
+your server is you — treat them like passwords.
+
+**3. Put them OUTSIDE the repo.** The repo directory gets replaced on every code
+update, which would delete anything stored inside it:
+```
+mkdir -p /home/ubuntu/cache-secrets && chmod 700 /home/ubuntu/cache-secrets
+# from your laptop:
+scp -i <your-key> certificate.pem private_key.pem ubuntu@<server-ip>:/home/ubuntu/cache-secrets/
+# back on the server:
+chmod 600 /home/ubuntu/cache-secrets/*.pem
+```
+
+**4. Point `.env` at them (absolute paths) and switch environment:**
+```
+TELLER_APP_ID=app_xxxxxxxxxxxx
+TELLER_ENV=development
+TELLER_CERT_PATH=/home/ubuntu/cache-secrets/certificate.pem
+TELLER_KEY_PATH=/home/ubuntu/cache-secrets/private_key.pem
+```
+`development` = real banks, free tier (limited enrollments). `production`
+requires Teller's paid plan. Then `sudo systemctl restart cache`.
+
+**5. Connect a bank** — open the app → Accounts → *Connect a bank* → pick your
+institution → log in with your real bank credentials. Those credentials go
+directly to Teller and never touch this server; Cache only ever receives an
+access token, which it encrypts before storing.
+
+**Not every institution is supported** (Teller covers most major banks; many
+brokerages like Fidelity are not). For anything unsupported, use the CSV import
+under Budget — download the CSV from the institution's site and import it. That
+path involves no stored credentials at all.
+
+**Rotation:** if a cert is ever exposed, revoke it in the Teller dashboard,
+download a new pair, replace the files, and restart. If you change
+`SESSION_SECRET`, every stored bank token becomes undecryptable and each user
+must reconnect their banks.
+
 ## 7. Harden the VM (SSH + fail2ban)
 Cache's app-level rate limiting stops password/passkey brute-force *in the app*;
 these protect the box itself.
