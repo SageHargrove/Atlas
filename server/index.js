@@ -73,6 +73,7 @@ const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHea
 const aiLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 40, standardHeaders: true, legacyHeaders: false, message: { error: "AI rate limit reached — try again shortly." } });
 /* each sync fans out to many bank API calls — keep it from hammering Teller */
 const syncLimiter = rateLimit({ windowMs: 5 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false, message: { error: "Too many syncs — wait a few minutes." } });
+const quoteLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false, message: { error: "Quote rate limit reached — try again shortly." } });
 
 /* ---------------- helpers ---------------- */
 const readJSON = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } };
@@ -246,9 +247,27 @@ app.post("/api/login", authLimiter, async (req, res) => {
   if (!user) { hashPw("x", "deadbeef"); return bad(); } // constant-ish time
   const h = hashPw(String(req.body.password || ""), user.salt);
   try { if (!crypto.timingSafeEqual(Buffer.from(h), Buffer.from(user.hash))) return bad(); } catch { return bad(); }
+  /* passkey-only mode: even a CORRECT password is refused (checked after verification
+     so this path leaks nothing an attacker couldn't learn from a normal wrong-password try) */
+  if (user.passwordDisabled) { acctOk(u); return res.status(403).json({ error: "Password sign-in is turned off for this account — use your passkey, or a recovery code." }); }
   acctOk(u);
   await issue(res, user, req, "password");
   res.json({ ok: true, username: u });
+});
+
+/* passkey-only mode: turning the password OFF requires a passkey + unused recovery
+   codes on file, or one lost device would mean permanent lockout */
+app.post("/api/security/password-login", auth, async (req, res) => {
+  const enable = !!req.body.enabled;
+  if (!enable) {
+    if (!(req.user.credentials || []).length) return res.status(400).json({ error: "Add a passkey first." });
+    if (!(req.user.recovery || []).some((r) => !r.used)) return res.status(400).json({ error: "Generate recovery codes first — they're your backup if the passkey is lost." });
+  }
+  await updateUsers((all) => {
+    const u = all.find((x) => x.id === req.user.id);
+    if (u) u.passwordDisabled = !enable;
+  });
+  res.json({ ok: true, passwordDisabled: !enable });
 });
 
 app.post("/api/logout", (req, res) => {
@@ -401,6 +420,7 @@ app.get("/api/security", auth, (req, res) => {
     logins: (u.logins || []).slice(0, 15),
     passkeys: (u.credentials || []).map((c) => ({ id: c.id, name: c.name, added: c.added })),
     recoveryRemaining: (u.recovery || []).filter((r) => !r.used).length,
+    passwordDisabled: !!u.passwordDisabled,
   });
 });
 app.post("/api/logout-all", auth, async (req, res) => {
@@ -434,10 +454,12 @@ app.get("/api/data", auth, (req, res) => {
   let d;
   try { d = readData(req.userId); } // corrupted file → error, never a silent empty state
   catch (e) { console.error("data read failed for", req.userId, e.message); return res.status(500).json({ error: "Could not read your data file" }); }
-  if (!Object.keys(d).length) return res.json({ data: null }); // brand-new user
+  const rev = d._rev || 0;
+  if (!Object.keys(d).length) return res.json({ data: null, rev: 0 }); // brand-new user
   /* bank access tokens never leave the server — strip them from the browser payload */
   if (Array.isArray(d.teller)) d.teller = d.teller.map(({ accessToken, ...rest }) => rest);
-  res.json({ data: d });
+  delete d._rev; // rev travels beside the data, not inside it
+  res.json({ data: d, rev });
 });
 app.put("/api/data", auth, async (req, res) => {
   const d = req.body?.data;
@@ -446,17 +468,52 @@ app.put("/api/data", auth, async (req, res) => {
   for (const k of ["accounts", "txns", "cats", "goals", "recurring", "purchases", "history"])
     if (k in d && !Array.isArray(d[k])) return res.status(400).json({ error: "Invalid data payload (" + k + ")" });
   if (d.settings != null && (typeof d.settings !== "object" || Array.isArray(d.settings))) return res.status(400).json({ error: "Invalid data payload (settings)" });
+  if (d.invest != null && (typeof d.invest !== "object" || Array.isArray(d.invest))) return res.status(400).json({ error: "Invalid data payload (invest)" });
   try {
+    let conflictRev = null, newRev = 0;
     await withLock("data:" + req.userId, () => {
       /* bank enrollments are server-authoritative — the browser can't add, alter, or erase
          them via autosave. If the existing file is corrupt, readData throws and we abort
          rather than overwriting it with a token-less copy. */
       const existing = readData(req.userId);
+      /* optimistic concurrency: a save based on a stale revision (another device wrote
+         since this client last loaded) is refused instead of silently clobbering it */
+      const cur = existing._rev || 0;
+      if ((Number(req.body.rev) || 0) !== cur) { conflictRev = cur; return; }
       d.teller = existing.teller || [];
+      d._rev = newRev = cur + 1;
       writeData(req.userId, d);
     });
-    res.json({ ok: true });
+    if (conflictRev !== null) return res.status(409).json({ error: "Saved from another device since you loaded — refreshing.", rev: conflictRev });
+    res.json({ ok: true, rev: newRev });
   } catch (e) { console.error("data write failed for", req.userId, e.message); res.status(500).json({ error: "Could not save — your existing data was left untouched" }); }
+});
+
+/* ---------------- market quotes (Invest tab) ----------------
+   Server-side proxy (CSP blocks third-party calls from the browser) with a short
+   cache so a page of tickers doesn't hammer the upstream. Prices are delayed/
+   informational — this is a tracker, not a trading terminal. */
+const quoteCache = new Map(); // SYMBOL -> { q, ts }
+const QUOTE_TTL = 5 * 60 * 1000;
+async function fetchQuote(sym) {
+  const hit = quoteCache.get(sym);
+  if (hit && Date.now() - hit.ts < QUOTE_TTL) return hit.q;
+  const r = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?range=1d&interval=1d",
+    { headers: { "user-agent": "Mozilla/5.0 (compatible; Atlas-selfhosted)" }, signal: AbortSignal.timeout(8000) });
+  const j = await r.json();
+  const m = j?.chart?.result?.[0]?.meta;
+  if (!m || !Number.isFinite(m.regularMarketPrice)) throw new Error("no data for " + sym);
+  const q = { symbol: sym, name: (m.shortName || sym).slice(0, 40), price: m.regularMarketPrice, prevClose: Number.isFinite(m.chartPreviousClose) ? m.chartPreviousClose : null };
+  quoteCache.set(sym, { q, ts: Date.now() });
+  return q;
+}
+app.get("/api/quotes", auth, quoteLimiter, async (req, res) => {
+  const syms = [...new Set(String(req.query.symbols || "").toUpperCase().split(",").map((s) => s.trim())
+    .filter((s) => /^[A-Z0-9.^=-]{1,12}$/.test(s)))].slice(0, 30);
+  if (!syms.length) return res.status(400).json({ error: "No valid symbols" });
+  const out = {};
+  await Promise.all(syms.map(async (s) => { try { out[s] = await fetchQuote(s); } catch { out[s] = null; } }));
+  res.json({ quotes: out });
 });
 
 /* ---------------- AI proxy ---------------- */
@@ -560,6 +617,7 @@ app.post("/api/teller/enroll", auth, async (req, res) => {
         id: crypto.randomUUID(), accessToken: encSecret(token), // encrypted at rest
         institution: String(req.body.institution || "Bank").slice(0, 60), added: new Date().toISOString().slice(0, 10),
       });
+      d._rev = (d._rev || 0) + 1; // server-side writes advance the revision too
       writeData(req.userId, d);
     });
     res.json({ ok: true });
@@ -635,6 +693,7 @@ app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
       d.history.push({ date: today, assets, debts, nw: assets - debts });
       d.history.sort((x, y) => x.date.localeCompare(y.date));
       d.lastSync = new Date().toISOString();
+      d._rev = (d._rev || 0) + 1;
       writeData(req.userId, d);
     });
     res.json({ ok: true, newTx, updAcc });
@@ -646,6 +705,7 @@ app.delete("/api/teller/:id", auth, async (req, res) => {
     await withLock("data:" + req.userId, () => {
       const d = readData(req.userId);
       d.teller = (d.teller || []).filter((x) => x.id !== req.params.id);
+      d._rev = (d._rev || 0) + 1;
       writeData(req.userId, d);
     });
     res.json({ ok: true });
