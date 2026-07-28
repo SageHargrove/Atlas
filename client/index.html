@@ -3,10 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Cache — self-hosted personal finance: net worth, budgets, goals, projections" />
-    <meta name="theme-color" content="#0c1016" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💰</text></svg>" />
-    <title>Cache</title>
+    <meta name="description" content="Atlas — self-hosted personal finance: net worth, budgets, goals, investments, projections" />
+    <meta name="theme-color" content="#070b14" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><defs><linearGradient id='g' x1='0' y1='48' x2='48' y2='0'><stop offset='0' stop-color='%232a78d6'/><stop offset='1' stop-color='%2334d399'/></linearGradient></defs><rect x='1' y='1' width='46' height='46' rx='14' fill='url(%23g)'/><path d='M12 33 L24 13 L36 33' stroke='white' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/><path d='M17.5 26.5 h13' stroke='white' stroke-width='4.5' stroke-linecap='round'/></svg>" />
+    <title>Atlas</title>
+    <style>
+      /* the app paints its own background — without this, default body margins leave a
+         light frame around the dark UI */
+      html, body { margin: 0; padding: 0; background: #070b14; color-scheme: dark; }
+      #root { min-height: 100vh; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 
 /* ------------------------------------------------------ */
@@ -37,6 +37,7 @@ const DEFAULTS = {
   goals: [],
   recurring: [],
   purchases: [],
+  invest: { holdings: [], watch: [] },
   settings: { theme: "dark", incomeMonthly: 0, efMonths: 6, expReturn: 7 },
 };
 
@@ -112,6 +113,8 @@ function extractJSON(text) {
 
 const fmt = (n) =>
   n == null || isNaN(n) ? "—" : (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString();
+const fmt2 = (n) =>
+  n == null || isNaN(n) ? "—" : (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtK = (n) => (Math.abs(n) >= 1000 ? "$" + (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : "$" + Math.round(n));
 const pct = (n) => (isNaN(n) || !isFinite(n) ? "—" : Math.round(n) + "%");
 
@@ -160,77 +163,170 @@ async function callClaude(prompt, useSearch) {
 }
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Spline+Sans:wght@400;500;600&family=Spline+Sans+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Spline+Sans:wght@400;500;600&family=Spline+Sans+Mono:wght@400;500;600&display=swap');
 .fh * { box-sizing:border-box; margin:0; }
-.fh { min-height:100vh; font-family:'Spline Sans',system-ui,sans-serif; background:var(--bg); color:var(--text); padding-bottom:80px; font-size:14.5px; line-height:1.45; transition:background .25s; }
-.fh[data-theme="dark"]{ --bg:#0c1016; --panel:#121821; --panel2:#171f2a; --line:#20293a; --line2:#2b394e;
-  --text:#e4ebf3; --muted:#8fa3ba; --faint:#5c6d82;
-  --acc:#57a4e8; --acc-soft:rgba(87,164,232,.13); --acc-ink:#06111c;
-  --gold:#dfc06a; --gold-soft:rgba(223,192,106,.12); --red:#e07a6b; --red-soft:rgba(224,122,107,.12); --blue:#7fb4e6; --blue-soft:rgba(127,180,230,.13);
-  --shadow:0 10px 30px rgba(0,0,0,.45); }
-.fh[data-theme="light"]{ --bg:#f0f3f7; --panel:#ffffff; --panel2:#f4f7fb; --line:#dbe3ec; --line2:#c3d0de;
-  --text:#16222f; --muted:#54687e; --faint:#8697aa;
-  --acc:#1f6bb0; --acc-soft:rgba(31,107,176,.11); --acc-ink:#ffffff;
-  --gold:#96771f; --gold-soft:rgba(150,119,31,.11); --red:#bd5348; --red-soft:rgba(189,83,72,.1); --blue:#2f6f9f; --blue-soft:rgba(47,111,159,.11);
-  --shadow:0 8px 24px rgba(22,34,47,.12); }
-.fh .wrap{ max-width:980px; margin:0 auto; padding:0 20px; }
-.fh header{ padding:24px 0 0; background:var(--panel); border-bottom:1px solid var(--line); }
-.fh .hrow{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }
-.fh h1{ font-family:'Fraunces',serif; font-weight:600; font-size:25px; }
+.fh { min-height:100vh; font-family:'Spline Sans',system-ui,sans-serif; color:var(--text); padding-bottom:90px; font-size:15px; line-height:1.5;
+  background:
+    radial-gradient(1100px 480px at 18% -8%, var(--glow1), transparent 60%),
+    radial-gradient(900px 460px at 92% -4%, var(--glow2), transparent 55%),
+    var(--bg); }
+.fh[data-theme="dark"]{ color-scheme:dark;
+  --bg:#070b14; --panel:#0e1524; --panel2:#141d31; --line:#1b2740; --line2:#2b3c5c;
+  --text:#e8eef7; --muted:#8b9bb4; --faint:#5d6d87;
+  --acc:#3987e5; --acc-soft:rgba(57,135,229,.14); --acc-ink:#ffffff;
+  --up:#3ddba0; --up-soft:rgba(61,219,160,.11);
+  --red:#ef7d7d; --red-soft:rgba(239,125,125,.11);
+  --gold:#e0b154; --gold-soft:rgba(224,177,84,.12);
+  --blue:#3987e5; --blue-soft:rgba(57,135,229,.14);
+  --glow1:rgba(42,120,214,.09); --glow2:rgba(52,211,153,.05);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+  --shadow:0 12px 34px rgba(2,6,16,.5); }
+.fh[data-theme="light"]{ color-scheme:light;
+  --bg:#f2f5f9; --panel:#ffffff; --panel2:#f6f8fc; --line:#e2e8f1; --line2:#c6d2e2;
+  --text:#101827; --muted:#526176; --faint:#8794a8;
+  --acc:#2a78d6; --acc-soft:rgba(42,120,214,.1); --acc-ink:#ffffff;
+  --up:#0f8a5f; --up-soft:rgba(15,138,95,.09);
+  --red:#c94747; --red-soft:rgba(201,71,71,.08);
+  --gold:#8a6a12; --gold-soft:rgba(138,106,18,.1);
+  --blue:#2a78d6; --blue-soft:rgba(42,120,214,.1);
+  --glow1:rgba(42,120,214,.06); --glow2:rgba(15,138,95,.04);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+  --shadow:0 10px 28px rgba(22,34,47,.13); }
+.fh .wrap{ max-width:1240px; margin:0 auto; padding:0 24px; }
+.fh header{ position:sticky; top:0; z-index:40; background:color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border-bottom:1px solid var(--line); }
+.fh .hrow{ display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:12px 0; }
+.fh .brand{ display:flex; align-items:center; gap:10px; }
+.fh h1{ font-family:'Sora',sans-serif; font-weight:700; font-size:20px; letter-spacing:-.02em; }
 .fh .sub{ color:var(--muted); font-size:13px; margin-top:2px; }
-.fh .tabs{ display:flex; gap:2px; margin-top:16px; }
-.fh .tab{ font:inherit; font-weight:500; background:none; border:none; border-bottom:2px solid transparent; color:var(--muted); padding:9px 14px; cursor:pointer; font-size:14px; }
+.fh .tabs{ display:flex; gap:2px; background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:3px; overflow-x:auto; max-width:100%; }
+.fh .tab{ font:inherit; font-weight:500; background:none; border:none; border-radius:9px; color:var(--muted); padding:7px 15px; cursor:pointer; font-size:13.5px; white-space:nowrap; transition:color .15s, background .15s; }
 .fh .tab:hover{ color:var(--text); }
-.fh .tab.on{ color:var(--acc); border-bottom-color:var(--acc); font-weight:600; }
-.fh .btn{ font:inherit; font-weight:500; cursor:pointer; border-radius:9px; border:1px solid var(--line2); background:var(--panel2); color:var(--text); padding:8px 14px; transition:all .15s; }
+.fh .tab.on{ background:var(--panel); color:var(--text); font-weight:600; box-shadow:0 1px 8px rgba(2,6,16,.35); }
+.fh .btn{ font:inherit; font-weight:500; cursor:pointer; border-radius:10px; border:1px solid var(--line2); background:var(--panel2); color:var(--text); padding:8px 14px; transition:border-color .15s, transform .12s, filter .15s; }
 .fh .btn:hover{ border-color:var(--muted); }
-.fh .btn.primary{ background:var(--acc); border-color:var(--acc); color:var(--acc-ink); font-weight:600; }
-.fh .btn.primary:hover{ filter:brightness(1.06); }
+.fh .btn:active{ transform:translateY(1px); }
+.fh .btn.primary{ background:linear-gradient(135deg, var(--acc), color-mix(in srgb, var(--acc) 72%, #34d399)); border-color:transparent; color:var(--acc-ink); font-weight:600; }
+.fh .btn.primary:hover{ filter:brightness(1.08); }
 .fh .btn.danger{ color:var(--red); border-color:var(--red); background:transparent; }
-.fh .btn.small{ padding:4px 10px; font-size:12.5px; border-radius:7px; }
+.fh .btn.small{ padding:4px 11px; font-size:12.5px; border-radius:8px; }
 .fh .btn:disabled{ opacity:.5; cursor:default; }
-.fh .in, .fh select.in{ font:inherit; width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line2); background:var(--bg); color:var(--text); outline:none; }
+.fh button:focus-visible, .fh .in:focus-visible, .fh a:focus-visible{ outline:2px solid var(--acc); outline-offset:2px; }
+.fh .in, .fh select.in{ font:inherit; width:100%; padding:8px 11px; border-radius:9px; border:1px solid var(--line2); background:var(--bg); color:var(--text); outline:none; transition:border-color .15s; }
 .fh .in:focus{ border-color:var(--acc); }
-.fh label.f{ display:block; font-size:11.5px; font-weight:600; color:var(--muted); margin:12px 0 4px; text-transform:uppercase; letter-spacing:.05em; }
-.fh .card{ background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:16px 18px; margin-top:14px; }
-.fh .card h3{ font-family:'Fraunces',serif; font-weight:600; font-size:16.5px; margin-bottom:4px; }
-.fh .mono{ font-family:'Spline Sans Mono',monospace; }
-.fh .big{ font-family:'Spline Sans Mono',monospace; font-size:34px; font-weight:600; letter-spacing:-.01em; }
-.fh .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-.fh .grid3{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
-.fh .grid4{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
-.fh .tag{ display:inline-block; font-size:10px; padding:1px 6px; border-radius:5px; background:var(--panel2); color:var(--faint); border:1px solid var(--line); }
+.fh label.f{ display:block; font-size:11.5px; font-weight:600; color:var(--muted); margin:12px 0 4px; text-transform:uppercase; letter-spacing:.06em; }
+.fh .card{ background:linear-gradient(180deg, var(--panel2) 0%, var(--panel) 78%); border:1px solid var(--line); border-radius:16px; padding:18px 20px; margin-top:16px; box-shadow:inset 0 1px 0 rgba(255,255,255,.025), 0 6px 20px rgba(2,6,16,.25); animation:rise .38s cubic-bezier(.2,.7,.3,1) both; transition:border-color .2s; }
+.fh .card:hover{ border-color:var(--line2); }
+.fh .card h3{ font-family:'Sora',sans-serif; font-weight:600; font-size:15px; margin-bottom:4px; letter-spacing:-.01em; }
+@keyframes rise{ from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:none; } }
+.fh .mono{ font-family:'Spline Sans Mono',monospace; font-variant-numeric:tabular-nums; }
+.fh .big{ font-family:'Spline Sans Mono',monospace; font-size:34px; font-weight:600; letter-spacing:-.015em; font-variant-numeric:tabular-nums; }
+.fh .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.fh .grid3{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+.fh .grid4{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+.fh .grid2 > .card, .fh .grid3 > .card, .fh .grid4 > .card{ margin-top:0; }
+.fh .tag{ display:inline-block; font-size:10px; padding:1.5px 7px; border-radius:6px; background:var(--panel2); color:var(--faint); border:1px solid var(--line); vertical-align:1px; }
 .fh .catbar{ display:flex; align-items:center; gap:10px; padding:4px 0; font-size:13px; }
 .fh .catbar .nm{ width:110px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .fh .catbar .tr{ flex:1; height:9px; border-radius:5px; background:var(--panel2); overflow:hidden; }
 .fh .catbar .tr i{ display:block; height:100%; background:var(--acc); border-radius:5px; }
 .fh .catbar .amt{ width:70px; text-align:right; font-family:'Spline Sans Mono',monospace; font-size:12.5px; }
-.fh .kv{ display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+.fh .kv{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
 .fh .kv:last-child{ border-bottom:none; }
 .fh .kv .k{ color:var(--muted); }
-.fh .bar{ height:9px; border-radius:5px; background:var(--panel2); overflow:hidden; margin-top:6px; }
-.fh .bar i{ display:block; height:100%; background:var(--acc); border-radius:5px; transition:width .4s; }
+.fh .bar{ height:10px; border-radius:6px; background:var(--panel2); overflow:hidden; margin-top:6px; }
+.fh .bar i{ display:block; height:100%; background:linear-gradient(90deg, var(--acc), color-mix(in srgb, var(--acc) 65%, #34d399)); border-radius:6px; transition:width .5s cubic-bezier(.2,.7,.3,1); }
 .fh .bar i.over{ background:var(--red); }
 .fh .note{ font-size:12.5px; color:var(--muted); margin-top:8px; }
 .fh .err{ color:var(--red); font-size:13px; margin-top:8px; }
-.fh .good{ color:var(--acc); font-weight:600; }
+.fh .good{ color:var(--up); font-weight:600; }
 .fh .bad{ color:var(--red); font-weight:600; }
 .fh .warn{ color:var(--gold); font-weight:600; }
 .fh .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.fh .trow{ display:grid; grid-template-columns:92px 1fr .7fr .6fr .9fr 1.1fr 30px; gap:7px; align-items:center; padding:5px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+.fh .trow{ display:grid; grid-template-columns:92px 1fr .7fr .6fr .9fr 1.1fr 30px; gap:7px; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
 .fh .trow:last-child{ border-bottom:none; }
-.fh .x{ background:none; border:none; color:var(--faint); cursor:pointer; font-size:15px; padding:2px; }
+.fh .irow{ display:grid; grid-template-columns:1.5fr .7fr .9fr .9fr 1fr 1fr 30px; gap:8px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+.fh .irow:last-child{ border-bottom:none; }
+.fh .x{ background:none; border:none; color:var(--faint); cursor:pointer; font-size:15px; padding:2px; border-radius:6px; }
 .fh .x:hover{ color:var(--red); }
-.fh .ov{ position:fixed; inset:0; background:rgba(8,12,9,.6); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; z-index:50; overflow-y:auto; backdrop-filter:blur(3px); }
-.fh .modal{ background:var(--panel); border:1px solid var(--line2); border-radius:16px; width:100%; max-width:520px; padding:22px 24px; box-shadow:var(--shadow); }
-.fh .modal h2{ font-family:'Fraunces',serif; font-weight:600; font-size:19px; }
+.fh .ov{ position:fixed; inset:0; background:rgba(4,7,14,.65); display:flex; align-items:flex-start; justify-content:center; padding:44px 16px; z-index:50; overflow-y:auto; backdrop-filter:blur(5px); animation:fadeIn .2s ease both; }
+@keyframes fadeIn{ from{ opacity:0; } to{ opacity:1; } }
+.fh .modal{ background:var(--panel); border:1px solid var(--line2); border-radius:20px; width:100%; max-width:540px; padding:24px 26px; box-shadow:var(--shadow); animation:rise .3s cubic-bezier(.2,.7,.3,1) both; }
+.fh .modal h2{ font-family:'Sora',sans-serif; font-weight:600; font-size:18px; letter-spacing:-.01em; }
+.fh .modal h3{ font-family:'Sora',sans-serif; font-weight:600; font-size:14.5px; margin-top:18px; }
 .fh .mh{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
 .fh .mrow{ display:flex; gap:8px; justify-content:flex-end; margin-top:18px; flex-wrap:wrap; }
-.fh .aiout{ background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:13px 15px; margin-top:12px; white-space:pre-wrap; font-size:13.5px; line-height:1.55; }
-@media (max-width:720px){ .fh .grid2,.fh .grid3{ grid-template-columns:1fr; } .fh .grid4{ grid-template-columns:1fr 1fr; } .fh .trow{ grid-template-columns:80px 1fr .7fr .6fr 30px; } .fh .trow .tnote,.fh .trow .tacct{ display:none; } }
+.fh .aiout{ background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-top:12px; white-space:pre-wrap; font-size:13.5px; line-height:1.6; }
+.fh .chip{ display:inline-flex; align-items:center; gap:7px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:5px 10px; font-size:12.5px; }
+.fh .dot{ width:9px; height:9px; border-radius:3px; flex-shrink:0; }
+.fh .glow .recharts-line-curve{ filter:drop-shadow(0 0 6px color-mix(in srgb, var(--up) 55%, transparent)); }
+.fh .banner{ border:1px solid var(--acc); background:var(--acc-soft); border-radius:12px; padding:10px 14px; margin-top:12px; font-size:13px; animation:rise .3s ease both; }
+@media (max-width:760px){
+  .fh .grid2,.fh .grid3{ grid-template-columns:1fr; }
+  .fh .grid4{ grid-template-columns:1fr 1fr; }
+  .fh .trow{ grid-template-columns:80px 1fr .7fr .6fr 30px; }
+  .fh .trow .tnote,.fh .trow .tacct{ display:none; }
+  .fh .irow{ grid-template-columns:1.4fr .8fr 1fr 30px; }
+  .fh .irow .iday,.fh .irow .igain{ display:none; }
+  .fh .big{ font-size:28px; }
+}
+@media (prefers-reduced-motion: reduce){ .fh *, .fh *::before, .fh *::after{ animation:none !important; transition:none !important; } }
 `;
 
 /* ---------------- shared bits ---------------- */
+
+/* Atlas mark: an A-peak with a rising baseline */
+const Logo = ({ size = 30 }) => (
+  <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="atlas-g" x1="0" y1="48" x2="48" y2="0">
+        <stop offset="0" stopColor="#2a78d6" /><stop offset="1" stopColor="#34d399" />
+      </linearGradient>
+    </defs>
+    <rect x="1" y="1" width="46" height="46" rx="14" fill="url(#atlas-g)" />
+    <path d="M12 33 L24 13 L36 33" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M17.5 26.5 h13" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" />
+  </svg>
+);
+
+/* categorical series colors — validated palette, assigned by entity (stable index), never by rank */
+const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
+const seriesColor = (i) => (i < 0 ? "var(--faint)" : SERIES[i % SERIES.length]);
+
+/* donut + legend rows; data: [{name, value, color}] already sorted for display */
+function Donut({ data, size = 185, centerTop, centerBottom }) {
+  const total = data.reduce((s, x) => s + x.value, 0) || 1;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap" }}>
+      <div style={{ width: size, height: size, position: "relative", flexShrink: 0 }}>
+        <ResponsiveContainer>
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius="64%" outerRadius="100%"
+              paddingAngle={2} stroke="var(--panel)" strokeWidth={2} startAngle={90} endAngle={-270}>
+              {data.map((e, i) => <Cell key={i} fill={e.color} />)}
+            </Pie>
+            <Tooltip formatter={(v, n) => [fmt(v) + " · " + Math.round((v / total) * 100) + "%", n]}
+              contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 10, color: "var(--text)", fontSize: 13 }} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+          {centerTop && <div className="mono" style={{ fontSize: 17, fontWeight: 600 }}>{centerTop}</div>}
+          {centerBottom && <div style={{ fontSize: 11, color: "var(--faint)" }}>{centerBottom}</div>}
+        </div>
+      </div>
+      <div style={{ flex: 1, minWidth: 170 }}>
+        {data.map((e) => (
+          <div key={e.name} className="row" style={{ justifyContent: "space-between", padding: "4px 0", fontSize: 13, flexWrap: "nowrap" }}>
+            <span className="row" style={{ gap: 8, flexWrap: "nowrap", overflow: "hidden" }}>
+              <span className="dot" style={{ background: e.color }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</span>
+            </span>
+            <span className="mono" style={{ fontSize: 12.5, flexShrink: 0 }}>{fmt(e.value)} <span style={{ color: "var(--faint)" }}>{Math.round((e.value / total) * 100)}%</span></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function Modal({ title, onClose, children }) {
   return (
@@ -246,8 +342,8 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-const ChartBox = ({ data, dataKey, xKey, height = 180 }) => (
-  <div style={{ width: "100%", height }}>
+const ChartBox = ({ data, dataKey, xKey, height = 180, color = "var(--up)", glow = true }) => (
+  <div style={{ width: "100%", height }} className={glow ? "glow" : ""}>
     <ResponsiveContainer>
       <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
@@ -255,9 +351,9 @@ const ChartBox = ({ data, dataKey, xKey, height = 180 }) => (
         <YAxis tick={{ fill: "var(--faint)", fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={fmtK} width={52} />
         <Tooltip
           formatter={(v) => fmt(v)}
-          contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 9, color: "var(--text)", fontSize: 13 }}
+          contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 10, color: "var(--text)", fontSize: 13 }}
         />
-        <Line type="monotone" dataKey={dataKey} stroke="var(--acc)" strokeWidth={2.5} dot={{ r: 3, fill: "var(--acc)" }} activeDot={{ r: 4 }} />
+        <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: color }} />
       </LineChart>
     </ResponsiveContainer>
   </div>
@@ -365,6 +461,20 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRem
             </div>}
         <div className="note">Debt balances are entered as positive numbers — they subtract from net worth automatically.</div>
       </div>
+
+      {(() => { /* asset allocation — color follows the asset TYPE's fixed index */
+        const byType = {};
+        d.accounts.filter((a) => !isDebt(a) && Number(a.balance) > 0).forEach((a) => { byType[a.type] = (byType[a.type] || 0) + Number(a.balance); });
+        const rows = Object.entries(byType)
+          .map(([type, value]) => ({ name: type, value: Math.round(value), color: seriesColor(ASSET_TYPES.indexOf(type)) }))
+          .sort((a, b) => b.value - a.value);
+        return rows.length >= 2 ? (
+          <div className="card">
+            <h3>Asset allocation</h3>
+            <div style={{ marginTop: 10 }}><Donut data={rows} centerTop={fmt(assets)} centerBottom="assets" /></div>
+          </div>
+        ) : null;
+      })()}
     </>
   );
 }
@@ -940,6 +1050,24 @@ function SecurityModal({ onClose }) {
       </div>
       {pwMsg && <div className="note" style={{ color: pwMsg.startsWith("Password changed") ? "var(--acc)" : "var(--red)" }}>{pwMsg}</div>}
 
+      <h3>Passkey-only sign-in</h3>
+      <div className="note" style={{ marginTop: 0 }}>
+        {sec?.passwordDisabled
+          ? <span className="good">Password sign-in is OFF</span>
+          : "Turn off password sign-in entirely — then only your passkeys (and recovery codes, as break-glass) can get in. Passwords are the phishable, guessable path; removing them is the single biggest upgrade."}
+        {!sec?.passwordDisabled && <span> Requires at least one passkey and unused recovery codes.</span>}
+      </div>
+      <div className="mrow" style={{ justifyContent: "flex-start" }}>
+        <button className="btn" onClick={async () => {
+          const enabling = !!sec?.passwordDisabled; // toggling back ON
+          if (!enabling && !confirm("Turn OFF password sign-in? You'll only be able to sign in with a passkey or recovery code.")) return;
+          const r = await fetch("/api/security/password-login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enabling }) });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok) { setMsg(enabling ? "Password sign-in re-enabled." : "Password sign-in disabled — passkeys only now."); load(); }
+          else setMsg(j.error || "Couldn't change the setting");
+        }}>{sec?.passwordDisabled ? "Re-enable password sign-in" : "Go passkey-only"}</button>
+      </div>
+
       <h3>Recent sign-ins</h3>
       {sec?.logins?.length ? (
         <div style={{ maxHeight: 160, overflowY: "auto" }}>
@@ -977,17 +1105,20 @@ function FinanceHQ({ config }) {
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
 
+  const revRef = useRef(0); // server revision of the loaded data — guards multi-device clobbering
   const loadData = async () => {
       try {
         const r = await fetch("/api/data");
         if (!r.ok) throw new Error("HTTP " + r.status);
         const j = await r.json();
+        revRef.current = j.rev || 0;
         if (j.data) {
           const saved = j.data;
           setD({
             ...DEFAULTS, ...saved,
             recurring: (saved.recurring || []).map((r) => ({ freq: "m", month: 1, ...r })),
             purchases: saved.purchases || [],
+            invest: { holdings: saved.invest?.holdings || [], watch: saved.invest?.watch || [] },
             txns: (saved.txns || []).map((t) => ({ kind: "out", accountId: "", ...t })),
             settings: { ...DEFAULTS.settings, ...(saved.settings || {}) },
           });
@@ -1058,17 +1189,25 @@ function FinanceHQ({ config }) {
   const exportJSON = () => dl("cache-backup-" + today() + ".json", JSON.stringify(d, null, 2), "application/json");
 
   /* Autosave. A failure here used to be swallowed silently, so a save that never landed
-     looked exactly like a successful one — surface it instead, and keep retrying. */
+     looked exactly like a successful one — surface it instead, and keep retrying.
+     A 409 means another device saved since we loaded — pull the latest instead of clobbering it. */
+  const [syncNotice, setSyncNotice] = useState("");
   useEffect(() => {
     if (!loaded) return;
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
-        const r = await fetch("/api/data", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: d }) });
-        if (!cancelled) {
-          if (r.ok) setSaveErr("");
-          else setSaveErr((await r.json().catch(() => ({}))).error || "Couldn't save (HTTP " + r.status + ")");
-        }
+        const r = await fetch("/api/data", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: d, rev: revRef.current }) });
+        if (cancelled) return;
+        if (r.ok) {
+          const j = await r.json().catch(() => ({}));
+          if (j.rev != null) revRef.current = j.rev;
+          setSaveErr("");
+        } else if (r.status === 409) {
+          setSyncNotice("Another device saved changes — loaded the latest version.");
+          setTimeout(() => setSyncNotice(""), 7000);
+          await loadData();
+        } else setSaveErr((await r.json().catch(() => ({}))).error || "Couldn't save (HTTP " + r.status + ")");
       } catch (e) { if (!cancelled) setSaveErr("Couldn't reach the server — changes aren't saved yet."); }
     }, 500);
     return () => { cancelled = true; clearTimeout(t); };
@@ -1113,45 +1252,42 @@ function FinanceHQ({ config }) {
     </div>
   );
 
-  const TABS = [["dash", "Dashboard"], ["overview", "Overview"], ["budget", "Budget"], ["goals", "Goals"], ["plan", "Plan"]];
+  const TABS = [["dash", "Dashboard"], ["overview", "Accounts"], ["budget", "Budget"], ["invest", "Invest"], ["goals", "Goals"], ["plan", "Plan"]];
 
   return (
     <div className="fh" data-theme={d.settings.theme}>
       <style>{CSS}</style>
       <header>
-        <div className="wrap">
-          <div className="hrow">
-            <div>
-              <h1>Cache</h1>
-              <div className="sub">net worth · budget · goals · projections</div>
-            </div>
-            <div className="row">
-              <button className="btn" onClick={() => setD((p) => ({ ...p, settings: { ...p.settings, theme: p.settings.theme === "dark" ? "light" : "dark" } }))}>
-                {d.settings.theme === "dark" ? "☀" : "☾"}
-              </button>
-              <button className="btn" onClick={() => setShowSecurity(true)}>Security</button>
-              <button className="btn" onClick={() => setShowSettings(true)}>Settings</button>
-            </div>
-          </div>
+        <div className="wrap hrow">
+          <div className="brand"><Logo size={30} /><h1>Atlas</h1></div>
           <div className="tabs">
             {TABS.map(([id, label]) => (
               <button key={id} className={"tab" + (tab === id ? " on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
           </div>
+          <div className="row" style={{ flexWrap: "nowrap" }}>
+            <button className="btn small" title="Toggle theme" onClick={() => setD((p) => ({ ...p, settings: { ...p.settings, theme: p.settings.theme === "dark" ? "light" : "dark" } }))}>
+              {d.settings.theme === "dark" ? "☀" : "☾"}
+            </button>
+            <button className="btn small" onClick={() => setShowSecurity(true)}>Security</button>
+            <button className="btn small" onClick={() => setShowSettings(true)}>Settings</button>
+          </div>
         </div>
       </header>
       <div className="wrap">
         {saveErr && (
-          <div className="card" style={{ borderColor: "var(--red)", background: "rgba(220,80,80,.08)", marginBottom: 12 }}>
+          <div className="card" style={{ borderColor: "var(--red)", background: "var(--red-soft)", marginBottom: 12 }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <span><b style={{ color: "var(--red)" }}>Not saved.</b> {saveErr} Keep this tab open until it saves.</span>
               <button className="btn small" onClick={() => setSaveNonce((n) => n + 1)}>Retry now</button>
             </div>
           </div>
         )}
+        {syncNotice && <div className="banner">{syncNotice}</div>}
         {tab === "dash" && <Dashboard d={d} setTab={setTab} />}
         {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onConnect={connectBank} onSync={syncNow} onRemoveBank={removeBank} />}
         {tab === "budget" && <Budget d={d} setD={setD} config={config} />}
+        {tab === "invest" && <Invest d={d} setD={setD} config={config} />}
         {tab === "goals" && <Goals d={d} setD={setD} />}
         {tab === "plan" && <Plan d={d} setD={setD} />}
       </div>
@@ -1411,6 +1547,236 @@ function SubscriptionRadar({ d, setD }) {
   );
 }
 
+/* ---------------- Invest tab ---------------- */
+
+/* Fidelity (and similar) positions-export CSV: needs a Symbol column and a Quantity column */
+function parseHoldingsCSV(text) {
+  const rows = parseCSV(text);
+  const hi = rows.findIndex((r) => r.some((c) => /symbol/i.test(c)) && r.some((c) => /quantity|shares/i.test(c)));
+  if (hi === -1) return [];
+  const head = rows[hi].map((h) => h.trim().toLowerCase());
+  const iSym = head.findIndex((h) => h.includes("symbol"));
+  const iQty = head.findIndex((h) => h.includes("quantity") || h.includes("shares"));
+  const iCost = head.findIndex((h) => h.includes("cost basis total") || h.includes("cost basis"));
+  const num = (s) => Number(String(s || "").replace(/[$,%"]/g, "")) || 0;
+  const out = [];
+  for (const r of rows.slice(hi + 1)) {
+    const sym = String(r[iSym] || "").trim().toUpperCase().replace(/\*+$/, "");
+    const shares = num(r[iQty]);
+    if (!/^[A-Z0-9.^-]{1,10}$/.test(sym) || shares <= 0) continue; // skips cash rows, footers, disclaimers
+    out.push({ symbol: sym, shares, cost: iCost !== -1 ? num(r[iCost]) : 0 });
+  }
+  return out;
+}
+
+const MARKET = [["SPY", "S&P 500"], ["QQQ", "Nasdaq 100"], ["DIA", "Dow Jones"]];
+
+function Invest({ d, setD, config }) {
+  const holdings = d.invest.holdings, watch = d.invest.watch;
+  const [quotes, setQuotes] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [qErr, setQErr] = useState("");
+  const [nh, setNh] = useState({ symbol: "", shares: "", cost: "" });
+  const [nw, setNw] = useState("");
+  const [syncAcct, setSyncAcct] = useState("");
+  const [brief, setBrief] = useState("");
+  const [briefBusy, setBriefBusy] = useState(false);
+  const [impMsg, setImpMsg] = useState("");
+
+  const allSyms = [...new Set([...MARKET.map(([s]) => s), ...holdings.map((h) => h.symbol), ...watch])];
+  const symsKey = allSyms.join(",");
+  const refresh = async () => {
+    if (!allSyms.length) return;
+    setBusy(true); setQErr("");
+    try {
+      const r = await fetch("/api/quotes?symbols=" + encodeURIComponent(symsKey));
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      setQuotes((p) => ({ ...p, ...j.quotes }));
+    } catch (e) { setQErr("Quotes unavailable — " + e.message); }
+    setBusy(false);
+  };
+  useEffect(() => { refresh(); }, [symsKey]);
+
+  const px = (s) => quotes[s]?.price ?? null;
+  const dayPct = (s) => { const q = quotes[s]; return q?.price && q?.prevClose ? ((q.price - q.prevClose) / q.prevClose) * 100 : null; };
+
+  const rows = holdings.map((h) => {
+    const p = px(h.symbol), prev = quotes[h.symbol]?.prevClose;
+    const value = p != null ? p * h.shares : null;
+    return { ...h, price: p, name: quotes[h.symbol]?.name || "", value, day: p != null && prev ? (p - prev) * h.shares : null, gain: value != null && h.cost > 0 ? value - h.cost : null };
+  }).sort((a, b) => (b.value || 0) - (a.value || 0));
+  const totValue = rows.reduce((s, r) => s + (r.value || 0), 0);
+  const totDay = rows.reduce((s, r) => s + (r.day || 0), 0);
+  const totCost = rows.filter((r) => r.cost > 0 && r.value != null).reduce((s, r) => s + r.cost, 0);
+  const totCostVal = rows.filter((r) => r.cost > 0 && r.value != null).reduce((s, r) => s + r.value, 0);
+  const totGain = totCost > 0 ? totCostVal - totCost : null;
+  const alloc = rows.filter((r) => r.value > 0).map((r, ) => ({ name: r.symbol, value: Math.round(r.value), color: seriesColor(holdings.findIndex((h) => h.symbol === r.symbol)) }));
+  const allocData = alloc.length > 7 ? [...alloc.slice(0, 6), { name: "Other", value: alloc.slice(6).reduce((s, x) => s + x.value, 0), color: "var(--faint)" }] : alloc;
+
+  const addHolding = () => {
+    const sym = nh.symbol.trim().toUpperCase();
+    if (!/^[A-Z0-9.^-]{1,10}$/.test(sym) || !Number(nh.shares)) return;
+    setD((p) => {
+      const hs = [...p.invest.holdings];
+      const i = hs.findIndex((h) => h.symbol === sym);
+      const entry = { id: i === -1 ? uid() : hs[i].id, symbol: sym, shares: Number(nh.shares), cost: Number(nh.cost) || 0 };
+      if (i === -1) hs.push(entry); else hs[i] = entry;
+      return { ...p, invest: { ...p.invest, holdings: hs } };
+    });
+    setNh({ symbol: "", shares: "", cost: "" });
+  };
+
+  const importFile = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseHoldingsCSV(String(reader.result));
+      if (!parsed.length) { setImpMsg("Couldn't find Symbol/Quantity columns — is this a positions export?"); return; }
+      setD((p) => {
+        const hs = [...p.invest.holdings];
+        for (const n of parsed) {
+          const i = hs.findIndex((h) => h.symbol === n.symbol);
+          if (i === -1) hs.push({ id: uid(), ...n });
+          else hs[i] = { ...hs[i], shares: n.shares, cost: n.cost || hs[i].cost };
+        }
+        return { ...p, invest: { ...p.invest, holdings: hs } };
+      });
+      setImpMsg("Imported " + parsed.length + " positions."); setTimeout(() => setImpMsg(""), 5000);
+    };
+    reader.readAsText(file);
+  };
+
+  const invAccounts = d.accounts.filter((a) => INVESTED.includes(a.type));
+  const marketBrief = async () => {
+    setBriefBusy(true);
+    try {
+      const syms = [...new Set([...holdings.map((h) => h.symbol), ...watch])].slice(0, 12);
+      const prompt = "Use web search. Write a brief market note for today: one short paragraph on overall US market conditions (major indexes, notable macro drivers)" +
+        (syms.length ? ", then one line each on recent news/moves for: " + syms.join(", ") : "") +
+        ". Under 220 words, plain text. Neutral and educational — describe what is happening; do not tell the reader to buy or sell anything.";
+      setBrief(await callClaude(prompt, true));
+    } catch (e) { setBrief("Brief failed — " + e.message); }
+    setBriefBusy(false);
+  };
+
+  const Delta = ({ v, suffix = "%" }) => v == null ? <span style={{ color: "var(--faint)" }}>—</span> :
+    <span className={v >= 0 ? "good" : "bad"}>{v >= 0 ? "▲" : "▼"} {Math.abs(v).toFixed(2)}{suffix}</span>;
+
+  return (
+    <>
+      <div className="grid3">
+        {MARKET.map(([sym, label]) => (
+          <div className="card" key={sym}>
+            <div className="note" style={{ margin: 0 }}>{label} <span className="tag">{sym}</span></div>
+            <div className="big mono" style={{ fontSize: 24 }}>{fmt2(px(sym))}</div>
+            <div style={{ fontSize: 12.5, marginTop: 2 }}><Delta v={dayPct(sym)} /> <span style={{ color: "var(--faint)" }}>today</span></div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h3>Portfolio</h3>
+          <span className="row" style={{ gap: 6 }}>
+            <button className="btn small" disabled={busy} onClick={refresh}>{busy ? "Refreshing…" : "↻ Refresh quotes"}</button>
+            <button className="btn small" onClick={() => document.getElementById("inv-csv").click()}>Import positions CSV</button>
+            <input id="inv-csv" type="file" accept=".csv,text/csv" style={{ display: "none" }}
+              onChange={(e) => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ""; }} />
+          </span>
+        </div>
+        <div className="note" style={{ marginTop: 2 }}>Fidelity isn't covered by bank sync — export Positions as CSV from fidelity.com and import it here, or add holdings manually. Prices are delayed quotes, refreshed on demand.</div>
+        {impMsg && <div className="note good">{impMsg}</div>}
+        {qErr && <div className="err">{qErr}</div>}
+
+        {rows.length > 0 && (
+          <div className="grid4" style={{ margin: "12px 0 4px" }}>
+            <div><div className="note" style={{ margin: 0 }}>Value</div><div className="big mono" style={{ fontSize: 22 }}>{fmt(totValue)}</div></div>
+            <div><div className="note" style={{ margin: 0 }}>Today</div><div className="big mono" style={{ fontSize: 22, color: totDay >= 0 ? "var(--up)" : "var(--red)" }}>{(totDay >= 0 ? "+" : "") + fmt(totDay)}</div></div>
+            <div><div className="note" style={{ margin: 0 }}>Gain vs basis</div><div className="big mono" style={{ fontSize: 22, color: totGain == null ? "var(--faint)" : totGain >= 0 ? "var(--up)" : "var(--red)" }}>{totGain == null ? "—" : (totGain >= 0 ? "+" : "") + fmt(totGain)}</div></div>
+            <div><div className="note" style={{ margin: 0 }}>Positions</div><div className="big mono" style={{ fontSize: 22 }}>{rows.length}</div></div>
+          </div>
+        )}
+
+        <div className="irow" style={{ borderBottom: "1px solid var(--line2)", fontWeight: 600, color: "var(--faint)", fontSize: 12 }}>
+          <span>Symbol</span><span>Shares</span><span>Price</span><span className="iday">Today</span><span>Value</span><span className="igain">Gain</span><span />
+        </div>
+        {rows.map((r) => (
+          <div className="irow" key={r.id}>
+            <span><b className="mono">{r.symbol}</b> <span style={{ color: "var(--faint)", fontSize: 11.5 }}>{r.name.slice(0, 22)}</span></span>
+            <span className="mono">{r.shares}</span>
+            <span className="mono">{fmt2(r.price)}</span>
+            <span className="iday" style={{ fontSize: 12.5 }}><Delta v={dayPct(r.symbol)} /></span>
+            <span className="mono">{fmt(r.value)}</span>
+            <span className="igain mono" style={{ fontSize: 12.5, color: r.gain == null ? "var(--faint)" : r.gain >= 0 ? "var(--up)" : "var(--red)" }}>{r.gain == null ? "—" : (r.gain >= 0 ? "+" : "") + fmt(r.gain)}</span>
+            <button className="x" onClick={() => setD((p) => ({ ...p, invest: { ...p.invest, holdings: p.invest.holdings.filter((h) => h.id !== r.id) } }))}>✕</button>
+          </div>
+        ))}
+        {!rows.length && <div className="note">No holdings yet — add a ticker below or import a positions CSV.</div>}
+        <div className="row" style={{ marginTop: 10 }}>
+          <input className="in mono" style={{ width: 110 }} placeholder="Ticker" value={nh.symbol}
+            onChange={(e) => setNh({ ...nh, symbol: e.target.value.toUpperCase() })} onKeyDown={(e) => e.key === "Enter" && addHolding()} />
+          <input className="in mono" type="number" style={{ width: 110 }} placeholder="Shares" value={nh.shares} onChange={(e) => setNh({ ...nh, shares: e.target.value })} />
+          <input className="in mono" type="number" style={{ width: 150 }} placeholder="Cost basis $ (opt.)" title="Total amount paid for the whole position" value={nh.cost} onChange={(e) => setNh({ ...nh, cost: e.target.value })} />
+          <button className="btn small primary" onClick={addHolding}>Add / update</button>
+        </div>
+        {rows.length > 0 && invAccounts.length > 0 && (
+          <div className="row" style={{ marginTop: 12 }}>
+            <span className="note" style={{ margin: 0 }}>Push value to account:</span>
+            <select className="in" style={{ width: 200 }} value={syncAcct} onChange={(e) => setSyncAcct(e.target.value)}>
+              <option value="">— choose account —</option>
+              {invAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <button className="btn small" disabled={!syncAcct || !totValue} onClick={() => {
+              setD((p) => ({ ...p, accounts: p.accounts.map((a) => a.id === syncAcct ? { ...a, balance: Math.round(totValue * 100) / 100 } : a) }));
+            }}>Set balance = {fmt(totValue)}</button>
+          </div>
+        )}
+      </div>
+
+      {allocData.length >= 2 && (
+        <div className="card">
+          <h3>Allocation</h3>
+          <div style={{ marginTop: 10 }}><Donut data={allocData} centerTop={fmt(totValue)} centerBottom="portfolio" /></div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h3>Watchlist</h3>
+          <span className="row">
+            <input className="in mono" style={{ width: 100, padding: "4px 9px" }} placeholder="Ticker" value={nw}
+              onChange={(e) => setNw(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === "Enter" && /^[A-Z0-9.^-]{1,10}$/.test(nw.trim()) && !watch.includes(nw.trim())) { setD((p) => ({ ...p, invest: { ...p.invest, watch: [...p.invest.watch, nw.trim()] } })); setNw(""); } }} />
+            <span className="note" style={{ margin: 0 }}>enter ↵</span>
+          </span>
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
+          {watch.map((s) => (
+            <span className="chip" key={s}>
+              <b className="mono">{s}</b>
+              <span className="mono" style={{ color: "var(--muted)" }}>{fmt2(px(s))}</span>
+              <Delta v={dayPct(s)} />
+              <button className="x" style={{ fontSize: 12, padding: 0 }} onClick={() => setD((p) => ({ ...p, invest: { ...p.invest, watch: p.invest.watch.filter((x) => x !== s) } }))}>✕</button>
+            </span>
+          ))}
+          {!watch.length && <span className="note" style={{ margin: 0 }}>Add tickers you're keeping an eye on — quotes load with the rest.</span>}
+        </div>
+      </div>
+
+      {config?.aiEnabled && (
+        <div className="card">
+          <h3>Market brief</h3>
+          <div className="note">A web-searched snapshot of what's moving markets today, plus one-liners on your tickers. Informational only — not advice, and worth double-checking like anything else on the internet.</div>
+          <div className="mrow" style={{ justifyContent: "flex-start" }}>
+            <button className="btn primary" disabled={briefBusy} onClick={marketBrief}>{briefBusy ? "Researching…" : brief ? "Refresh brief" : "Get today's brief"}</button>
+          </div>
+          {brief && <div className="aiout">{brief}</div>}
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ---------------- order of operations + debt payoff ---------------- */
 
 function simulate(debts, extra, order) {
@@ -1639,13 +2005,19 @@ function Dashboard({ d, setTab }) {
     });
   }
 
-  /* category breakdown */
+  /* category breakdown — color follows the CATEGORY (stable index in d.cats), never its rank */
   const byCat = {};
   tx.filter((t) => t.kind !== "in").forEach((t) => { byCat[t.catId] = (byCat[t.catId] || 0) + (Number(t.amount) || 0); });
-  const cats = Object.entries(byCat)
-    .map(([id, v]) => ({ name: d.cats.find((c) => c.id === id)?.name || (id ? "?" : "Uncategorized"), v }))
-    .sort((a, b) => b.v - a.v).slice(0, 8);
-  const maxCat = cats[0]?.v || 1;
+  const catRows = Object.entries(byCat)
+    .map(([id, v]) => ({
+      name: d.cats.find((c) => c.id === id)?.name || (id ? "?" : "Uncategorized"),
+      value: Math.round(v),
+      color: seriesColor(d.cats.findIndex((c) => c.id === id)),
+    }))
+    .sort((a, b) => b.value - a.value);
+  const donutData = catRows.length > 7
+    ? [...catRows.slice(0, 6), { name: "Other", value: catRows.slice(6).reduce((s, x) => s + x.value, 0), color: "var(--faint)" }]
+    : catRows;
 
   /* upcoming bills (30d) */
   const upcoming = d.recurring
@@ -1708,29 +2080,31 @@ function Dashboard({ d, setTab }) {
 
       <div className="grid2" style={{ marginTop: 14 }}>
         <div className="card">
-          <h3>Income vs spending</h3>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <h3>Income vs spending</h3>
+            <span className="row" style={{ gap: 12, fontSize: 12, color: "var(--muted)" }}>
+              <span className="row" style={{ gap: 5 }}><span className="dot" style={{ background: "var(--s3)" }} />Income</span>
+              <span className="row" style={{ gap: 5 }}><span className="dot" style={{ background: "var(--s8)" }} />Spending</span>
+            </span>
+          </div>
           <div style={{ width: "100%", height: 210 }}>
             <ResponsiveContainer>
-              <BarChart data={months} margin={{ top: 6, right: 6, left: -14, bottom: 0 }}>
+              <BarChart data={months} margin={{ top: 6, right: 6, left: -14, bottom: 0 }} barGap={2}>
                 <CartesianGrid stroke="var(--line)" vertical={false} />
                 <XAxis dataKey="m" tick={{ fill: "var(--faint)", fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: "var(--faint)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 8, fontSize: 12 }} />
-                <Bar dataKey="Income" fill="var(--acc)" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="Spending" fill="var(--red)" radius={[3, 3, 0, 0]} />
+                <Tooltip cursor={{ fill: "var(--acc-soft)" }} contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 10, fontSize: 12 }} />
+                <Bar dataKey="Income" fill="var(--s3)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Spending" fill="var(--s8)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
         <div className="card">
           <h3>Spending by category</h3>
-          {cats.length ? cats.map((c) => (
-            <div className="catbar" key={c.name}>
-              <span className="nm">{c.name}</span>
-              <span className="tr"><i style={{ width: (c.v / maxCat) * 100 + "%" }} /></span>
-              <span className="amt">{fmt(c.v)}</span>
-            </div>
-          )) : <div className="note">No spending logged in this range yet.</div>}
+          {donutData.length
+            ? <div style={{ marginTop: 10 }}><Donut data={donutData} centerTop={fmt(spend)} centerBottom="spent" /></div>
+            : <div className="note">No spending logged in this range yet.</div>}
         </div>
       </div>
 
@@ -1841,12 +2215,14 @@ export default function App() {
     if (r.ok) refresh(); else setErr(j.error || "Failed");
   };
 
-  if (me === null) return <div className="fh" data-theme="dark"><style>{CSS}</style><div className="wrap" style={{ padding: 60, color: "#8fa3ba" }}>Loading…</div></div>;
+  if (me === null) return <div className="fh" data-theme="dark"><style>{CSS}</style><div className="wrap" style={{ padding: 60, color: "#8b9bb4" }}>Loading…</div></div>;
   if (!me.authed) return (
     <div className="fh" data-theme="dark"><style>{CSS}</style>
-      <div className="wrap" style={{ maxWidth: 400, paddingTop: 80 }}>
-        <h1 style={{ fontFamily: "Fraunces, serif", fontWeight: 600 }}>Cache</h1>
-        <div className="sub" style={{ marginBottom: 16 }}>net worth · budget · goals · projections</div>
+      <div className="wrap" style={{ maxWidth: 430, paddingTop: 72 }}>
+        <div className="brand" style={{ justifyContent: "center", marginBottom: 6 }}><Logo size={44} /></div>
+        <h1 style={{ textAlign: "center", fontSize: 28 }}>Atlas</h1>
+        <div className="sub" style={{ marginBottom: 18, textAlign: "center" }}>your money, all in one place</div>
+        <div className="card" style={{ marginTop: 0 }}>
         <div className="row" style={{ gap: 6, marginBottom: 12 }}>
           <button className={"btn small" + (mode === "login" ? " primary" : "")} onClick={() => { setMode("login"); setErr(""); }}>Log in</button>
           <button className={"btn small" + (mode === "register" ? " primary" : "")} onClick={() => { setMode("register"); setErr(""); }}>Create account</button>
@@ -1900,6 +2276,7 @@ export default function App() {
             )}
           </>
         )}
+        </div>
       </div>
     </div>
   );

@@ -11,7 +11,7 @@ class Boundary extends React.Component {
     if (!this.state.err) return this.props.children;
     return (
       <div style={{ font: "14px/1.5 ui-monospace, monospace", padding: 32, color: "#e6edf3", background: "#0d1117", minHeight: "100vh" }}>
-        <h2 style={{ margin: "0 0 8px" }}>Cache hit a rendering error</h2>
+        <h2 style={{ margin: "0 0 8px" }}>Atlas hit a rendering error</h2>
         <p style={{ color: "#8fa3ba" }}>The details are below and in the browser console.</p>
         <pre style={{ whiteSpace: "pre-wrap", background: "#161b22", padding: 16, borderRadius: 8 }}>
           {String(this.state.err?.stack || this.state.err)}

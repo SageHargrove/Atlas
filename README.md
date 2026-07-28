@@ -1,22 +1,25 @@
-# Cache — self-hosted personal finance, multi-user
+# Atlas — self-hosted personal finance, multi-user
 
-React + Express. Real bank sync (Teller, read-only), AI categorization and
-budgeting (your Anthropic key, server-side), full dashboard, budgets, goals,
-debt payoff with promo-APR tracking, purchase planner, subscription radar
-(auto-detects recurring charges), month-over-month insights, cross-month
-transaction search, and one-click CSV/JSON export. Registration is
-invite-code gated so you can share with friends/family — every user's data
-lives in its own file, invisible to other users.
+React + Express. Real bank sync (Teller, read-only), an Invest tab with live
+delayed quotes + watchlist + Fidelity positions-CSV import, AI categorization
+and budgeting (your Anthropic key, server-side), full dashboard with donut
+breakdowns, budgets, goals, debt payoff with promo-APR tracking, purchase
+planner, subscription radar (auto-detects recurring charges), month-over-month
+insights, cross-month transaction search, and one-click CSV/JSON export.
+Registration is invite-code gated so you can share with friends/family —
+every user's data lives in its own file, invisible to other users.
 
 **Security:** passkeys (WebAuthn — fingerprint/face/PIN, phishing-resistant)
-with one-time recovery codes; scrypt-hashed passwords as a fallback, with
-in-app password change that revokes every other session; bank access tokens
-encrypted at rest (AES-256-GCM); per-user session revocation ("sign out
-everywhere") and a login audit trail; CSP + security headers + a same-origin
-check on all state-changing requests (CSRF defense-in-depth over SameSite
-cookies); rate-limited auth and AI endpoints with per-account brute-force
-backoff. Manage all of it from the **Security** panel in-app. See
-`DEPLOY-ORACLE.md` for VM hardening + encrypted backups.
+with one-time recovery codes, and an optional **passkey-only mode** that turns
+password sign-in off entirely; scrypt-hashed passwords otherwise, with in-app
+password change that revokes every other session; bank access tokens encrypted
+at rest (AES-256-GCM); per-user session revocation ("sign out everywhere") and
+a login audit trail; CSP + security headers + a same-origin check on all
+state-changing requests (CSRF defense-in-depth over SameSite cookies);
+rate-limited auth/AI/quotes endpoints with per-account brute-force backoff;
+revision-checked saves so two devices can never silently overwrite each other.
+Manage all of it from the **Security** panel in-app. See `DEPLOY-ORACLE.md`
+for VM hardening + encrypted backups.
 
 ## Test locally first (do this before deploying)
 
@@ -62,6 +65,16 @@ and change `TELLER_ENV=development` (Teller's free personal tier).
 - Every sync logs a net-worth snapshot for the Dashboard trend
 - **Fidelity / investment accounts aren't covered by Teller** — keep them
   manual and update balances monthly
+
+## Invest tab
+- Market strip (S&P 500 / Nasdaq 100 / Dow) with delayed quotes, refreshed
+  through the server (nothing third-party runs in the browser)
+- Holdings with live value, day change, and gain vs cost basis; allocation
+  donut; push the total into any investment account's balance
+- **Fidelity / any brokerage**: export Positions as CSV from the brokerage
+  site and import — no credentials involved
+- Watchlist (stocks, ETFs, `BTC-USD` etc.) and an optional AI market brief
+  (web-searched, informational only)
 
 ## Beyond the basics
 - **Subscription radar** (Budget tab): charges that repeat monthly at a stable
