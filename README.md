@@ -2,16 +2,21 @@
 
 React + Express. Real bank sync (Teller, read-only), AI categorization and
 budgeting (your Anthropic key, server-side), full dashboard, budgets, goals,
-debt payoff with promo-APR tracking, purchase planner. Registration is
+debt payoff with promo-APR tracking, purchase planner, subscription radar
+(auto-detects recurring charges), month-over-month insights, cross-month
+transaction search, and one-click CSV/JSON export. Registration is
 invite-code gated so you can share with friends/family — every user's data
 lives in its own file, invisible to other users.
 
 **Security:** passkeys (WebAuthn — fingerprint/face/PIN, phishing-resistant)
-with one-time recovery codes; scrypt-hashed passwords as a fallback; bank
-access tokens encrypted at rest (AES-256-GCM); per-user session revocation
-("sign out everywhere") and a login audit trail; CSP + security headers;
-rate-limited auth and AI endpoints. Manage all of it from the **Security**
-panel in-app. See `DEPLOY-ORACLE.md` for VM hardening + encrypted backups.
+with one-time recovery codes; scrypt-hashed passwords as a fallback, with
+in-app password change that revokes every other session; bank access tokens
+encrypted at rest (AES-256-GCM); per-user session revocation ("sign out
+everywhere") and a login audit trail; CSP + security headers + a same-origin
+check on all state-changing requests (CSRF defense-in-depth over SameSite
+cookies); rate-limited auth and AI endpoints with per-account brute-force
+backoff. Manage all of it from the **Security** panel in-app. See
+`DEPLOY-ORACLE.md` for VM hardening + encrypted backups.
 
 ## Test locally first (do this before deploying)
 
@@ -57,6 +62,20 @@ and change `TELLER_ENV=development` (Teller's free personal tier).
 - Every sync logs a net-worth snapshot for the Dashboard trend
 - **Fidelity / investment accounts aren't covered by Teller** — keep them
   manual and update balances monthly
+
+## Beyond the basics
+- **Subscription radar** (Budget tab): charges that repeat monthly at a stable
+  amount are surfaced automatically — "Watch" one to see it in Upcoming bills
+  (without double-logging; the real charges keep arriving via sync/CSV), or
+  dismiss it.
+- **Search** (Budget tab): type in the search box to look across *all* months
+  by note, amount, or category.
+- **Insights** (Dashboard): biggest category changes vs last month + largest
+  individual expenses in the selected range.
+- **Export** (Settings): transactions as CSV, or your complete data as JSON.
+  Bank tokens are never included — they never leave the server at all.
+- **Change password** (Security panel): requires the current password and
+  signs out every other device.
 
 ## Multi-user model
 - `INVITE_CODE` in `.env` gates registration; rotate it anytime
