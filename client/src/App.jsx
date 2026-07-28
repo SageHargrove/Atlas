@@ -6,9 +6,10 @@ import { startRegistration, startAuthentication, browserSupportsWebAuthn } from 
 /*  Finance HQ — net worth · budget · goals · projections  */
 /* ------------------------------------------------------ */
 
-const KEY = "financehub:v1";
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
-const today = () => new Date().toISOString().slice(0, 10);
+/* local-date string — toISOString() is UTC and flips the date near midnight for anyone not on UTC */
+const dstr = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+const today = () => dstr(new Date());
 const thisMonth = () => today().slice(0, 7);
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const monthLabel = (m) => { const [y, mm] = m.split("-").map(Number); return MONTH_NAMES[mm - 1] + " " + y; };
@@ -406,8 +407,20 @@ function Budget({ d, setD, config }) {
   const [newCat, setNewCat] = useState("");
   const [showImport, setShowImport] = useState(false);
   const [impMsg, setImpMsg] = useState("");
+  const [q, setQ] = useState("");
+  const [fCat, setFCat] = useState("");
 
   const monthTxns = d.txns.filter((t) => (t.date || "").startsWith(month)).sort((a, b) => b.date.localeCompare(a.date));
+  /* search spans ALL months (find that one charge from last spring); month view otherwise */
+  const searching = q.trim() !== "" || fCat !== "";
+  const ql = q.trim().toLowerCase();
+  const shownTxns = searching
+    ? d.txns.filter((t) =>
+        (!fCat || t.catId === fCat) &&
+        (!ql || (t.note || "").toLowerCase().includes(ql) || String(t.amount).includes(ql) ||
+          (d.cats.find((c) => c.id === t.catId)?.name || "").toLowerCase().includes(ql)))
+        .sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 200)
+    : monthTxns;
   const outTxns = monthTxns.filter((t) => t.kind !== "in");
   const spentBy = {};
   outTxns.forEach((t) => { spentBy[t.catId] = (spentBy[t.catId] || 0) + (Number(t.amount) || 0); });
@@ -502,7 +515,7 @@ function Budget({ d, setD, config }) {
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>Transactions — {monthLabel(month)}</h3>
+          <h3>{searching ? "Search — all months" : "Transactions — " + monthLabel(month)}</h3>
           <span className="row" style={{ gap: 6 }}>
             {config?.aiEnabled && monthTxns.some((t) => !t.catId && t.kind !== "in") && (
               <button className="btn small" disabled={catBusy} onClick={async () => {
@@ -526,6 +539,15 @@ function Budget({ d, setD, config }) {
           </span>
         </div>
         {impMsg && <div className="note good">{impMsg}</div>}
+        <div className="row" style={{ margin: "8px 0 4px" }}>
+          <input className="in" style={{ flex: 2, minWidth: 140, padding: "5px 9px" }} placeholder="Search notes, amounts, categories…"
+            value={q} onChange={(e) => setQ(e.target.value)} />
+          <select className="in" style={{ flex: 1, minWidth: 110, padding: "5px 9px" }} value={fCat} onChange={(e) => setFCat(e.target.value)}>
+            <option value="">All categories</option>
+            {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {searching && <button className="btn small" onClick={() => { setQ(""); setFCat(""); }}>Clear ({shownTxns.length})</button>}
+        </div>
         <div className="trow" style={{ borderBottom: "1px solid var(--line2)", fontWeight: 600, color: "var(--faint)", fontSize: 12 }}>
           <span>Date</span><span>Category</span><span>Amount</span><span>Type</span><span className="tacct">Account</span><span className="tnote">Note</span><span />
         </div>
@@ -549,9 +571,9 @@ function Budget({ d, setD, config }) {
             setNt({ date: nt.date, catId: nt.catId, amount: "", note: "", kind: nt.kind, accountId: nt.accountId });
           }}>+</button>
         </div>
-        {monthTxns.map((t) => (
+        {shownTxns.map((t) => (
           <div className="trow" key={t.id}>
-            <span className="mono" style={{ fontSize: 12.5 }}>{t.date.slice(5)}</span>
+            <span className="mono" style={{ fontSize: 12.5 }}>{searching ? t.date : t.date.slice(5)}</span>
             {t.catId
               ? <span>{d.cats.find((c) => c.id === t.catId)?.name || "?"}</span>
               : <select className="in" style={{ padding: "3px 6px", fontSize: 12, borderColor: "var(--gold)" }} value=""
@@ -566,10 +588,11 @@ function Budget({ d, setD, config }) {
             <button className="x" onClick={() => setD((p) => ({ ...p, txns: p.txns.filter((x) => x.id !== t.id) }))}>✕</button>
           </div>
         ))}
-        {!monthTxns.length && <div className="note">No transactions this month yet — log spending above as it happens, or import your bank's CSV.</div>}
+        {!shownTxns.length && <div className="note">{searching ? "Nothing matches this search." : "No transactions this month yet — log spending above as it happens, or import your bank's CSV."}</div>}
       </div>
 
       <Recurring d={d} setD={setD} />
+      <SubscriptionRadar d={d} setD={setD} />
 
       {showImport && (
         <BankImport d={d} setD={setD} onClose={(n) => {
@@ -833,6 +856,16 @@ function SecurityModal({ onClose }) {
   const [msg, setMsg] = useState("");
   const [codes, setCodes] = useState(null); // freshly generated recovery codes (shown once)
   const [busy, setBusy] = useState(false);
+  const [pw, setPw] = useState({ current: "", next: "" });
+  const [pwMsg, setPwMsg] = useState("");
+  const changePw = async () => {
+    setPwMsg("");
+    if (pw.next.length < 8) return setPwMsg("New password must be at least 8 characters.");
+    const r = await fetch("/api/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pw) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) { setPw({ current: "", next: "" }); setPwMsg("Password changed — every other device was signed out."); }
+    else setPwMsg(j.error || "Could not change password");
+  };
   const load = async () => { try { setSec(await (await fetch("/api/security")).json()); } catch {} };
   useEffect(() => { load(); }, []);
 
@@ -891,6 +924,21 @@ function SecurityModal({ onClose }) {
       <h3>Recovery codes</h3>
       <div className="note" style={{ marginTop: 0 }}>{sec ? sec.recoveryRemaining : "…"} unused code{sec?.recoveryRemaining === 1 ? "" : "s"} remaining.</div>
       <div className="mrow" style={{ justifyContent: "flex-start" }}><button className="btn" onClick={genRecovery}>{sec?.recoveryRemaining > 0 ? "Regenerate codes" : "Generate codes"}</button></div>
+
+      <h3>Password</h3>
+      <div className="note" style={{ marginTop: 0 }}>Changing it signs out every other device.</div>
+      <div className="grid2">
+        <div><label className="f">Current password</label>
+          <input className="in" type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} /></div>
+        <div><label className="f">New password (8+ chars)</label>
+          <input className="in" type="password" autoComplete="new-password" value={pw.next}
+            onKeyDown={(e) => e.key === "Enter" && changePw()}
+            onChange={(e) => setPw({ ...pw, next: e.target.value })} /></div>
+      </div>
+      <div className="mrow" style={{ justifyContent: "flex-start" }}>
+        <button className="btn" disabled={!pw.current || !pw.next} onClick={changePw}>Change password</button>
+      </div>
+      {pwMsg && <div className="note" style={{ color: pwMsg.startsWith("Password changed") ? "var(--acc)" : "var(--red)" }}>{pwMsg}</div>}
 
       <h3>Recent sign-ins</h3>
       {sec?.logins?.length ? (
@@ -992,6 +1040,23 @@ function FinanceHQ({ config }) {
     await loadData();
   };
 
+  /* data belongs to the user — one-click export, no lock-in (bank tokens never reach the client, so they can't leak here) */
+  const dl = (name, content, type) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([content], { type }));
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const csvEsc = (s) => { s = String(s ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const exportCSV = () => {
+    const rows = [["date", "type", "category", "amount", "account", "note"]];
+    [...d.txns].sort((a, b) => (a.date || "").localeCompare(b.date || "")).forEach((t) =>
+      rows.push([t.date, t.kind === "in" ? "income" : "expense", d.cats.find((c) => c.id === t.catId)?.name || "", t.amount, d.accounts.find((x) => x.id === t.accountId)?.name || "", t.note || ""]));
+    dl("cache-transactions-" + today() + ".csv", rows.map((r) => r.map(csvEsc).join(",")).join("\n"), "text/csv");
+  };
+  const exportJSON = () => dl("cache-backup-" + today() + ".json", JSON.stringify(d, null, 2), "application/json");
+
   /* Autosave. A failure here used to be swallowed silently, so a save that never landed
      looked exactly like a successful one — surface it instead, and keep retrying. */
   useEffect(() => {
@@ -1017,6 +1082,7 @@ function FinanceHQ({ config }) {
     const dayNow = now.getDate();
     const yNow = now.getFullYear();
     const missing = d.recurring.filter((r) => {
+      if (r.watch) return false; // watched subscriptions arrive via bank sync/CSV — logging them here would double-count
       const day = Math.min(r.day || 1, 28);
       if ((r.freq || "m") === "m")
         return day <= dayNow && !d.txns.some((t) => t.recId === r.id && (t.date || "").startsWith(m));
@@ -1099,6 +1165,12 @@ function FinanceHQ({ config }) {
           <input className="in mono" type="number" value={d.settings.expReturn}
             onChange={(e) => setD((p) => ({ ...p, settings: { ...p.settings, expReturn: Number(e.target.value) || 0 } }))} />
           <div className="note">Just an assumption for the calculators — historical broad-market averages are often cited around 7% after inflation, but you choose the number.</div>
+          <label className="f">Your data</label>
+          <div className="row">
+            <button className="btn small" onClick={exportCSV}>Export transactions (CSV)</button>
+            <button className="btn small" onClick={exportJSON}>Download backup (JSON)</button>
+          </div>
+          <div className="note">The JSON is everything — accounts, budgets, goals, history. Bank access tokens are never included.</div>
           <div className="mrow"><button className="btn primary" onClick={() => setShowSettings(false)}>Done</button></div>
         </Modal>
       )}
@@ -1238,6 +1310,7 @@ function Recurring({ d, setD }) {
           <div className="kv" key={r.id}>
             <span className="k"><b style={{ color: "var(--text)" }}>{label}</b>
               <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · {label !== cn ? cn + " · " : ""}{sched}</span>
+              {r.watch && <span className="tag" style={{ marginLeft: 5 }} title="Shown in Upcoming bills; the actual charges come from bank sync / CSV import">watched</span>}
             </span>
             <span className="row" style={{ gap: 6 }}>
               <span className="mono">{fmt(r.amount)}{(r.freq || "m") === "m" ? "/mo" : "/yr"}</span>
@@ -1271,6 +1344,69 @@ function Recurring({ d, setD }) {
           setNr({ name: "", catId: nr.catId, amount: "", freq: "m", day: 1, month: 1 });
         }}>Add</button>
       </div>
+    </div>
+  );
+}
+
+/* ---------------- subscription radar ---------------- */
+
+/* normalize a bank description to a merchant key: "NETFLIX.COM 0231 CA" and
+   "Netflix.com 0198" should land in the same bucket */
+const normMerchant = (note) =>
+  (note || "").toLowerCase().replace(/\(recurring\)/g, "").replace(/[#*\d]+/g, " ").replace(/[^a-z& ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 28);
+
+/* find charges that repeat ~monthly with a stable amount (à la Rocket Money) */
+function detectSubscriptions(d) {
+  const ignored = d.settings.subIgnore || [];
+  const tracked = new Set(d.recurring.map((r) => normMerchant(r.name || d.cats.find((c) => c.id === r.catId)?.name || "")));
+  const groups = {};
+  d.txns.filter((t) => t.kind !== "in" && !t.recId && t.note).forEach((t) => {
+    const k = normMerchant(t.note);
+    if (k.length >= 3) (groups[k] = groups[k] || []).push(t);
+  });
+  const med = (arr) => { const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  return Object.entries(groups).map(([key, txs]) => {
+    if (txs.length < 3 || ignored.includes(key) || tracked.has(key)) return null;
+    const dates = txs.map((t) => new Date(t.date).getTime()).sort((a, b) => a - b);
+    const gap = med(dates.slice(1).map((v, i) => (v - dates[i]) / 864e5));
+    if (gap < 25 || gap > 35) return null;                                   // monthly cadence only
+    const amts = txs.map((t) => Number(t.amount) || 0);
+    const amount = med(amts);
+    if (Math.max(...amts) - Math.min(...amts) > Math.max(2, amount * 0.25)) return null; // stable amount only
+    const byCat = {};
+    txs.forEach((t) => { if (t.catId) byCat[t.catId] = (byCat[t.catId] || 0) + 1; });
+    return {
+      key, name: (txs[txs.length - 1].note || key).replace(/\(recurring\)/g, "").trim().slice(0, 30),
+      amount: Math.round(amount * 100) / 100,
+      day: Math.min(med(txs.map((t) => Number((t.date || "").slice(8, 10)) || 1)), 28),
+      catId: Object.entries(byCat).sort((a, b) => b[1] - a[1])[0]?.[0] || "",
+      count: txs.length,
+    };
+  }).filter(Boolean).sort((a, b) => b.amount - a.amount);
+}
+
+function SubscriptionRadar({ d, setD }) {
+  const found = useMemo(() => detectSubscriptions(d), [d.txns, d.recurring, d.settings.subIgnore]);
+  if (!found.length) return null;
+  const total = found.reduce((s, f) => s + f.amount, 0);
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3>Subscription radar</h3>
+        <span className="note" style={{ margin: 0 }}>~<b className="mono">{fmt(total)}</b>/mo detected</span>
+      </div>
+      <div className="note">Charges that repeat monthly at a stable amount. "Watch" adds one to Upcoming bills without double-logging it (the charges keep arriving via sync/CSV as they do now). This is also the list to prune — every line is money leaving on autopilot.</div>
+      {found.map((f) => (
+        <div className="kv" key={f.key}>
+          <span className="k"><b style={{ color: "var(--text)" }}>{f.name}</b>
+            <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · seen {f.count}× · ~day {f.day}</span></span>
+          <span className="row" style={{ gap: 6 }}>
+            <span className="mono">{fmt(f.amount)}/mo</span>
+            <button className="btn small" onClick={() => setD((p) => ({ ...p, recurring: [...p.recurring, { id: uid(), name: f.name, catId: f.catId || p.cats[0]?.id || "", amount: f.amount, freq: "m", day: f.day, watch: true }] }))}>Watch</button>
+            <button className="x" title="Not a subscription — hide" onClick={() => setD((p) => ({ ...p, settings: { ...p.settings, subIgnore: [...(p.settings.subIgnore || []), f.key] } }))}>✕</button>
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1456,8 +1592,8 @@ const RANGES = [["m", "This month"], ["3m", "3 mo"], ["6m", "6 mo"], ["ytd", "YT
 function rangeStart(r) {
   const now = new Date();
   if (r === "m") return thisMonth() + "-01";
-  if (r === "3m") return new Date(now - 90 * 864e5).toISOString().slice(0, 10);
-  if (r === "6m") return new Date(now - 182 * 864e5).toISOString().slice(0, 10);
+  if (r === "3m") return dstr(new Date(now - 90 * 864e5));
+  if (r === "6m") return dstr(new Date(now - 182 * 864e5));
   if (r === "ytd") return now.getFullYear() + "-01-01";
   return "0000-01-01";
 }
@@ -1493,7 +1629,7 @@ function Dashboard({ d, setTab }) {
   const months = [];
   for (let i = Math.min(monthsN, 12) - 1; i >= 0; i--) {
     const dt = new Date(new Date().getFullYear(), new Date().getMonth() - i, 1);
-    const key = dt.toISOString().slice(0, 7);
+    const key = dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0"); // local, not UTC — toISOString shifts the month east of Greenwich
     const mt = d.txns.filter((t) => (t.date || "").startsWith(key));
     const mIn = mt.filter((t) => t.kind === "in").reduce((s, t) => s + (Number(t.amount) || 0), 0);
     months.push({
@@ -1524,6 +1660,21 @@ function Dashboard({ d, setTab }) {
     const sp = d.txns.filter((t) => t.kind !== "in" && t.catId === c.id && (t.date || "").startsWith(mKey)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
     return { name: c.name, sp, lim: Number(c.limit), pct: Math.min(100, Math.round((sp / Number(c.limit)) * 100)) };
   }).sort((a, b) => b.pct - a.pct).slice(0, 5);
+
+  /* month-over-month movers + largest expenses (Copilot-style insights) */
+  const prevKey = (() => { const [y, m] = mKey.split("-").map(Number); const p = new Date(y, m - 2, 1); return p.getFullYear() + "-" + String(p.getMonth() + 1).padStart(2, "0"); })();
+  const catSpend = (key) => {
+    const out = {};
+    d.txns.filter((t) => t.kind !== "in" && (t.date || "").startsWith(key)).forEach((t) => { out[t.catId || ""] = (out[t.catId || ""] || 0) + (Number(t.amount) || 0); });
+    return out;
+  };
+  const curCat = catSpend(mKey), prevCat = catSpend(prevKey);
+  const movers = [...new Set([...Object.keys(curCat), ...Object.keys(prevCat)])]
+    .map((id) => ({ name: d.cats.find((c) => c.id === id)?.name || (id ? "?" : "Uncategorized"), now: curCat[id] || 0, delta: (curCat[id] || 0) - (prevCat[id] || 0) }))
+    .filter((x) => Math.abs(x.delta) >= 1)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 5);
+  const biggest = tx.filter((t) => t.kind !== "in")
+    .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0)).slice(0, 5);
 
   return (
     <>
@@ -1607,6 +1758,34 @@ function Dashboard({ d, setTab }) {
               <div className="bar"><i style={{ width: p.pct + "%", background: p.pct >= 100 ? "var(--red)" : p.pct >= 80 ? "var(--gold)" : "var(--acc)" }} /></div>
             </div>
           )) : <div className="note">Set category budgets to track progress here.</div>}
+        </div>
+      </div>
+
+      <div className="grid2" style={{ marginTop: 14 }}>
+        <div className="card">
+          <h3>vs last month</h3>
+          {movers.length ? movers.map((m) => (
+            <div className="kv" key={m.name}>
+              <span className="k">{m.name}</span>
+              <span className="mono" style={{ fontSize: 13 }}>{fmt(m.now)}
+                <span style={{ color: m.delta > 0 ? "var(--red)" : "var(--acc)", marginLeft: 6 }}>
+                  {m.delta > 0 ? "▲" : "▼"} {fmt(Math.abs(m.delta))}
+                </span>
+              </span>
+            </div>
+          )) : <div className="note">Once two months have transactions, the biggest category shifts show here.</div>}
+        </div>
+        <div className="card">
+          <h3>Largest expenses</h3>
+          {biggest.length ? biggest.map((t) => (
+            <div className="kv" key={t.id}>
+              <span className="k" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>
+                {t.note || d.cats.find((c) => c.id === t.catId)?.name || "—"}
+                <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · {t.date}</span>
+              </span>
+              <span className="mono">{fmt(Number(t.amount))}</span>
+            </div>
+          )) : <div className="note">No spending in this range yet.</div>}
         </div>
       </div>
     </>
