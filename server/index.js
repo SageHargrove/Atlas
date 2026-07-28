@@ -41,11 +41,31 @@ app.use(helmet({
 app.use(express.json({ limit: "5mb" }));
 app.use(cookieParser());
 
+/* passkey relying-party config — also reused by the Origin check below */
+const RP_ID = process.env.RP_ID || "localhost";
+const RP_NAME = "Cache";
+const RP_ORIGINS = (process.env.RP_ORIGIN || "http://localhost:5173").split(",").map((s) => s.trim()).filter(Boolean);
+
 /* financial data must never sit in a browser/proxy cache */
 app.use("/api", (req, res, next) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.set("Pragma", "no-cache");
+  res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
   next();
+});
+
+/* CSRF defense-in-depth on top of SameSite=Lax cookies: state-changing requests
+   must come from our own origin. Same-host is accepted so a correctly-proxied
+   deploy works even if RP_ORIGIN was never set; requests without an Origin
+   header (curl, non-browser clients) can't ride a victim's cookie anyway. */
+app.use("/api", (req, res, next) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  const origin = req.headers.origin;
+  if (!origin) return next();
+  try {
+    if (new URL(origin).host === req.headers.host || RP_ORIGINS.includes(origin)) return next();
+  } catch {}
+  return res.status(403).json({ error: "Cross-origin request blocked" });
 });
 
 /* brute-force / abuse throttles (keyed by client IP via trust proxy) */
@@ -117,8 +137,10 @@ const sha256 = (s) => crypto.createHash("sha256").update(String(s)).digest("hex"
 const hmacCode = (s) => crypto.createHmac("sha256", SECRET).update("recovery:" + String(s)).digest("hex");
 
 /* Per-account login backoff. The IP limiter stops one host hammering; this stops a
-   distributed attack spreading guesses for a single account across many IPs. */
+   distributed attack spreading guesses for a single account across many IPs.
+   Swept periodically — otherwise garbage usernames from a spray attack accumulate forever. */
 const acctFails = new Map(); // username -> { n, until }
+setInterval(() => { const now = Date.now(); for (const [k, e] of acctFails) if (e.until < now) acctFails.delete(k); }, 30 * 60 * 1000).unref();
 function acctBlocked(u) { const e = acctFails.get(u); return !!(e && e.until > Date.now()); }
 function acctFail(u) {
   const e = acctFails.get(u) || { n: 0, until: 0 };
@@ -234,10 +256,28 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 
+/* change password: requires the current password, then invalidates every other
+   session (a stolen cookie dies with the old password) while keeping this device in */
+app.post("/api/password", auth, authLimiter, async (req, res) => {
+  const current = String(req.body.current || ""), next = String(req.body.next || "");
+  if (next.length < 8 || next.length > 200) return res.status(400).json({ error: "New password must be 8-200 characters" });
+  const h = hashPw(current, req.user.salt);
+  try { if (!crypto.timingSafeEqual(Buffer.from(h), Buffer.from(req.user.hash))) return res.status(401).json({ error: "Current password is wrong" }); }
+  catch { return res.status(401).json({ error: "Current password is wrong" }); }
+  const user = await updateUsers((all) => {
+    const u = all.find((x) => x.id === req.user.id);
+    if (!u) return null;
+    u.salt = crypto.randomBytes(16).toString("hex");
+    u.hash = hashPw(next, u.salt);
+    u.sessionEpoch = (u.sessionEpoch || 0) + 1;
+    return u;
+  });
+  if (!user) return res.status(500).json({ error: "Could not update password" });
+  await issue(res, user, req, "password-change");
+  res.json({ ok: true });
+});
+
 /* ---------------- passkeys (WebAuthn) ---------------- */
-const RP_ID = process.env.RP_ID || "localhost";
-const RP_NAME = "Cache";
-const RP_ORIGINS = (process.env.RP_ORIGIN || "http://localhost:5173").split(",").map((s) => s.trim()).filter(Boolean);
 const challenges = new Map(); // short-lived ceremony challenges: key -> { challenge, exp }
 const putChallenge = (k, ch) => challenges.set(k, { challenge: ch, exp: Date.now() + 5 * 60 * 1000 });
 const takeChallenge = (k) => { const e = challenges.get(k); challenges.delete(k); return e && e.exp > Date.now() ? e.challenge : null; };
@@ -401,7 +441,11 @@ app.get("/api/data", auth, (req, res) => {
 });
 app.put("/api/data", auth, async (req, res) => {
   const d = req.body?.data;
-  if (d === null || typeof d !== "object" || Array.isArray(d)) return res.status(400).json({ error: "Invalid data payload" });
+  if (d === null || d === undefined || typeof d !== "object" || Array.isArray(d)) return res.status(400).json({ error: "Invalid data payload" });
+  /* the client renders these as arrays — refuse a payload that would corrupt them */
+  for (const k of ["accounts", "txns", "cats", "goals", "recurring", "purchases", "history"])
+    if (k in d && !Array.isArray(d[k])) return res.status(400).json({ error: "Invalid data payload (" + k + ")" });
+  if (d.settings != null && (typeof d.settings !== "object" || Array.isArray(d.settings))) return res.status(400).json({ error: "Invalid data payload (settings)" });
   try {
     await withLock("data:" + req.userId, () => {
       /* bank enrollments are server-authoritative — the browser can't add, alter, or erase
@@ -447,8 +491,10 @@ app.post("/api/ai", auth, aiLimiter, async (req, res) => {
   const gate = await reserveAi(req.userId);
   if (!gate.ok) return res.status(429).json({ error: gate.error });
   try {
-    const body = { model: "claude-sonnet-4-6", max_tokens: 1000, messages: [{ role: "user", content: prompt }] };
-    if (req.body.search) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+    /* Sonnet 5 thinks adaptively by default and max_tokens caps thinking + answer
+       together, so give headroom; effort:low keeps categorization calls cheap. */
+    const body = { model: "claude-sonnet-5", max_tokens: 2000, output_config: { effort: "low" }, messages: [{ role: "user", content: prompt }] };
+    if (req.body.search) body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }];
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
@@ -456,7 +502,9 @@ app.post("/api/ai", auth, aiLimiter, async (req, res) => {
     });
     const j = await r.json();
     if (j.error) return res.status(502).json({ error: j.error.message });
-    res.json({ text: (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n") });
+    const text = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+    if (!text && j.stop_reason === "refusal") return res.status(502).json({ error: "The AI declined this request — try rephrasing." });
+    res.json({ text });
   } catch (e) { console.error("AI proxy error:", e.message); res.status(500).json({ error: "AI request failed" }); }
 });
 
@@ -538,6 +586,7 @@ app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
         try {
           const b = await tellerGet("/accounts/" + a.id + "/balances", token);
           bal = Math.abs(Number(a.type === "credit" ? b.ledger : b.available ?? b.ledger));
+          if (!Number.isFinite(bal)) bal = null; // a missing/garbled balance must not overwrite a real one with NaN
         } catch {}
         try { txs = await tellerGet("/accounts/" + a.id + "/transactions?count=150", token); } catch {}
         fetched.push({ institution: enr.institution, a, bal, txs });
@@ -604,6 +653,8 @@ app.delete("/api/teller/:id", auth, async (req, res) => {
 });
 
 /* ---------------- static client ---------------- */
+/* unknown API paths must 404 as JSON, never fall through to index.html */
+app.all("/api/*", (req, res) => res.status(404).json({ error: "Not found" }));
 const dist = path.join(__dirname, "..", "client", "dist");
 if (fs.existsSync(dist)) {
   app.use(express.static(dist));
