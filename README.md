@@ -68,8 +68,9 @@ Leave bank sync and AI unconfigured if you just want to click around.
   Transfers between your own accounts will show up here too — delete the
   noise; income math only counts what you keep.
 - Every sync logs a net-worth snapshot for the Dashboard trend
-- **Brokerages (Fidelity etc.) aren't covered by bank sync** — use the Invest
-  tab's positions-CSV import, which also keeps the account balance current
+- **Brokerage holdings**: accounts that return a `holdings` array (Fidelity
+  does) populate the Invest tab automatically — symbol, shares, cost basis.
+  Anything unsupported still works via the Invest tab's positions-CSV import
 
 ## Invest tab
 - Market strip (S&P 500 / Nasdaq 100 / Dow) with delayed quotes, refreshed

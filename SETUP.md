@@ -142,8 +142,14 @@ tab's positions-CSV import instead (step 6).
 
 ## 6. Investments (Fidelity and any other brokerage)
 
-No brokerage offers a free consumer API, so Atlas uses CSV import — one click,
-no credentials stored anywhere.
+**Easiest: connect Fidelity through SimpleFIN in step 5.** SimpleFIN supports
+"Fidelity Investments", and brokerage accounts come back with a holdings array
+(symbol, share count, cost basis) — Atlas feeds that straight into the Invest
+tab, so positions and the allocation donut keep themselves current. Notably
+Plaid *cannot* do this: Fidelity only permits sanctioned access via Akoya, and
+Plaid hasn't integrated with it.
+
+**Or, manual CSV** (works for any brokerage, stores no credentials at all):
 
 1. Log in at **https://www.fidelity.com**
 2. **Accounts & Trade → Portfolio → Positions**

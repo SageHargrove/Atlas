@@ -807,11 +807,13 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
   }
 
   /* PHASE 2 — merge into current on-disk state under the lock (brief) */
-  let newTx = 0, updAcc = 0;
+  let newTx = 0, updAcc = 0, updHold = 0;
   try {
     await withLock("data:" + req.userId, () => {
       const d = readData(req.userId);
       d.accounts = d.accounts || []; d.txns = d.txns || [];
+      d.invest = d.invest || { holdings: [], watch: [] };
+      d.invest.holdings = d.invest.holdings || []; d.invest.watch = d.invest.watch || [];
       for (const set of sets) {
         for (const a of set.accounts || []) {
           const sfId = "sf:" + a.id;
@@ -838,6 +840,20 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
             else d.txns.push({ id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind: "in", date, amount: Math.round(amt * 100) / 100, catId: "", note });
             newTx++;
           }
+          /* Brokerage accounts carry a holdings array (undocumented in the spec, but
+             real — Fidelity returns symbol/shares/cost_basis/market_value). Feed it
+             straight into the Invest tab so positions track themselves. */
+          for (const h of a.holdings || []) {
+            const sym = String(h.symbol || "").trim().toUpperCase();
+            const shares = Number(h.shares);
+            if (!/^[A-Z0-9.^-]{1,10}$/.test(sym) || !Number.isFinite(shares) || shares <= 0) continue;
+            const costRaw = Number(h.cost_basis);
+            const cost = Number.isFinite(costRaw) && costRaw > 0 ? Math.round(costRaw * 100) / 100 : 0;
+            const ex = d.invest.holdings.find((x) => x.symbol === sym);
+            if (ex) { ex.shares = shares; if (cost) ex.cost = cost; ex.src = "simplefin"; }
+            else d.invest.holdings.push({ id: crypto.randomUUID(), symbol: sym, shares, cost, src: "simplefin" });
+            updHold++;
+          }
         }
       }
       const assets = d.accounts.filter((x) => !DEBT.includes(x.type)).reduce((s, x) => s + (+x.balance || 0), 0);
@@ -850,7 +866,7 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
       d._rev = (d._rev || 0) + 1;
       writeData(req.userId, d);
     });
-    res.json({ ok: true, newTx, updAcc, warnings: warnings.slice(0, 3) });
+    res.json({ ok: true, newTx, updAcc, updHold, warnings: warnings.slice(0, 3) });
   } catch (e) { console.error("simplefin merge failed:", e.message); res.status(500).json({ error: "Synced but couldn't save — your existing data was left untouched" }); }
 });
 

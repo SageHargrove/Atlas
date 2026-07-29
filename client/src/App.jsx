@@ -399,7 +399,8 @@ function BankSync({ d, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBan
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Sync failed");
       await onReload();
-      setSfMsg("Synced — " + j.newTx + " new transactions, " + j.updAcc + " balances updated."
+      setSfMsg("Synced — " + j.newTx + " new transactions, " + j.updAcc + " balances updated"
+        + (j.updHold ? ", " + j.updHold + " holdings" : "") + "."
         + (j.warnings?.length ? " (" + j.warnings.join("; ") + ")" : ""));
     } catch (e) { setSfMsg("Sync failed — " + e.message); }
     setSfBusy(false);
@@ -1777,7 +1778,10 @@ function Invest({ d, setD, config }) {
               onChange={(e) => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ""; }} />
           </span>
         </div>
-        <div className="note" style={{ marginTop: 2 }}>Fidelity isn't covered by bank sync — export Positions as CSV from fidelity.com and import it here, or add holdings manually. Prices are delayed quotes, refreshed on demand.</div>
+        <div className="note" style={{ marginTop: 2 }}>
+          Connect a brokerage under <b>Accounts → Bank sync</b> and positions fill in automatically (SimpleFIN covers Fidelity).
+          Otherwise import a positions CSV or add tickers by hand. Prices are delayed quotes, refreshed on demand.
+        </div>
         {impMsg && <div className="note good">{impMsg}</div>}
         {qErr && <div className="err">{qErr}</div>}
 
