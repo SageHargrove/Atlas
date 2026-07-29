@@ -112,42 +112,31 @@ small amount of credit on the account — $5 lasts a very long time at this volu
 
 ---
 
-## 5. Bank sync (Teller)
+## 5. Bank sync (SimpleFIN Bridge)
 
-**Test in sandbox first — it costs nothing and uses fake data.**
+> **Teller is gone.** Teller withdrew its API product in July 2026 ("not able to
+> attract enough large customers"), and there is no longer any way to sign up —
+> the site is sign-in only. Atlas now uses **SimpleFIN Bridge**, which is built
+> for exactly this use case: read-only, personal-scale, self-hosted budgeting
+> tools. Nothing goes in `.env` — you paste a token in the app.
 
-1. Sign up free at **https://teller.io**
-2. In the dashboard, **create an application** → copy the **Application ID**
-   (`app_...`)
-3. `.env`: `TELLER_APP_ID=app_xxxxx` and `TELLER_ENV=sandbox` → restart
-4. In Atlas → **Accounts** → *Connect a bank* → pick any bank → log in with
-   Teller's fake credentials (username `username`, password `password`) →
-   **Sync now**. Transactions should appear in Budget.
+**Cost:** $1.50/month or **$15/year**, up to 25 institutions.
 
-**Then switch to your real banks:**
+1. Go to **https://beta-bridge.simplefin.org/** → **Get Started** → enter your
+   email → click the login link they email you → accept the terms.
+2. **Financial Institutions → New Connection** → log in at your bank. (A
+   subscription is required before the first bank can be added.)
+3. **Apps → New Connection** → name it `Atlas` → **Create Setup Token**.
+4. Copy the token, then in Atlas → **Accounts** → paste it into
+   *Connect your banks* → **Connect**. It syncs immediately.
 
-5. In the Teller dashboard, under your application's **Certificates**, generate
-   and download `certificate.pem` and `private_key.pem`
-6. Put them **outside** the repo folder (the repo gets overwritten on updates):
-   ```bash
-   mkdir -p /home/ubuntu/cache-secrets && chmod 700 /home/ubuntu/cache-secrets
-   # from your PC:
-   scp certificate.pem private_key.pem ubuntu@YOUR-SERVER-IP:/home/ubuntu/cache-secrets/
-   # back on the server:
-   chmod 600 /home/ubuntu/cache-secrets/*.pem
-   ```
-7. `.env`:
-   ```
-   TELLER_ENV=development
-   TELLER_CERT_PATH=/home/ubuntu/cache-secrets/certificate.pem
-   TELLER_KEY_PATH=/home/ubuntu/cache-secrets/private_key.pem
-   ```
-   → restart → Connect a bank → log in with your **real** bank credentials.
+Setup tokens are **one-time use** — if you need to reconnect, generate a new one.
+Your bank credentials go to SimpleFIN, never to your server; Atlas only ever
+holds a read-only access key, encrypted at rest, revocable from the SimpleFIN
+dashboard.
 
-Those credentials go to your bank through Teller and never touch your server;
-Atlas only ever receives a **read-only** access token, which it encrypts before
-storing. Revoke anytime from the Teller dashboard. `development` is the free
-tier (limited enrollments) and covers most major banks.
+**Brokerages** (Fidelity, etc.) aren't covered by bank sync — use the Invest
+tab's positions-CSV import instead (step 6).
 
 ---
 

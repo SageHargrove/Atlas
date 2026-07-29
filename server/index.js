@@ -456,8 +456,10 @@ app.get("/api/data", auth, (req, res) => {
   catch (e) { console.error("data read failed for", req.userId, e.message); return res.status(500).json({ error: "Could not read your data file" }); }
   const rev = d._rev || 0;
   if (!Object.keys(d).length) return res.json({ data: null, rev: 0 }); // brand-new user
-  /* bank access tokens never leave the server — strip them from the browser payload */
+  /* bank access tokens never leave the server — strip them from the browser payload.
+     For SimpleFIN the access URL embeds basic-auth credentials, so it is the secret. */
   if (Array.isArray(d.teller)) d.teller = d.teller.map(({ accessToken, ...rest }) => rest);
+  if (Array.isArray(d.simplefin)) d.simplefin = d.simplefin.map(({ accessToken, ...rest }) => rest);
   delete d._rev; // rev travels beside the data, not inside it
   res.json({ data: d, rev });
 });
@@ -481,6 +483,7 @@ app.put("/api/data", auth, async (req, res) => {
       const cur = existing._rev || 0;
       if ((Number(req.body.rev) || 0) !== cur) { conflictRev = cur; return; }
       d.teller = existing.teller || [];
+      d.simplefin = existing.simplefin || []; // server-authoritative; autosave can't touch credentials
       d._rev = newRev = cur + 1;
       writeData(req.userId, d);
     });
@@ -698,6 +701,169 @@ app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
     });
     res.json({ ok: true, newTx, updAcc });
   } catch (e) { console.error("sync merge failed:", e.message); res.status(500).json({ error: "Synced from your bank but couldn't save — your existing data was left untouched" }); }
+});
+
+/* ---------------- SimpleFIN (bank sync) ----------------
+   Teller withdrew its API in July 2026. SimpleFIN Bridge is the read-only,
+   personal-scale replacement: no app-level credential at all — the user pastes
+   a one-time setup token, which we exchange once for a long-lived access URL
+   (it embeds basic-auth credentials) and store encrypted, exactly like a token. */
+const SIMPLEFIN_TIMEOUT_MS = 30000;
+/* The claim URL arrives base64'd from the browser, so it is untrusted input and a
+   textbook SSRF vector (cloud metadata, localhost admin ports). Pin it to SimpleFIN. */
+const simplefinHostOk = (h) => h === "simplefin.org" || h.endsWith(".simplefin.org");
+function simplefinParts(accessUrl) {
+  const u = new URL(accessUrl);
+  const auth = "Basic " + Buffer.from(decodeURIComponent(u.username) + ":" + decodeURIComponent(u.password)).toString("base64");
+  u.username = ""; u.password = ""; // fetch() rejects inline credentials — send a header instead
+  return { base: u.toString().replace(/\/+$/, ""), auth };
+}
+async function simplefinFetch(accessUrl, sinceDays) {
+  const { base, auth } = simplefinParts(accessUrl);
+  const start = Math.floor(Date.now() / 1000) - sinceDays * 86400;
+  const r = await fetch(base + "/accounts?start-date=" + start, {
+    headers: { authorization: auth, accept: "application/json" },
+    signal: AbortSignal.timeout(SIMPLEFIN_TIMEOUT_MS),
+  });
+  if (r.status === 402) throw new Error("SimpleFIN says payment is required — check your subscription.");
+  if (r.status === 403) throw new Error("SimpleFIN denied access — reconnect this bank.");
+  if (!r.ok) throw new Error("SimpleFIN returned " + r.status);
+  return r.json();
+}
+/* SimpleFIN reports no account type, so infer one from the name; a wrong guess is
+   editable in the UI and only affects which side of net worth it lands on. */
+function guessType(name) {
+  const n = String(name || "").toLowerCase();
+  if (/credit|card|visa|mastercard|amex/.test(n)) return "Credit card";
+  if (/save|saving|hysa|money ?market/.test(n)) return "Savings / HYSA";
+  if (/check|chequing|debit/.test(n)) return "Checking";
+  if (/401|403b|ira|roth|brokerage|invest/.test(n)) return "Brokerage";
+  if (/mortgage/.test(n)) return "Mortgage";
+  if (/auto|car loan/.test(n)) return "Auto loan";
+  if (/student/.test(n)) return "Student loan";
+  if (/loan/.test(n)) return "Other debt";
+  return "Checking";
+}
+
+app.post("/api/simplefin/claim", auth, authLimiter, async (req, res) => {
+  const token = String(req.body?.setupToken || "").trim();
+  if (!token) return res.status(400).json({ error: "Paste your SimpleFIN setup token first." });
+  let claimUrl;
+  try {
+    claimUrl = Buffer.from(token, "base64").toString("utf8").trim();
+    const u = new URL(claimUrl);
+    if (u.protocol !== "https:" || !simplefinHostOk(u.hostname)) throw new Error("bad host");
+  } catch { return res.status(400).json({ error: "That doesn't look like a SimpleFIN setup token." }); }
+
+  let accessUrl;
+  try {
+    /* no manual content-length — undici throws on redirect if it is set, and the
+       legacy bridge.simplefin.org host 302s to beta-bridge */
+    const r = await fetch(claimUrl, { method: "POST", signal: AbortSignal.timeout(20000) });
+    if (r.status === 403) return res.status(400).json({ error: "SimpleFIN says that token was already used — setup tokens are one-time, so create a fresh one." });
+    if (!r.ok) return res.status(502).json({ error: "SimpleFIN rejected the token (" + r.status + ")." });
+    accessUrl = (await r.text()).trim();
+    const a = new URL(accessUrl);
+    if (a.protocol !== "https:" || !simplefinHostOk(a.hostname)) throw new Error("bad access url");
+  } catch (e) {
+    console.error("simplefin claim failed:", e.message);
+    return res.status(502).json({ error: "Couldn't claim that token. Make sure it's a fresh, unused setup token copied whole from SimpleFIN → Apps → New Connection." });
+  }
+  try {
+    await withLock("data:" + req.userId, () => {
+      const d = readData(req.userId);
+      d.simplefin = d.simplefin || [];
+      d.simplefin.push({
+        id: crypto.randomUUID(), accessToken: encSecret(accessUrl), // encrypted at rest
+        institution: String(req.body.label || "SimpleFIN").slice(0, 60), added: new Date().toISOString().slice(0, 10),
+      });
+      d._rev = (d._rev || 0) + 1;
+      writeData(req.userId, d);
+    });
+    res.json({ ok: true });
+  } catch (e) { console.error("simplefin save failed:", e.message); res.status(500).json({ error: "Claimed the token but couldn't save the connection." }); }
+});
+
+app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
+  let conns;
+  try { conns = readData(req.userId).simplefin || []; }
+  catch (e) { console.error("simplefin sync read failed:", e.message); return res.status(500).json({ error: "Could not read your data file" }); }
+  if (!conns.length) return res.status(400).json({ error: "No SimpleFIN connection yet" });
+
+  /* PHASE 1 — network, no lock held (a slow sync must not block the browser's autosave) */
+  const sets = [];
+  const warnings = [];
+  try {
+    for (const c of conns) {
+      const url = decSecret(c.accessToken);
+      if (!url) continue; // undecryptable (SESSION_SECRET changed) — skip rather than crash
+      const set = await simplefinFetch(url, 120);
+      (set.errors || set.errlist || []).forEach((e) => warnings.push(typeof e === "string" ? e : e.msg || "connection error"));
+      sets.push(set);
+    }
+  } catch (e) {
+    console.error("simplefin sync error:", e.message);
+    return res.status(502).json({ error: e.message });
+  }
+
+  /* PHASE 2 — merge into current on-disk state under the lock (brief) */
+  let newTx = 0, updAcc = 0;
+  try {
+    await withLock("data:" + req.userId, () => {
+      const d = readData(req.userId);
+      d.accounts = d.accounts || []; d.txns = d.txns || [];
+      for (const set of sets) {
+        for (const a of set.accounts || []) {
+          const sfId = "sf:" + a.id;
+          let acc = d.accounts.find((x) => x.tellerId === sfId);
+          if (!acc) {
+            acc = {
+              id: crypto.randomUUID(), tellerId: sfId,
+              name: ((a.org && (a.org.name || a.org.domain)) ? a.org.name || a.org.domain : "") + (a.name ? " " + a.name : "") || a.name || "Account",
+              type: guessType(a.name), balance: 0, rate: "",
+            };
+            acc.name = acc.name.trim().slice(0, 60);
+            d.accounts.push(acc);
+          }
+          const bal = Number(a.balance);
+          if (Number.isFinite(bal)) { acc.balance = DEBT.includes(acc.type) ? Math.abs(bal) : bal; updAcc++; }
+          for (const t of a.transactions || []) {
+            const tid = "sf:" + t.id;
+            if (d.txns.some((x) => x.tellerId === tid)) continue;
+            const amt = Number(t.amount);
+            if (!Number.isFinite(amt) || amt === 0) continue;
+            const date = new Date((Number(t.posted) || 0) * 1000).toISOString().slice(0, 10);
+            const note = String(t.description || t.payee || "").slice(0, 60);
+            if (amt < 0) d.txns.push({ id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind: "out", date, amount: Math.round(-amt * 100) / 100, catId: "", note });
+            else d.txns.push({ id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind: "in", date, amount: Math.round(amt * 100) / 100, catId: "", note });
+            newTx++;
+          }
+        }
+      }
+      const assets = d.accounts.filter((x) => !DEBT.includes(x.type)).reduce((s, x) => s + (+x.balance || 0), 0);
+      const debts = d.accounts.filter((x) => DEBT.includes(x.type)).reduce((s, x) => s + (+x.balance || 0), 0);
+      const today = new Date().toISOString().slice(0, 10);
+      d.history = (d.history || []).filter((h) => h.date !== today);
+      d.history.push({ date: today, assets, debts, nw: assets - debts });
+      d.history.sort((x, y) => x.date.localeCompare(y.date));
+      d.lastSync = new Date().toISOString();
+      d._rev = (d._rev || 0) + 1;
+      writeData(req.userId, d);
+    });
+    res.json({ ok: true, newTx, updAcc, warnings: warnings.slice(0, 3) });
+  } catch (e) { console.error("simplefin merge failed:", e.message); res.status(500).json({ error: "Synced but couldn't save — your existing data was left untouched" }); }
+});
+
+app.delete("/api/simplefin/:id", auth, async (req, res) => {
+  try {
+    await withLock("data:" + req.userId, () => {
+      const d = readData(req.userId);
+      d.simplefin = (d.simplefin || []).filter((x) => x.id !== req.params.id);
+      d._rev = (d._rev || 0) + 1;
+      writeData(req.userId, d);
+    });
+    res.json({ ok: true });
+  } catch (e) { console.error("simplefin removal failed:", e.message); res.status(500).json({ error: "Could not remove the connection" }); }
 });
 
 app.delete("/api/teller/:id", auth, async (req, res) => {

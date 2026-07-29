@@ -1,6 +1,6 @@
 # Atlas — self-hosted personal finance, multi-user
 
-React + Express. Real bank sync (Teller, read-only), an Invest tab with live
+React + Express. Real bank sync (SimpleFIN, read-only), an Invest tab with live
 delayed quotes + watchlist + Fidelity positions-CSV import, AI categorization
 and budgeting (your Anthropic key, server-side), full dashboard with donut
 breakdowns, budgets, goals, debt payoff with promo-APR tracking, purchase
@@ -44,20 +44,21 @@ running on port 3001 — close that terminal (or `Stop-Process`) and rerun.
 The server reads `.env` once at startup, so restart it after editing.
 
 Minimum .env to test: set `SESSION_SECRET` and `INVITE_CODE` to anything.
-Leave Teller in `sandbox` and AI blank if you just want to click around.
+Leave bank sync and AI unconfigured if you just want to click around.
 
 1. Open the app → **Create account** — the FIRST account on a fresh server
    needs no invite code. Everyone after that needs `INVITE_CODE`.
-2. Add accounts/budgets manually, or test bank sync in sandbox:
-   set `TELLER_APP_ID` from https://teller.io (free), keep `TELLER_ENV=sandbox`,
-   click Connect a bank on the Accounts tab, log in with Teller's fake
-   credentials (username `username`, password `password`), then Sync now.
+2. Add accounts/budgets manually, or connect real banks: sign up at
+   https://beta-bridge.simplefin.org ($15/yr), add your institutions, create a
+   setup token under **Apps → New Connection**, and paste it into the Accounts
+   tab. Nothing goes in `.env`.
 3. Add `ANTHROPIC_API_KEY` to test AI categorize / budget recommendations /
    the Plan review.
 
-When it all looks right, switch to real banks: download your Teller
-**certificate + private key** into `server/certs/`, set the paths in `.env`,
-and change `TELLER_ENV=development` (Teller's free personal tier).
+> **On Teller:** earlier versions of this app synced through Teller. Teller
+> withdrew its API product in July 2026 and no longer accepts signups, so
+> SimpleFIN Bridge is the supported path. The Teller endpoints remain in the
+> server so any existing enrollment keeps working until those servers go dark.
 
 ## What syncs, exactly
 - Balances for every connected account, on demand (Sync now)
@@ -67,8 +68,8 @@ and change `TELLER_ENV=development` (Teller's free personal tier).
   Transfers between your own accounts will show up here too — delete the
   noise; income math only counts what you keep.
 - Every sync logs a net-worth snapshot for the Dashboard trend
-- **Fidelity / investment accounts aren't covered by Teller** — keep them
-  manual and update balances monthly
+- **Brokerages (Fidelity etc.) aren't covered by bank sync** — use the Invest
+  tab's positions-CSV import, which also keeps the account balance current
 
 ## Invest tab
 - Market strip (S&P 500 / Nasdaq 100 / Dow) with delayed quotes, refreshed
@@ -99,8 +100,8 @@ and change `TELLER_ENV=development` (Teller's free personal tier).
 - Each user: separate login, separate `data-<id>.json`, separate bank
   connections; nobody can see anyone else's data
 - Passwords are scrypt-hashed; sessions are HMAC-signed httpOnly cookies
-- Note: everyone shares YOUR Anthropic key (costs cents, but it's your cents)
-  and YOUR Teller app (free tier limits total enrollments)
+- Note: everyone shares YOUR Anthropic key (costs cents, but it's your cents).
+  Bank sync is per-user — each person brings their own SimpleFIN token
 
 ## Deploying
 See **DEPLOY-ORACLE.md** for the full Oracle Cloud walkthrough (systemd +
@@ -109,9 +110,9 @@ run `npm start`, put HTTPS in front, set `FORCE_SECURE_COOKIE=1`, and point
 `DATA_DIR` somewhere persistent that gets backed up.
 
 ## Security notes
-- Bank login happens on the bank's own page via Teller Connect — credentials
-  never touch this app; tokens are read-only and revocable in your Teller
-  dashboard
+- Bank login happens at SimpleFIN, not here — your bank credentials never touch
+  this app. It only ever holds a read-only access key, encrypted at rest with
+  AES-256-GCM and revocable from your SimpleFIN dashboard
 - All secrets stay server-side in `.env` (gitignored)
 - Never commit `.env`, `server/certs/`, `users.json`, or `data-*.json`
 - Back up the data files; they ARE the database

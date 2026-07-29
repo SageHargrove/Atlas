@@ -369,9 +369,110 @@ const ChartBox = ({ data, dataKey, xKey, height = 180, color = "var(--up)", glow
   </div>
 );
 
+/* ---------------- bank sync (SimpleFIN) ---------------- */
+
+function BankSync({ d, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBank, onReload }) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [sfBusy, setSfBusy] = useState(false);
+  const [sfMsg, setSfMsg] = useState("");
+  const conns = d.simplefin || [];
+  const legacy = d.teller || [];
+
+  const claim = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const r = await fetch("/api/simplefin/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ setupToken: token.trim() }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Failed");
+      setToken(""); setMsg("Connected. Syncing…");
+      await onReload();
+      await syncNow();
+    } catch (e) { setMsg(e.message); }
+    setBusy(false);
+  };
+  const syncNow = async () => {
+    setSfBusy(true); setSfMsg("");
+    try {
+      const r = await fetch("/api/simplefin/sync", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Sync failed");
+      await onReload();
+      setSfMsg("Synced — " + j.newTx + " new transactions, " + j.updAcc + " balances updated."
+        + (j.warnings?.length ? " (" + j.warnings.join("; ") + ")" : ""));
+    } catch (e) { setSfMsg("Sync failed — " + e.message); }
+    setSfBusy(false);
+    setTimeout(() => setSfMsg(""), 9000);
+  };
+  const remove = async (id) => {
+    if (!confirm("Disconnect this SimpleFIN connection? Your existing transactions stay.")) return;
+    await fetch("/api/simplefin/" + id, { method: "DELETE" });
+    await onReload();
+  };
+
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3>Bank sync</h3>
+        <span className="note" style={{ margin: 0 }}>{d.lastSync ? "last sync " + d.lastSync.slice(0, 16).replace("T", " ") : "not connected"}</span>
+      </div>
+      <div className="note">
+        Read-only sync via <b>SimpleFIN Bridge</b> ($15/yr, up to 25 institutions). You log in at your bank
+        through SimpleFIN — your credentials never touch this app, and this app only ever holds a read-only
+        key you can revoke from your SimpleFIN dashboard.
+      </div>
+
+      {conns.map((c) => (
+        <div className="kv" key={c.id}>
+          <span className="k">{c.institution} <span style={{ color: "var(--faint)", fontSize: 11.5 }}>· connected {c.added}</span></span>
+          <button className="x" title="Disconnect" onClick={() => remove(c.id)}>✕</button>
+        </div>
+      ))}
+
+      {conns.length > 0 && (
+        <div className="mrow" style={{ justifyContent: "flex-start" }}>
+          <button className="btn primary" disabled={sfBusy} onClick={syncNow}>{sfBusy ? "Syncing…" : "Sync now"}</button>
+        </div>
+      )}
+      {sfMsg && <div className={"note " + (sfMsg.startsWith("Sync failed") ? "bad" : "good")}>{sfMsg}</div>}
+
+      <label className="f">{conns.length ? "Add another connection" : "Connect your banks"}</label>
+      <div className="row">
+        <input className="in mono" style={{ flex: 1, minWidth: 200, fontSize: 12.5 }} placeholder="Paste your SimpleFIN setup token…"
+          value={token} onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => e.key === "Enter" && token.trim() && claim()} />
+        <button className="btn primary" disabled={busy || !token.trim()} onClick={claim}>{busy ? "Connecting…" : "Connect"}</button>
+      </div>
+      {msg && <div className={"note " + (msg.startsWith("Connected") ? "good" : "bad")}>{msg}</div>}
+      <div className="note">
+        Get a token: sign up at <a href="https://beta-bridge.simplefin.org/" target="_blank" rel="noreferrer noopener" style={{ color: "var(--acc)" }}>beta-bridge.simplefin.org</a> →
+        add your banks under <b>Financial Institutions</b> → then <b>Apps → New Connection</b> → <b>Create Setup Token</b>. Tokens are one-time use.
+      </div>
+      <div className="note">Synced transactions land in Budget as "uncategorized" for you (or the AI) to sort. Brokerages like Fidelity aren't covered — use the Invest tab's positions-CSV import instead.</div>
+
+      {legacy.length > 0 && (
+        <>
+          <label className="f">Teller (discontinued)</label>
+          <div className="note" style={{ marginTop: 0 }}>Teller withdrew its API in July 2026. Existing connections may still sync until their servers go dark; new ones aren't possible.</div>
+          {legacy.map((t) => (
+            <div className="kv" key={t.id}>
+              <span className="k">{t.institution} <span style={{ color: "var(--faint)", fontSize: 11.5 }}>· connected {t.added}</span></span>
+              <span className="row" style={{ gap: 6 }}>
+                <button className="btn small" disabled={syncBusy} onClick={onSync}>{syncBusy ? "Syncing…" : "Sync"}</button>
+                <button className="x" title="Disconnect" onClick={() => onRemoveBank(t.id)}>✕</button>
+              </span>
+            </div>
+          ))}
+          {syncMsg && <div className="note good">{syncMsg}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- Overview tab ---------------- */
 
-function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBank }) {
+function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBank, onReload }) {
   const assets = sumAssets(d.accounts), debts = sumDebts(d.accounts), nw = assets - debts;
   const [adding, setAdding] = useState(false);
   const [na, setNa] = useState({ name: "", type: "Checking", balance: "" });
@@ -397,26 +498,8 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRem
 
   return (
     <>
-      <div className="card">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>Bank sync</h3>
-          <span className="note" style={{ margin: 0 }}>{d.lastSync ? "last sync " + d.lastSync.slice(0, 16).replace("T", " ") : "not connected"}</span>
-        </div>
-        <div className="note">Read-only connections via Teller — you log in on your bank's page, credentials never touch this app, and tokens are revocable in your Teller dashboard.</div>
-        {(d.teller || []).map((t) => (
-          <div className="kv" key={t.id}>
-            <span className="k">{t.institution} <span style={{ color: "var(--faint)", fontSize: 11.5 }}>· connected {t.added}</span></span>
-            <button className="x" title="Disconnect" onClick={() => onRemoveBank(t.id)}>✕</button>
-          </div>
-        ))}
-        <div className="mrow" style={{ justifyContent: "flex-start" }}>
-          <button className="btn primary" disabled={!config.tellerAppId} onClick={onConnect}>Connect a bank</button>
-          <button className="btn" disabled={syncBusy || !(d.teller || []).length} onClick={onSync}>{syncBusy ? "Syncing…" : "Sync now"}</button>
-        </div>
-        {!config.tellerAppId && <div className="note">Set TELLER_APP_ID (and cert paths) in .env, then restart the server.</div>}
-        {syncMsg && <div className="note good">{syncMsg}</div>}
-        <div className="note">Synced transactions land in Budget as "uncategorized" for you (or the AI) to sort. Fidelity isn't covered by Teller — keep it as a manual account.</div>
-      </div>
+      <BankSync d={d} config={config} syncBusy={syncBusy} syncMsg={syncMsg}
+        onConnect={onConnect} onSync={onSync} onRemoveBank={onRemoveBank} onReload={onReload} />
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
@@ -1295,7 +1378,7 @@ function FinanceHQ({ config }) {
         )}
         {syncNotice && <div className="banner">{syncNotice}</div>}
         {tab === "dash" && <Dashboard d={d} setTab={setTab} />}
-        {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onConnect={connectBank} onSync={syncNow} onRemoveBank={removeBank} />}
+        {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onConnect={connectBank} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
         {tab === "budget" && <Budget d={d} setD={setD} config={config} />}
         {tab === "invest" && <Invest d={d} setD={setD} config={config} />}
         {tab === "goals" && <Goals d={d} setD={setD} />}
