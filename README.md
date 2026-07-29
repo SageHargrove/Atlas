@@ -21,6 +21,10 @@ revision-checked saves so two devices can never silently overwrite each other.
 Manage all of it from the **Security** panel in-app. See `DEPLOY-ORACLE.md`
 for VM hardening + encrypted backups.
 
+**Already deployed?** `SETUP.md` is the step-by-step checklist for getting a
+live instance fully configured — passkeys, bank sync, AI key, investments,
+backups.
+
 ## Test locally first (do this before deploying)
 
 ```
