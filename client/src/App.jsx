@@ -259,6 +259,11 @@ const CSS = `
 .fh .chip{ display:inline-flex; align-items:center; gap:7px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:5px 10px; font-size:12.5px; }
 .fh .dot{ width:9px; height:9px; border-radius:3px; flex-shrink:0; }
 .fh .glow .recharts-line-curve{ filter:drop-shadow(0 0 6px color-mix(in srgb, var(--up) 55%, transparent)); }
+/* logo: pages sweep open from the spine on mount, and again on hover */
+.fh .atlas-logo .pg{ transform-origin:24px 24px; animation:pageOpen .62s cubic-bezier(.22,.9,.28,1) both; }
+.fh .atlas-logo .pgr{ animation-delay:.07s; }
+.fh .brand:hover .atlas-logo .pg{ animation:pageOpen .5s cubic-bezier(.22,.9,.28,1) both; }
+@keyframes pageOpen{ from{ transform:scaleX(.06); opacity:.35; } to{ transform:none; opacity:1; } }
 .fh .banner{ border:1px solid var(--acc); background:var(--acc-soft); border-radius:12px; padding:10px 14px; margin-top:12px; font-size:13px; animation:rise .3s ease both; }
 @media (max-width:760px){
   .fh .grid2,.fh .grid3{ grid-template-columns:1fr; }
@@ -274,19 +279,24 @@ const CSS = `
 
 /* ---------------- shared bits ---------------- */
 
-/* Atlas mark: an A-peak with a rising baseline */
-const Logo = ({ size = 30 }) => (
-  <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
-    <defs>
-      <linearGradient id="atlas-g" x1="0" y1="48" x2="48" y2="0">
-        <stop offset="0" stopColor="#2a78d6" /><stop offset="1" stopColor="#34d399" />
-      </linearGradient>
-    </defs>
-    <rect x="1" y="1" width="46" height="46" rx="14" fill="url(#atlas-g)" />
-    <path d="M12 33 L24 13 L36 33" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M17.5 26.5 h13" stroke="#fff" strokeWidth="4.5" strokeLinecap="round" />
-  </svg>
-);
+/* Atlas mark: an open book — an atlas is literally a book of maps. The pages
+   sweep open from the spine on mount and again on hover. */
+const Logo = ({ size = 30 }) => {
+  /* useId() contains ':' which is invalid inside url(#…) — strip it */
+  const gid = "atlas" + React.useId().replace(/:/g, "");
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" className="atlas-logo" role="img" aria-label="Atlas">
+      <defs>
+        <linearGradient id={gid} gradientUnits="userSpaceOnUse" x1="0" y1="48" x2="48" y2="0">
+          <stop offset="0" stopColor="#2a78d6" /><stop offset="1" stopColor="#34d399" />
+        </linearGradient>
+      </defs>
+      <rect x="1" y="1" width="46" height="46" rx="14" fill={`url(#${gid})`} />
+      <path className="pg pgl" d="M24 17C20.5 14 14.5 12.8 9.5 13.4V31.6C14.5 31 20.5 32.2 24 35.2Z" fill="#fff" />
+      <path className="pg pgr" d="M24 17C27.5 14 33.5 12.8 38.5 13.4V31.6C33.5 31 27.5 32.2 24 35.2Z" fill="#fff" fillOpacity=".82" />
+    </svg>
+  );
+};
 
 /* categorical series colors — validated palette, assigned by entity (stable index), never by rank */
 const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
