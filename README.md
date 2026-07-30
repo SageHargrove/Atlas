@@ -12,6 +12,8 @@ insights, cross-month transaction search, and one-click CSV/JSON export.
 Registration is invite-code gated so you can share with friends/family —
 every user's data lives in its own file, invisible to other users.
 
+![Atlas dashboard — net-worth trend, cash-flow tiles, category donut](docs/screenshots/Dashboard.png)
+
 **Security:** passkeys (WebAuthn — fingerprint/face/PIN, phishing-resistant)
 with one-time recovery codes, and an optional **passkey-only mode** that turns
 password sign-in off entirely; scrypt-hashed passwords otherwise, with in-app
@@ -27,6 +29,20 @@ for VM hardening + encrypted backups.
 **Already deployed?** `SETUP.md` is the step-by-step checklist for getting a
 live instance fully configured — passkeys, bank sync, AI key, investments,
 backups.
+
+## Screenshots
+
+![Accounts — read-only bank sync via SimpleFIN, net-worth history, synced balances](docs/screenshots/Accounts.png)
+
+![Budget — per-category budgets with AI recommend, transaction log with search](docs/screenshots/Budget.png)
+
+![Invest — synced holdings with live values, allocation, watchlist](docs/screenshots/Invest.png)
+
+![Goals — savings goals with pace-to-target tracking](docs/screenshots/Goals.png)
+
+![Plan — money order of operations, emergency fund and 401k match calculators](docs/screenshots/Plan.png)
+
+![Security — passkeys enrolled, recovery codes, passkey-only mode on](docs/screenshots/Security.png)
 
 ## Test locally first (do this before deploying)
 
