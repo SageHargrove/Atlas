@@ -20,6 +20,13 @@ budgets, goals, debt payoff with promo-APR tracking, purchase planner,
 subscription radar (auto-detects recurring charges), cross-month transaction
 search, and one-click CSV/JSON export. **Installable** — add it to your phone's home screen and it
 runs like a native app.
+
+There's also a **Career** tab, because the biggest lever on your finances is
+usually your income: track applications with cost-of-living-adjusted comp tiers,
+keep your resume as a PDF (previewed in-app, text extracted so you and the AI
+can edit it, then rebuilt back into a PDF), tailor it per role, and ask what an
+offer would actually do to your budget, runway, and goal dates.
+
 Registration is invite-code gated so you can share with friends/family —
 every user's data lives in its own file, invisible to other users.
 
