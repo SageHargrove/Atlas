@@ -4,7 +4,7 @@
    and account names; a cache entry would leave financial data sitting in the
    browser's storage long after sign-out. Only the public app shell (hashed JS/CSS
    bundles and icons) is stored, so a stale cache can never show stale money. */
-const CACHE = "atlas-shell-v2";
+const CACHE = "atlas-shell-v3";
 const SHELL = ["/", "/icon-192.png", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
@@ -45,8 +45,22 @@ self.addEventListener("fetch", (e) => {
   if (!cacheable) return;
   e.respondWith(
     caches.match(req).then((hit) => hit || fetch(req).then((r) => {
-      if (r.ok) { const copy = r.clone(); caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {}); }
+      if (r.ok) {
+        const copy = r.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy).then(() => trim(c))).catch(() => {});
+      }
       return r;
     }))
   );
 });
+
+/* Every deploy ships new fingerprinted filenames, and this worker's own file
+   rarely changes — so without pruning, the cache accumulates one dead bundle
+   set per release forever. Keep the newest entries and drop the rest. */
+const MAX_ENTRIES = 40;
+async function trim(cache) {
+  const keys = await cache.keys();
+  const assets = keys.filter((k) => new URL(k.url).pathname.startsWith("/assets/"));
+  if (assets.length <= MAX_ENTRIES) return;
+  await Promise.all(assets.slice(0, assets.length - MAX_ENTRIES).map((k) => cache.delete(k)));
+}

@@ -38,7 +38,12 @@ app.use(helmet({
   },
   crossOriginEmbedderPolicy: false, // Teller Connect opens a cross-origin popup/iframe
 }));
-app.use(express.json({ limit: "5mb" }));
+/* Body limits are per-route so that an UNAUTHENTICATED request to /api/login can't
+   make us JSON.parse megabytes on the event loop. Only the two endpoints that
+   legitimately carry bulk get the big limits; everything else stays small. */
+app.use("/api/resume", express.json({ limit: "4mb" }));   // a PDF, base64'd
+app.use("/api/data", express.json({ limit: "2mb" }));     // the whole finance blob
+app.use(express.json({ limit: "128kb" }));
 app.use(cookieParser());
 
 /* passkey relying-party config — also reused by the Origin check below */
@@ -74,6 +79,9 @@ const aiLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 40, standardHeade
 /* each sync fans out to many bank API calls — keep it from hammering Teller */
 const syncLimiter = rateLimit({ windowMs: 5 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false, message: { error: "Too many syncs — wait a few minutes." } });
 const quoteLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false, message: { error: "Quote rate limit reached — try again shortly." } });
+/* autosave fires every ~500ms while typing, so this has to be generous — it exists
+   to bound disk churn from a runaway client, not to police normal use */
+const writeLimiter = rateLimit({ windowMs: 60 * 1000, limit: 240, standardHeaders: true, legacyHeaders: false, message: { error: "Too many writes — pausing briefly." } });
 
 /* ---------------- helpers ---------------- */
 const readJSON = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } };
@@ -338,6 +346,9 @@ app.post("/api/webauthn/register/verify", auth, async (req, res) => {
 /* log in with a passkey */
 app.post("/api/webauthn/auth/options", authLimiter, async (req, res) => {
   const uname = String(req.body.username || "").trim().toLowerCase();
+  /* same shape registration enforces — this string becomes a Map key below, so
+     an unbounded one is free memory for an attacker */
+  if (!/^[a-z0-9_.-]{3,24}$/.test(uname)) return res.status(400).json({ error: "Enter your username first" });
   const user = users().find((x) => x.username === uname);
   const opts = await generateAuthenticationOptions({
     rpID: RP_ID,
@@ -463,12 +474,15 @@ app.get("/api/data", auth, (req, res) => {
   delete d._rev; // rev travels beside the data, not inside it
   res.json({ data: d, rev });
 });
-app.put("/api/data", auth, async (req, res) => {
+app.put("/api/data", auth, writeLimiter, async (req, res) => {
   const d = req.body?.data;
   if (d === null || d === undefined || typeof d !== "object" || Array.isArray(d)) return res.status(400).json({ error: "Invalid data payload" });
   /* the client renders these as arrays — refuse a payload that would corrupt them */
   for (const k of ["accounts", "txns", "cats", "goals", "recurring", "purchases", "history"])
     if (k in d && !Array.isArray(d[k])) return res.status(400).json({ error: "Invalid data payload (" + k + ")" });
+  /* the sync merge is quadratic in txns, so an absurd array would pin the event
+     loop for every user on this server, not just the one who sent it */
+  if (Array.isArray(d.txns) && d.txns.length > 25000) return res.status(413).json({ error: "Too many transactions (25,000 max)" });
   if (d.settings != null && (typeof d.settings !== "object" || Array.isArray(d.settings))) return res.status(400).json({ error: "Invalid data payload (settings)" });
   if (d.invest != null && (typeof d.invest !== "object" || Array.isArray(d.invest))) return res.status(400).json({ error: "Invalid data payload (invest)" });
   if (d.career != null && (typeof d.career !== "object" || Array.isArray(d.career))) return res.status(400).json({ error: "Invalid data payload (career)" });
@@ -501,7 +515,7 @@ app.put("/api/data", auth, async (req, res) => {
 const resumePath = (uid) => path.join(DATA_DIR, "resume-" + uid + ".pdf");
 const MAX_RESUME_BYTES = 2.5 * 1024 * 1024;
 
-app.put("/api/resume", auth, (req, res) => {
+app.put("/api/resume", auth, writeLimiter, (req, res) => {
   const b64 = String(req.body?.pdf || "");
   if (!b64) return res.status(400).json({ error: "No file received" });
   let buf;
@@ -517,12 +531,26 @@ app.put("/api/resume", auth, (req, res) => {
   } catch (e) { console.error("resume write failed:", e.message); res.status(500).json({ error: "Could not save the resume" }); }
 });
 
+/* stream.pipe() attaches an error handler to the DESTINATION only — an error on
+   the read stream would be unhandled and take the whole process down with it.
+   (Reproduced: delete the file between the exists-check and the open, or point
+   the path at anything unreadable, and the server exits.) So: no exists-check
+   race, headers only once the file is actually open, and the fd released if the
+   client walks away mid-download. */
 app.get("/api/resume", auth, (req, res) => {
-  const p = resumePath(req.userId);
-  if (!fs.existsSync(p)) return res.status(404).json({ error: "No resume uploaded" });
-  res.type("application/pdf");
-  res.set("Content-Disposition", 'inline; filename="resume.pdf"');
-  fs.createReadStream(p).pipe(res);
+  const stream = fs.createReadStream(resumePath(req.userId));
+  stream.once("open", () => {
+    res.type("application/pdf");
+    res.set("Content-Disposition", 'inline; filename="resume.pdf"');
+    stream.pipe(res);
+  });
+  stream.on("error", (e) => {
+    if (e.code !== "ENOENT") console.error("resume read failed:", e.code || e.message);
+    if (res.headersSent) return res.destroy();
+    res.status(e.code === "ENOENT" ? 404 : 500)
+      .json({ error: e.code === "ENOENT" ? "No resume uploaded" : "Could not read the resume" });
+  });
+  res.on("close", () => stream.destroy());
 });
 
 app.delete("/api/resume", auth, (req, res) => {
@@ -570,7 +598,10 @@ function reserveAi(uid) {
   return withLock("ai-usage", () => {
     try {
       const today = new Date().toISOString().slice(0, 10);
-      let u = readJSON(AI_USAGE_PATH, null);
+      /* distinguish "no file yet" from "file is corrupt" — treating a corrupt
+         file as a new day silently resets the spend cap, which is the opposite
+         of failing closed */
+      let u = fs.existsSync(AI_USAGE_PATH) ? JSON.parse(fs.readFileSync(AI_USAGE_PATH, "utf8")) : null;
       if (!u || u.date !== today) u = { date: today, total: 0, byUser: {} }; // new day → reset
       if (u.total >= AI_DAILY_LIMIT) return { ok: false, error: "This server's daily AI limit is reached — resets tomorrow." };
       if ((u.byUser[uid] || 0) >= AI_USER_DAILY_LIMIT) return { ok: false, error: "You've reached today's AI limit — resets tomorrow." };

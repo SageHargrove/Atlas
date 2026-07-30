@@ -1524,23 +1524,31 @@ function FinanceHQ({ config }) {
      looked exactly like a successful one — surface it instead, and keep retrying.
      A 409 means another device saved since we loaded — pull the latest instead of clobbering it. */
   const [syncNotice, setSyncNotice] = useState("");
+  /* Saves run one at a time through this chain. Two overlapping PUTs would both
+     carry the same revision, so the second loses a 409 against our OWN first
+     write — and the 409 handler reloads from the server, throwing away whatever
+     was typed in between. (That was reproducible just by typing on a connection
+     with any real latency.) Serializing, and recording the new revision even when
+     the effect that started the save has been superseded, is what fixes it. */
+  const saveChain = useRef(Promise.resolve());
   useEffect(() => {
     if (!loaded) return;
     let cancelled = false;
-    const t = setTimeout(async () => {
-      try {
-        const r = await fetch("/api/data", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: d, rev: revRef.current }) });
-        if (cancelled) return;
-        if (r.ok) {
+    const t = setTimeout(() => {
+      saveChain.current = saveChain.current.then(async () => {
+        try {
+          const r = await fetch("/api/data", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: d, rev: revRef.current }) });
           const j = await r.json().catch(() => ({}));
-          if (j.rev != null) revRef.current = j.rev;
-          setSaveErr("");
-        } else if (r.status === 409) {
-          setSyncNotice("Another device saved changes — loaded the latest version.");
-          setTimeout(() => setSyncNotice(""), 7000);
-          await loadData();
-        } else setSaveErr((await r.json().catch(() => ({}))).error || "Couldn't save (HTTP " + r.status + ")");
-      } catch (e) { if (!cancelled) setSaveErr("Couldn't reach the server — changes aren't saved yet."); }
+          if (r.ok && j.rev != null) revRef.current = j.rev; // must happen even if cancelled
+          if (cancelled) return;
+          if (r.ok) setSaveErr("");
+          else if (r.status === 409) {
+            setSyncNotice("Another device saved changes — loaded the latest version.");
+            setTimeout(() => setSyncNotice(""), 7000);
+            await loadData();
+          } else setSaveErr(j.error || "Couldn't save (HTTP " + r.status + ")");
+        } catch (e) { if (!cancelled) setSaveErr("Couldn't reach the server — changes aren't saved yet."); }
+      });
     }, 500);
     return () => { cancelled = true; clearTimeout(t); };
   }, [d, loaded, saveNonce]);
@@ -1584,6 +1592,8 @@ function FinanceHQ({ config }) {
   /* Once a month has closed, write its recap on its own — one call, stored with
      your data, never repeated. Skipped if the month had no activity. */
   const recapTried = useRef(false);
+  const dRef = useRef(d);
+  dRef.current = d;
   useEffect(() => {
     if (!loaded || !config?.aiEnabled || recapTried.current) return;
     const last = prevMonth(thisMonth());
@@ -1591,7 +1601,10 @@ function FinanceHQ({ config }) {
     if (!d.txns.some((t) => (t.date || "").startsWith(last))) return;
     recapTried.current = true;
     let cancelled = false;
-    generateRecap(d, last)
+    /* Wait a beat so the retro categorization pass above has committed — otherwise
+       the one recap we ever write describes a month that was still "Uncategorized",
+       and the guard above stops it from ever being rewritten. */
+    new Promise((r) => setTimeout(r, 1200)).then(() => generateRecap(dRef.current, last))
       .then((text) => {
         if (cancelled) return;
         setD((p) => ({ ...p, settings: { ...p.settings, recaps: { ...(p.settings.recaps || {}), [last]: text } } }));
@@ -2119,15 +2132,28 @@ function Merchants({ d, setD }) {
   }, [d.txns, range, sort, q]);
 
   const grand = rows.reduce((s, r) => s + r.total, 0);
+  /* The card promises "all of that merchant's transactions", so match on the
+     merchant key across the whole ledger — not just the rows the range filter
+     happens to be showing. */
+  const allFor = (r, txns) => txns.filter((t) => t.kind === "out" && (normMerchant(t.note) || "(no description)") === r.key);
   const setCat = (r, catId) => {
-    const ids = new Set(r.ids);
-    setD((p) => ({ ...p, txns: p.txns.map((t) => (ids.has(t.id) ? { ...t, catId } : t)) }));
-    toast("Filed " + r.count + (r.count === 1 ? " transaction" : " transactions") + " from " + titleCase(r.label).slice(0, 24) + " under " + (d.cats.find((c) => c.id === catId)?.name || "?") + ".");
+    if (!catId) return; // the blank option would otherwise silently un-file everything
+    let n = 0;
+    setD((p) => {
+      const ids = new Set(allFor(r, p.txns).map((t) => t.id));
+      n = ids.size;
+      return { ...p, txns: p.txns.map((t) => (ids.has(t.id) ? { ...t, catId } : t)) };
+    });
+    toast("Filed " + n + (n === 1 ? " transaction" : " transactions") + " from " + titleCase(r.label).slice(0, 24) + " under " + (d.cats.find((c) => c.id === catId)?.name || "?") + ".");
   };
   const makeTransfers = (r) => {
-    const ids = new Set(r.ids);
-    setD((p) => ({ ...p, txns: p.txns.map((t) => (ids.has(t.id) ? { ...t, kind: "xfer", kindSet: true, catId: "" } : t)) }));
-    toast("Moved " + r.count + " out of spending — they're transfers now.");
+    let n = 0;
+    setD((p) => {
+      const ids = new Set(allFor(r, p.txns).map((t) => t.id));
+      n = ids.size;
+      return { ...p, txns: p.txns.map((t) => (ids.has(t.id) ? { ...t, kind: "xfer", kindSet: true, catId: "" } : t)) };
+    });
+    toast("Moved " + n + " out of spending — they're transfers now.");
   };
 
   return (
@@ -2178,7 +2204,7 @@ function Merchants({ d, setD }) {
                   <select className="in" style={{ width: 132, padding: "4px 6px", fontSize: 12 }} value={r.catId}
                     title="Files every transaction from this merchant"
                     onChange={(e) => e.target.value === "__xfer" ? makeTransfers(r) : setCat(r, e.target.value)}>
-                    <option value="">— category —</option>
+                    <option value="">— set category —</option>
                     {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     <option value="__xfer">Not spending (transfer)</option>
                   </select>
@@ -3184,7 +3210,10 @@ function buildAskPrompt(d, hist, question) {
           city: a.locationType === "Remote" ? "Remote" : a.city, clearance: a.clearance, window: a.window, next: a.nextDate || null }));
     }
   }
-  const convo = hist.map((h) => "Q: " + h.q + "\nA: " + (h.plan ? JSON.stringify(h.plan) : h.a)).join("\n");
+  /* proposals have no prose answer — without serializing them the model has no
+     memory of the estimate it just gave, so "make it two days shorter" restarts
+     from nothing */
+  const convo = hist.map((h) => "Q: " + h.q + "\nA: " + (h.plan ? JSON.stringify(h.plan) : h.buy ? JSON.stringify({ purchase: h.buy }) : h.a)).join("\n");
   return "You are Atlas, the built-in assistant of a self-hosted personal finance app. Below is this user's financial data as JSON — " +
     "and, when the question is about work, their resume and job search too, so you can answer career questions with their real money in view. " +
     "Amounts are USD. kind \"xfer\" is a transfer between the user's own accounts — already excluded from all income/spending totals.\n\n" +
@@ -3231,6 +3260,11 @@ function AskAtlas({ d, setD, config }) {
     } catch (e) { toast("Ask failed — " + e.message, "err"); }
     setBusy(false);
   };
+  /* the model is told to return the FULL plan, so anything it left out is a
+     category it means to zero — otherwise the applied total silently exceeds the
+     one shown on the card */
+  const untouched = (plan) => d.cats.filter((c) => Number(c.limit) > 0 &&
+    !plan.limits.some((l) => String(l.cat || "").toLowerCase() === c.name.toLowerCase()));
   const applyPlan = (idx) => {
     const plan = hist[idx]?.plan;
     if (!plan) return;
@@ -3291,6 +3325,12 @@ function AskAtlas({ d, setD, config }) {
                 );
               })}
               {h.plan.note && <div className="note">{h.plan.note}</div>}
+              {!h.applied && untouched(h.plan).length > 0 && (
+                <div className="note">
+                  Not in this plan and left as-is: {untouched(h.plan).map((c) => c.name + " " + fmt(c.limit)).join(" · ")}.
+                  Ask for a plan that covers them if that's wrong.
+                </div>
+              )}
               <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 8 }}>
                 {h.applied
                   ? <span className="good">✓ Applied — live in the Budget tab</span>
@@ -3303,7 +3343,11 @@ function AskAtlas({ d, setD, config }) {
           ) : h.buy ? (() => {
             const cost = Math.round(Number(h.buy.cost) || 0);
             const monthlyKept = Math.max(0, (Number(d.settings.incomeMonthly) || 0) - avgMonthlySpend(d.txns));
-            const months = h.buy.by ? Math.max(1, Math.ceil((new Date(h.buy.by) - new Date()) / (30.44 * 864e5))) : null;
+            /* the model sometimes answers "March 2027" instead of a date — that
+               used to render as "$NaN/mo for NaN mo" */
+            const by = /^\d{4}-\d{2}-\d{2}$/.test(h.buy.by || "") ? h.buy.by : null;
+            const rawMonths = by ? Math.ceil((new Date(by) - new Date()) / (30.44 * 864e5)) : NaN;
+            const months = Number.isFinite(rawMonths) ? Math.max(1, rawMonths) : null;
             const perMo = months ? cost / months : null;
             const liq = liquid(d.accounts);
             return (
@@ -3318,7 +3362,7 @@ function AskAtlas({ d, setD, config }) {
                   <span className="mono">{fmt(liq)} → <b className={liq - cost < 0 ? "bad" : ""}>{fmt(liq - cost)}</b></span>
                 </div>
                 {perMo != null && (
-                  <div className="kv"><span className="k">To have it by {h.buy.by}</span>
+                  <div className="kv"><span className="k">To have it by {by}</span>
                     <span className="mono">{fmt(Math.round(perMo))}/mo for {months} mo{monthlyKept > 0 ? " · " + Math.round((perMo / monthlyKept) * 100) + "% of a typical month's surplus" : ""}</span></div>
                 )}
                 {monthlyKept > 0 && perMo == null && (

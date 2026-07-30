@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 
 /* ------------------------------------------------------------------
    Career tab — the IAM job tracker, moved into Atlas.
@@ -23,6 +23,25 @@ import React, { useState, useMemo, useEffect } from "react";
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const money = (n) => (n == null || n === "" || isNaN(n) ? "—" : "$" + Math.round(Number(n) / 1000) + "k");
 const dollars = (n) => (n == null || isNaN(n) ? "—" : (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString());
+
+/* a resume is a page or three; a 40-page PDF would otherwise put ~200KB of text
+   into the data blob that autosaves every half second */
+const MAX_RESUME_CHARS = 40000;
+const FIT_LABELS = ["Strong", "Good", "Stretch", "Long shot"];
+
+/* Model output goes straight into saved state and then into JSX, so a stray
+   shape ("gaps": "no cloud experience", or a number where a string belongs)
+   would persist and then crash the tab on every render — unrecoverable without
+   hand-editing the data file. Coerce everything at the boundary. */
+function cleanFit(j) {
+  const score = Math.max(1, Math.min(10, Math.round(Number(j?.score))));
+  if (!Number.isFinite(score)) return null;
+  const label = FIT_LABELS.includes(j?.label) ? j.label
+    : score >= 8 ? "Strong" : score >= 6 ? "Good" : score >= 4 ? "Stretch" : "Long shot";
+  const gaps = (Array.isArray(j?.gaps) ? j.gaps : [j?.gaps])
+    .filter((g) => typeof g === "string" && g.trim()).slice(0, 3).map((g) => g.slice(0, 120));
+  return { fitScore: score, fitLabel: label, fitWhy: typeof j?.why === "string" ? j.why.slice(0, 200) : "", fitBreak: gaps };
+}
 
 const STATUSES = ["Target", "Applied", "Interviewing", "Offer", "Rejected", "Withdrawn"];
 const CLEARANCES = ["Not required", "Required", "Preferred", "Unsure"];
@@ -221,10 +240,18 @@ const DEFAULT_CAREER = {
 
 /* ---------------- domain math (unchanged from the original) ---------------- */
 
+/* Substring matching both ways is how "LA" used to resolve to Dal-LA-s and "York"
+   to New York. Exact first, then whole-word containment with a length floor. */
 function cityMatch(city, cities) {
   if (!city) return null;
   const c = city.trim().toLowerCase();
-  return cities.find((x) => { const n = x.name.toLowerCase(); return c === n || c.includes(n) || n.includes(c); }) || null;
+  if (c.length < 3) return null;
+  const exact = cities.find((x) => x.name.toLowerCase() === c);
+  if (exact) return exact;
+  /* Only "what you typed contains the city name" — so "Dallas, TX" resolves, but
+     a fragment like "York" no longer claims New York (nor "LA" → Dal-LA-s). */
+  const word = (hay, needle) => new RegExp("(^|[^a-z])" + needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([^a-z]|$)").test(hay);
+  return cities.find((x) => x.name.length >= 4 && word(c, x.name.toLowerCase())) || null;
 }
 function computeFit(app, cities) {
   if (app.fitOverride === true) return { fit: true, cityTier: null };
@@ -251,9 +278,12 @@ function seedApps() {
       id: uid(), company, role: "IAM / Security — target", status: "Target", dateApplied: "",
       comp, compEst: true, extrasPct: extrasFor(company, cat),
       locationType: locType || (city ? "Onsite" : "Hybrid"), city, clearance,
+      /* Seed rows with no city are the nationwide employers — they hire in many
+         places, so "outside your cities" is the wrong verdict for them. */
+      fitOverride: !locType && !city ? true : null,
       tier: tier === "Lottery" ? "3" : tier, tierManual: false, cat,
       growth: CAT_GROWTH[cat]?.[0] ?? null, growthNote: CAT_GROWTH[cat]?.[1] ?? "",
-      family: "IAM", source: "Cold", referralName: "", fitOverride: null, nextDate: "",
+      family: "IAM", source: "Cold", referralName: "", nextDate: "",
       window: QUANT.has(company.toLowerCase()) ? "Jul–Sep 2026 — rolling, apply ASAP"
         : tier === "1" ? "Aug–Oct 2026 + rolling" : tier === "2" ? "Aug–Oct 2026"
         : tier === "3" ? "Jan–Apr 2027" : "Aug 2026 — apply early",
@@ -341,10 +371,15 @@ function AppForm({ initial, S, resume, onSave, onDelete, onClose, toast }) {
           'Respond with ONLY JSON (no fences): {"low": number, "high": number, "note": string under 15 words describing the basis}. ' +
           "Annual USD for entry level. If you truly find nothing, give your best market estimate and say so in note.", true);
         const j = extractJSON(out);
-        if (j.low && j.high) {
-          setF((p) => ({ ...p, comp: Math.round((j.low + j.high) / 2), compEst: false }));
-          setInfo("Found " + money(j.low) + "–" + money(j.high) + (j.note ? " — " + j.note : "") + ". Midpoint filled in; edit freely.");
-        } else setInfo("Couldn't pin a range — " + (j.note || "enter it manually."));
+        /* the model may hand back "65000" as a string — adding two of those
+           concatenates into a $3.25 billion salary that then poisons tiers,
+           sorting and the offer math */
+        const low = Number(j.low), high = Number(j.high);
+        const sane = Number.isFinite(low) && Number.isFinite(high) && low > 0 && high >= low && high < 2e6;
+        if (sane) {
+          setF((p) => ({ ...p, comp: Math.round((low + high) / 2), compEst: false }));
+          setInfo("Found " + money(low) + "–" + money(high) + (j.note ? " — " + j.note : "") + ". Midpoint filled in; edit freely.");
+        } else setInfo("Couldn't pin a believable range — " + (j.note || "enter it manually."));
       } else if (what === "growth") {
         const out = await callClaude(
           "Search the web for how good career growth and internal mobility are at " + f.company +
@@ -362,9 +397,10 @@ function AppForm({ initial, S, resume, onSave, onDelete, onClose, toast }) {
           "\n\nHonestly rate how strong a candidate this resume is for that role. " +
           'Respond with ONLY JSON (no fences): {"score": integer 1-10, "label": one of "Strong"|"Good"|"Stretch"|"Long shot", ' +
           '"why": string under 20 words, "gaps": [up to 3 short strings naming what is missing]}. Be realistic, not encouraging.');
-        const j = extractJSON(out);
-        setF((p) => ({ ...p, fitScore: j.score, fitLabel: j.label, fitWhy: j.why, fitBreak: j.gaps || [] }));
-        setInfo("Scored " + j.score + "/10 — " + j.label);
+        const fit = cleanFit(extractJSON(out));
+        if (!fit) throw new Error("no usable score came back");
+        setF((p) => ({ ...p, ...fit }));
+        setInfo("Scored " + fit.fitScore + "/10 — " + fit.fitLabel);
       }
     } catch (e) { setInfo(what + " research failed — " + e.message); }
     setBusy("");
@@ -499,6 +535,7 @@ function PdfView({ nonce }) {
   const [err, setErr] = useState("");
   useEffect(() => {
     let dead = false;
+    setErr(""); setPages(null); // otherwise one failed fetch wedges the preview until a reload
     (async () => {
       try {
         const r = await fetch("/api/resume");
@@ -587,13 +624,18 @@ function ResumeCard({ S, setCareer, config, toast }) {
   const [draft, setDraft] = useState(null); // AI rewrite awaiting your yes/no
   const [nonce, setNonce] = useState(0);    // bump to re-render the preview
 
+  /* text === null means "keep the text I already have" — used by publish, because
+     re-extracting our own generated PDF is lossy (blank lines vanish, wrapped
+     lines come back as separate lines, and an all-caps wrap tail gets promoted to
+     a section heading on the next render). Your text stays the source of truth. */
   const store = async (buf, name, pages, text) => {
     const r = await fetch("/api/resume", {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pdf: b64(buf) }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "upload failed");
-    setCareer((c) => ({ ...c, settings: { ...c.settings, resume: text,
+    setCareer((c) => ({ ...c, settings: { ...c.settings,
+      resume: text == null ? c.settings.resume : text.slice(0, MAX_RESUME_CHARS),
       resumeMeta: { name, pages, bytes: buf.byteLength, uploaded: new Date().toISOString().slice(0, 10) } } }));
     setNonce((n) => n + 1);
   };
@@ -618,8 +660,8 @@ function ResumeCard({ S, setCareer, config, toast }) {
     try {
       const doc = await buildPdf(S.resume);
       const buf = doc.output("arraybuffer");
-      const { text, pages } = await extractPdfText(buf);
-      await store(buf, (meta?.name || "resume.pdf").replace(/\.pdf$/i, "") + " (edited).pdf", pages, text);
+      const base = (meta?.name || "resume.pdf").replace(/\.pdf$/i, "").replace(/ \(edited\)+$/i, "");
+      await store(buf, base + " (edited).pdf", doc.getNumberOfPages(), null);
       toast("Your edits are now the stored PDF — preview and download both use it.");
     } catch (e) { toast("Couldn't rebuild the PDF — " + e.message, "err"); }
     setBusy("");
@@ -629,13 +671,17 @@ function ResumeCard({ S, setCareer, config, toast }) {
     if (!S.resume.trim()) return toast("Upload a resume first.", "err");
     setBusy("ai");
     try {
-      setDraft((await callClaude(
+      const out = (await callClaude(
         "Here is the plain text of someone's resume:\n\n" + S.resume.slice(0, 9000) +
         "\n\nRewrite it with this instruction: " + (instr.trim() || "tighten the writing and lead every bullet with the outcome") +
         "\n\nRules: keep every claim truthful to the original — reword, reorder, cut, but never invent a job, a date, a tool, or a number. " +
         "Keep the same section structure (name and contact first, then sections). Section headings in ALL CAPS on their own line. " +
         "Bullets start with '- '. Plain text only, no markdown, no commentary before or after."
-      )).trim());
+      )).trim();
+      /* an empty completion (it can happen — thinking eats the token budget) would
+         otherwise flip the button back with no sheet and no error at all */
+      if (!out) throw new Error("the model returned nothing — try again, or shorten the instruction");
+      setDraft(out);
     } catch (e) { toast("AI edit failed — " + e.message, "err"); }
     setBusy("");
   };
@@ -810,13 +856,17 @@ export default function Career({ d, setD, config, toast }) {
   }, [apps, q, status, fitOnly, sort, S]);
 
   const counts = STATUSES.reduce((m, s) => ({ ...m, [s]: apps.filter((a) => a.status === s).length }), {});
-  const applied = apps.filter((a) => a.status !== "Target").length;
+  /* "in flight" means still live — a rejection is not in flight */
+  const inFlight = apps.filter((a) => a.status === "Applied" || a.status === "Interviewing" || a.status === "Offer").length;
 
+  const tailorReq = useRef(0);
   const tailor = async (a) => {
-    if (!S.resume.trim()) return toast("Paste your resume below first — tailoring rewrites it against the role.", "err");
+    if (busy) return;
+    if (!S.resume.trim()) return toast("Upload a resume below first — tailoring rewrites it against the role.", "err");
+    const req = ++tailorReq.current; // a slow response for company A must not land in company B's sheet
     setTailorFor(a); setTailorOut(""); setBusy(true);
     try {
-      setTailorOut((await callClaude(
+      const out = (await callClaude(
         "Resume:\n" + S.resume.slice(0, 8000) +
         "\n\nTarget role: " + a.role + " at " + a.company + (a.city ? " in " + a.city : "") +
         (a.clearance === "Required" ? " (requires a security clearance)" : "") +
@@ -824,9 +874,15 @@ export default function Career({ d, setD, config, toast }) {
         "reword and reorder, never invent experience. Lead each bullet with the outcome, name the tool or standard where the " +
         "resume gives you one, and keep each under 22 words. Plain text, one bullet per line starting with '- '. " +
         "After the bullets add a line 'GAPS:' and name up to three things this resume genuinely lacks for the role."
-      )).trim());
-    } catch (e) { toast("Tailoring failed — " + e.message, "err"); setTailorFor(null); }
-    setBusy(false);
+      )).trim();
+      if (req !== tailorReq.current) return;
+      if (!out) throw new Error("the model returned nothing");
+      setTailorOut(out);
+    } catch (e) {
+      if (req !== tailorReq.current) return;
+      toast("Tailoring failed — " + e.message, "err"); setTailorFor(null);
+    }
+    if (req === tailorReq.current) setBusy(false);
   };
 
   return (
@@ -843,7 +899,7 @@ export default function Career({ d, setD, config, toast }) {
           <>
             <div className="grid4" style={{ marginTop: 10 }}>
               <div><div className="sub">Tracked</div><div className="mono" style={{ fontSize: 20, fontWeight: 600 }}>{apps.length}</div></div>
-              <div><div className="sub">In flight</div><div className="mono" style={{ fontSize: 20, fontWeight: 600 }}>{applied}</div></div>
+              <div><div className="sub">In flight</div><div className="mono" style={{ fontSize: 20, fontWeight: 600 }}>{inFlight}</div></div>
               <div><div className="sub">Interviewing</div><div className="mono" style={{ fontSize: 20, fontWeight: 600, color: "var(--acc)" }}>{counts.Interviewing || 0}</div></div>
               <div><div className="sub">Offers</div><div className="mono" style={{ fontSize: 20, fontWeight: 600, color: "var(--up)" }}>{counts.Offer || 0}</div></div>
             </div>
@@ -906,7 +962,7 @@ export default function Career({ d, setD, config, toast }) {
             </div>
             <div className="row" style={{ gap: 8, marginTop: 8 }}>
               <a className="btn small" href={dest.url} target="_blank" rel="noreferrer noopener">Find on {dest.label}</a>
-              {config?.aiEnabled && <button className="btn small" onClick={() => tailor(a)}>Tailor resume</button>}
+              {config?.aiEnabled && <button className="btn small" disabled={busy} onClick={() => tailor(a)}>Tailor resume</button>}
               {a.comp != null && <button className="btn small" onClick={() => setImpact(a)}>What it pays me</button>}
               {a.growthNote && <span className="note" style={{ margin: 0, fontSize: 11.5 }}>growth {a.growth}/5 · {a.growthNote}</span>}
             </div>

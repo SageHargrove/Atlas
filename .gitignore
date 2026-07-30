@@ -15,6 +15,10 @@ server/data.json.tmp
 server/data-*.json
 server/ai-usage.json
 *.json.tmp
+# résumés hold a real name, address, phone and work history. DATA_DIR defaults to
+# server/, so a local run drops them straight into the repo — keep them out.
+resume-*.pdf
+resume-*.pdf.tmp
 
 # build output / scratch
 client/dist/
