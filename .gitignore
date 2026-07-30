@@ -20,3 +20,6 @@ server/ai-usage.json
 client/dist/
 *.tgz
 __smoke*
+
+# personal runbook with real server details — never commit
+SETUP.local.md
