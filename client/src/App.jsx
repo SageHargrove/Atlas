@@ -1496,6 +1496,27 @@ function FinanceHQ({ config }) {
     return () => { cancelled = true; clearTimeout(t); };
   }, [d, loaded, saveNonce]);
 
+  /* One retro pass per load: sync only categorizes NEW imports, so anything that
+     predates the rules (or came from CSV) gets the merchant-memory + keyword
+     treatment here. Only ever fills empty categories — never overwrites. */
+  useEffect(() => {
+    if (!loaded) return;
+    setD((p) => {
+      const memory = buildMerchantMemory(p.txns, p.cats);
+      let n = 0;
+      const txns = p.txns.map((t) => {
+        if (t.kind !== "out" || t.catId || !t.note) return t;
+        const c = autoCategorize(t.note, p.cats, memory);
+        if (!c) return t;
+        n++;
+        return { ...t, catId: c };
+      });
+      if (!n) return p;
+      setTimeout(() => toast("Auto-categorized " + n + (n === 1 ? " transaction" : " transactions") + " using your history and built-in merchant rules."), 0);
+      return { ...p, txns };
+    });
+  }, [loaded]);
+
   /* auto-log recurring transactions when their day arrives */
   useEffect(() => {
     if (!loaded || !d.recurring.length) return;
@@ -1808,7 +1829,10 @@ function Recurring({ d, setD }) {
   return (
     <div className="card">
       <h3>Recurring</h3>
-      <div className="note">Rent, subscriptions, insurance — each one logs its transaction automatically when its day comes. Nothing to re-enter.</div>
+      <div className="note">Rent, subscriptions, insurance. <b>Auto-log</b> = Atlas creates the transaction itself when the day
+        comes — use it only for bills that never hit a synced account. <b>Watching</b> = the real charge already arrives via
+        bank sync/CSV, so this entry only powers Upcoming bills. A bill that's Auto-log <i>and</i> synced gets counted twice —
+        that inflates spending; flip those to Watching.</div>
       {d.recurring.map((r) => {
         const cn = catName(r.catId);
         const label = r.name && r.name !== cn ? r.name : cn;
@@ -1819,10 +1843,16 @@ function Recurring({ d, setD }) {
           <div className="kv" key={r.id}>
             <span className="k"><b style={{ color: "var(--text)" }}>{label}</b>
               <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · {label !== cn ? cn + " · " : ""}{sched}</span>
-              {r.watch && <span className="tag" style={{ marginLeft: 5 }} title="Shown in Upcoming bills; the actual charges come from bank sync / CSV import">watched</span>}
             </span>
             <span className="row" style={{ gap: 6 }}>
               <span className="mono">{fmtAmt(r.amount)}{(r.freq || "m") === "m" ? "/mo" : "/yr"}</span>
+              <button className="btn small" style={r.watch ? {} : { borderColor: "var(--gold)", color: "var(--gold)" }}
+                title={r.watch
+                  ? "Watching: the real charge arrives via bank sync/CSV — this entry only powers Upcoming bills"
+                  : "Auto-log: Atlas creates this transaction itself each cycle. If the same charge ALSO arrives via bank sync, it's double-counted — click to switch to Watching."}
+                onClick={() => setD((p) => ({ ...p, recurring: p.recurring.map((x) => (x.id === r.id ? { ...x, watch: !x.watch } : x)) }))}>
+                {r.watch ? "Watching" : "Auto-log"}
+              </button>
               <button className="x" onClick={() => setD((p) => ({ ...p, recurring: p.recurring.filter((x) => x.id !== r.id) }))}>✕</button>
             </span>
           </div>
@@ -2399,7 +2429,7 @@ function SankeyLink(props) {
   const { sourceX, targetX, sourceY, targetY, sourceControlX, targetControlX, linkWidth, payload } = props;
   if (!Number.isFinite(sourceX)) return null;
   /* inflows carry their source color (green/red), outflows their category color */
-  const color = (payload?.target?.name === "Cash" ? payload?.source?.color : payload?.target?.color) || "var(--line2)";
+  const color = (payload?.target?.name === "Total" ? payload?.source?.color : payload?.target?.color) || "var(--line2)";
   return (
     <path d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
       fill="none" stroke={color} strokeWidth={Math.max(1, linkWidth)} strokeOpacity={0.3} />
@@ -2438,7 +2468,7 @@ function CashFlow({ d, tx, income }) {
     const nodes = [], links = [];
     flowsIn.forEach((f) => nodes.push({ name: f.n, color: f.color }));
     const cashIdx = nodes.length;
-    nodes.push({ name: "Cash", color: "var(--acc)" });
+    nodes.push({ name: "Total", color: "var(--acc)" });
     flowsIn.forEach((f, i) => { if (f.v > 0.005) links.push({ source: i, target: cashIdx, value: Math.round(f.v * 100) / 100 }); });
     flowsOut.forEach((f) => {
       if (f.v <= 0.005) return;
@@ -2453,7 +2483,11 @@ function CashFlow({ d, tx, income }) {
     <div className="card" style={{ marginTop: 16 }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
         <h3>Cash flow</h3>
-        <span className="note" style={{ margin: 0 }}>where money came from · where it went</span>
+        <span className="note" style={{ margin: 0 }}>
+          <span className="dot" style={{ background: "var(--s3)", marginRight: 5 }} />money in
+          <span className="dot" style={{ background: "var(--red)", margin: "0 5px 0 14px" }} />drawn from savings
+          <span style={{ margin: "0 5px 0 14px", color: "var(--faint)" }}>→</span>right side: where it went
+        </span>
       </div>
       {links.length ? (
         <div style={{ width: "100%", height: 330, marginTop: 8 }}>
@@ -2483,7 +2517,29 @@ function Dashboard({ d, setD, config, setTab }) {
   const rate = income > 0 ? Math.round((net / income) * 100) : null;
 
   const { assets, debts, nw } = netWorth(d.accounts);
-  const hist = d.history.filter((h) => h.date >= start).map((h) => ({ date: h.date.slice(5), nw: h.nw }));
+
+  /* Recorded snapshots only exist from the day Atlas started running, but synced
+     transactions go back months — reconstruct earlier net worth by walking the
+     transaction flows backward from the first real snapshot. Transfers are net
+     zero across your own accounts, so only in/out move the line. */
+  const histFull = useMemo(() => {
+    const recorded = d.history;
+    const firstSnap = recorded[0]?.date;
+    const pre = {};
+    d.txns.forEach((t) => {
+      if (!t.date || (firstSnap && t.date >= firstSnap)) return;
+      const v = t.kind === "in" ? Number(t.amount) || 0 : t.kind === "out" ? -(Number(t.amount) || 0) : 0;
+      if (v) pre[t.date] = (pre[t.date] || 0) + v;
+    });
+    const days = Object.keys(pre).sort();
+    if (!days.length) return recorded;
+    const anchor = recorded.length ? recorded[0].nw : nw;
+    let run = anchor - days.reduce((s, k) => s + pre[k], 0);
+    const est = days.map((k) => { run += pre[k]; return { date: k, nw: Math.round(run), est: true }; });
+    return [...est, ...recorded];
+  }, [d.history, d.txns, nw]);
+  const hist = histFull.filter((h) => h.date >= start).map((h) => ({ date: h.date.slice(5), nw: h.nw }));
+  const histHasEst = histFull.some((h) => h.est && h.date >= start);
 
   /* hero chips: change vs last month-end and vs Jan 1 */
   const baseMonth = [...d.history].reverse().find((h) => h.date < thisMonth() + "-01")?.nw;
@@ -2567,6 +2623,7 @@ function Dashboard({ d, setD, config, setTab }) {
             </ResponsiveContainer>
           </div>
         ) : <div className="note">Net worth logs one point per day — the trend appears as days accumulate.</div>}
+        {histHasEst && <div className="note">Points before {d.history[0]?.date || "today"} are estimated from your synced transactions; from then on they're recorded daily.</div>}
       </div>
 
       <div className="grid4" style={{ marginTop: 16 }}>
@@ -2643,7 +2700,7 @@ function Dashboard({ d, setD, config, setTab }) {
         </div>
       </div>
 
-      <AskAtlas d={d} config={config} />
+      <AskAtlas d={d} setD={setD} config={config} />
 
       {drill && (() => {
         const rows = tx.filter((t) => t.kind === drill).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -2716,19 +2773,24 @@ function buildAskPrompt(d, hist, question) {
     monthlyTotals: rollup,
     recentTransactions: { columns: ["date", "kind(in|out|xfer)", "amount", "category", "note", "account"], rows: recent },
   };
-  const convo = hist.map((h) => "Q: " + h.q + "\nA: " + h.a).join("\n");
+  const convo = hist.map((h) => "Q: " + h.q + "\nA: " + (h.plan ? JSON.stringify(h.plan) : h.a)).join("\n");
   return "You are Atlas, the built-in assistant of a self-hosted personal finance app. Below is this user's financial data as JSON. " +
     "Amounts are USD. kind \"xfer\" is a transfer between the user's own accounts — already excluded from all income/spending totals.\n\n" +
     JSON.stringify(data) +
     (convo ? "\n\nEarlier in this conversation:\n" + convo : "") +
     "\n\nQuestion: " + question +
-    "\n\nAnswer in plain text (no markdown), under 180 words, citing specific numbers from the data. Be direct and concrete. " +
+    "\n\nIf — and only if — the user is asking you to create, revise, or adjust a budget or spending plan, respond with ONLY this JSON " +
+    "(no fences, no prose): {\"limits\":[{\"cat\":\"<category name>\",\"limit\":<integer monthly $>}],\"note\":\"<under 60 words on the key choices>\"}. " +
+    "Ground every limit in their actual monthly spending from monthlyTotals, prefer their existing category names (you may add up to 2 new ones), " +
+    "keep the total comfortably under realistic monthly income, and leave room for their goals' monthly contributions. " +
+    "When revising an earlier plan from this conversation, return the FULL updated plan, not a diff." +
+    "\n\nOtherwise answer in plain text (no markdown), under 180 words, citing specific numbers from the data. Be direct and concrete. " +
     "General financial education only — never recommend specific securities or products.";
 }
 
-function AskAtlas({ d, config }) {
+function AskAtlas({ d, setD, config }) {
   const [q, setQ] = useState("");
-  const [hist, setHist] = useState([]); // [{q, a}] — last few exchanges ride along in the prompt
+  const [hist, setHist] = useState([]); // [{q, a, plan?, applied?}] — last few exchanges ride along in the prompt
   const [busy, setBusy] = useState(false);
   if (!config?.aiEnabled) return null;
   const ask = async (preset) => {
@@ -2737,9 +2799,32 @@ function AskAtlas({ d, config }) {
     setBusy(true); setQ("");
     try {
       const a = (await callClaude(buildAskPrompt(d, hist, question))).trim();
-      setHist((p) => [...p.slice(-3), { q: question, a }]);
+      let plan = null;
+      try {
+        const j = extractJSON(a);
+        if (j && Array.isArray(j.limits) && j.limits.length) plan = j;
+      } catch {}
+      setHist((p) => [...p.slice(-3), plan ? { q: question, a: "", plan } : { q: question, a }]);
     } catch (e) { toast("Ask failed — " + e.message, "err"); }
     setBusy(false);
+  };
+  const applyPlan = (idx) => {
+    const plan = hist[idx]?.plan;
+    if (!plan) return;
+    setD((p) => {
+      let cats = [...p.cats];
+      for (const l of plan.limits) {
+        const name = String(l.cat || "").trim();
+        const limit = Math.max(0, Math.round(Number(l.limit) || 0));
+        if (!name) continue;
+        const i = cats.findIndex((c) => c.name.toLowerCase() === name.toLowerCase());
+        if (i !== -1) cats[i] = { ...cats[i], limit };
+        else cats.push({ id: uid(), name, limit });
+      }
+      return { ...p, cats };
+    });
+    setHist((p) => p.map((h, i) => (i === idx ? { ...h, applied: true } : h)));
+    toast("Budget applied — the limits are live in the Budget tab.");
   };
   return (
     <div className="card">
@@ -2749,7 +2834,7 @@ function AskAtlas({ d, config }) {
       </div>
       {!hist.length && (
         <div className="row" style={{ marginTop: 8 }}>
-          {["Summarize this month", "Where did my money go last month?", "What subscriptions am I paying for?", "How's my emergency fund?"].map((s) => (
+          {["Make me a budget plan", "Summarize this month", "Where did my money go last month?", "What subscriptions am I paying for?"].map((s) => (
             <button key={s} className="btn small" disabled={busy} onClick={() => ask(s)}>{s}</button>
           ))}
         </div>
@@ -2757,7 +2842,37 @@ function AskAtlas({ d, config }) {
       {hist.map((h, i) => (
         <div key={i} style={{ marginTop: 10 }}>
           <div style={{ fontWeight: 600, fontSize: 13.5 }}>{h.q}</div>
-          <div className="aiout" style={{ marginTop: 6 }}>{h.a}</div>
+          {h.plan ? (
+            <div className="aiout" style={{ marginTop: 6 }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <b>Proposed budget</b>
+                <b className="mono">{fmt(h.plan.limits.reduce((s, l) => s + (Number(l.limit) || 0), 0))}/mo</b>
+              </div>
+              {h.plan.limits.map((l) => {
+                const ci = d.cats.findIndex((c) => c.name.toLowerCase() === String(l.cat || "").toLowerCase());
+                return (
+                  <div className="kv" key={l.cat}>
+                    <span className="k row" style={{ gap: 7 }}>
+                      <Icon k={catIconKey(l.cat)} size={13} color={seriesColor(ci)} />{l.cat}
+                      {ci === -1 && <span className="tag">new</span>}
+                    </span>
+                    <span className="mono">{fmt(Number(l.limit) || 0)}<span style={{ color: "var(--faint)" }}>/mo</span></span>
+                  </div>
+                );
+              })}
+              {h.plan.note && <div className="note">{h.plan.note}</div>}
+              <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 8 }}>
+                {h.applied
+                  ? <span className="good">✓ Applied — live in the Budget tab</span>
+                  : <>
+                      <button className="btn small primary" onClick={() => applyPlan(i)}>Apply to Budget</button>
+                      <span className="note" style={{ margin: 0 }}>or keep chatting to adjust it first</span>
+                    </>}
+              </div>
+            </div>
+          ) : (
+            <div className="aiout" style={{ marginTop: 6 }}>{h.a}</div>
+          )}
         </div>
       ))}
       <div className="row" style={{ marginTop: 10 }}>
