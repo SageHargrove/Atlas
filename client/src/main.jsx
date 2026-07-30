@@ -25,3 +25,12 @@ class Boundary extends React.Component {
 createRoot(document.getElementById("root")).render(
   <Boundary><App /></Boundary>
 );
+
+/* Installable app + instant reopen. The worker caches only the public shell —
+   never /api — so financial data is never written to browser storage.
+   Requires HTTPS (or localhost); it's a no-op elsewhere. */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("SW registration failed:", e.message));
+  });
+}

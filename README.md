@@ -9,11 +9,15 @@ double-count as spending/income) and auto-categorization (learned from your
 history + built-in merchant rules), an Invest tab with live delayed quotes +
 watchlist + Fidelity positions-CSV import, AI categorization, budgeting, and
 an **Ask Atlas** dashboard assistant that answers questions across all your
-data (your Anthropic key, server-side), full dashboard with donut breakdowns
-and click-through income/spending history, budgets, goals, debt payoff with
-promo-APR tracking, purchase planner, subscription radar (auto-detects
-recurring charges), cross-month transaction search, and one-click CSV/JSON
-export.
+data, drafts budgets you can apply in one click, and turns "I'm driving from
+Atlanta to Ruston, my car does 24 mpg" into a costed, planned purchase (your
+Anthropic key, server-side), a **month-in-review** card (biggest movers,
+largest expenses, budget verdicts, optional AI recap), full dashboard with
+donut breakdowns and click-through income/spending history, budgets, goals,
+debt payoff with promo-APR tracking, purchase planner, subscription radar
+(auto-detects recurring charges), cross-month transaction search, and one-click
+CSV/JSON export. **Installable** — add it to your phone's home screen and it
+runs like a native app.
 Registration is invite-code gated so you can share with friends/family —
 every user's data lives in its own file, invisible to other users.
 

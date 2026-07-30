@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Sankey, Layer, Rectangle } from "recharts";
+import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 
 /* ------------------------------------------------------ */
@@ -228,6 +228,10 @@ const CSS = `
 .fh .grid3{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
 .fh .grid4{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
 .fh .grid2 > .card, .fh .grid3 > .card, .fh .grid4 > .card{ margin-top:0; }
+/* grid/flex children default to min-width:auto, which lets a wide chart stretch its
+   card instead of scrolling inside it — the overflow then gets clipped and is
+   unreachable. min-width:0 is what makes .hscroll actually scroll. */
+.fh .grid2 > *, .fh .grid3 > *, .fh .grid4 > *, .fh .card{ min-width:0; }
 .fh .tag{ display:inline-block; font-size:10px; padding:1.5px 7px; border-radius:6px; background:var(--panel2); color:var(--faint); border:1px solid var(--line); vertical-align:1px; }
 .fh .catbar{ display:flex; align-items:center; gap:10px; padding:4px 0; font-size:13px; }
 .fh .catbar .nm{ width:110px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -311,7 +315,15 @@ const CSS = `
   .fh .hrow{ padding:8px 0; gap:8px; }
 }
 /* wide charts scroll inside their own card on phones — never the whole page */
-.fh .hscroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.fh .hscroll{ overflow-x:auto; max-width:100%; -webkit-overflow-scrolling:touch; }
+.fh .swipehint{ text-align:right; margin-top:2px; font-size:11.5px; color:var(--faint); animation:nudge 1.6s ease-in-out 3; }
+@keyframes nudge{ 0%,100%{ transform:none; } 50%{ transform:translateX(5px); } }
+/* installed to the home screen: clear the notch / status bar and the home indicator */
+@media (display-mode:standalone){
+  .fh header{ padding-top:env(safe-area-inset-top); }
+  .fh{ padding-bottom:calc(90px + env(safe-area-inset-bottom)); }
+  .fh .wrap{ padding-left:max(12px, env(safe-area-inset-left)); padding-right:max(12px, env(safe-area-inset-right)); }
+}
 @media (prefers-reduced-motion: reduce){ .fh *, .fh *::before, .fh *::after{ animation:none !important; transition:none !important; } }
 `;
 
@@ -2425,99 +2437,172 @@ function nextOccurrence(rec) {
   return d2;
 }
 
-/* ---------------- cash-flow Sankey ----------------
-   Income sources (left) → Cash → categories (right). "Kept" closes the loop when
-   income exceeds spending; "From savings" feeds the gap when it doesn't.
-   Node colors follow the entity: categories reuse their stable donut/budget color,
-   income is always green, deficits red. Labels live in text tokens, not series color. */
-
-function SankeyNode({ x, y, width, height, payload, containerWidth }) {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !payload) return null;
-  const right = x > containerWidth / 2;
-  const cy = y + height / 2;
+/* Wide content (charts with many bars) scrolls inside its own box rather than
+   pushing the page sideways. The hint only appears when it actually overflows,
+   and disappears once you've scrolled — no permanent clutter on desktop. */
+function HScroll({ minWidth, children }) {
+  const ref = useRef(null);
+  const [over, setOver] = useState(false);
+  const [touched, setTouched] = useState(false);
+  /* deps matter: re-subscribing on every render churns the observer, and the
+     resize storm makes charts inside re-measure mid-animation */
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const check = () => setOver(el.scrollWidth > el.clientWidth + 4);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [minWidth]);
   return (
-    <Layer>
-      <Rectangle x={x} y={y} width={width} height={height} fill={payload.color} fillOpacity={0.95} radius={2} />
-      <text x={right ? x - 8 : x + width + 8} y={cy + 4} textAnchor={right ? "end" : "start"} fontSize={12.5} fill="var(--text)">
-        {payload.name}
-        <tspan dx={7} fontSize={11} fill="var(--muted)" fontFamily="'Spline Sans Mono',monospace">{fmtK(payload.value)}</tspan>
-      </text>
-    </Layer>
+    <>
+      <div className="hscroll" ref={ref} onScroll={() => setTouched(true)}>
+        {/* width:100% keeps the child from measuring narrow before layout settles */}
+        <div style={{ minWidth, width: "100%" }}>{children}</div>
+      </div>
+      {over && !touched && <div className="note swipehint">swipe for more →</div>}
+    </>
   );
 }
 
-function SankeyLink(props) {
-  const { sourceX, targetX, sourceY, targetY, sourceControlX, targetControlX, linkWidth, payload } = props;
-  if (!Number.isFinite(sourceX)) return null;
-  const color = payload?.target?.color || "var(--line2)";
-  return (
-    <path d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
-      fill="none" stroke={color} strokeWidth={Math.max(1, linkWidth)} strokeOpacity={0.3} />
-  );
+/* ---------------- month in review ----------------
+   Everything here is computed from the ledger — no AI required. The optional
+   recap button hands the same numbers to Claude for a plain-language read. */
+function monthStats(d, m) {
+  const tx = d.txns.filter((t) => (t.date || "").startsWith(m));
+  const income = tx.filter((t) => t.kind === "in").reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const byCat = {};
+  tx.filter((t) => t.kind === "out").forEach((t) => {
+    const n = d.cats.find((c) => c.id === t.catId)?.name || "Uncategorized";
+    byCat[n] = (byCat[n] || 0) + (Number(t.amount) || 0);
+  });
+  const spending = Object.values(byCat).reduce((s, v) => s + v, 0);
+  return { m, income, spending, kept: income - spending, byCat, tx };
 }
+const prevMonth = (m) => { const [y, mm] = m.split("-").map(Number); const dt = new Date(y, mm - 2, 1); return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0"); };
 
-function CashFlow({ d, tx, income }) {
-  const { nodes, links } = useMemo(() => {
-    /* income side — top sources by merchant, from logged income transactions */
-    const srcTotals = {};
-    tx.filter((t) => t.kind === "in").forEach((t) => {
-      const k = titleCase(normMerchant(t.note)) || "Income";
-      srcTotals[k] = (srcTotals[k] || 0) + (Number(t.amount) || 0);
-    });
-    let sources = Object.entries(srcTotals).sort((a, b) => b[1] - a[1]);
-    if (sources.length > 4) sources = [...sources.slice(0, 4), ["Other income", sources.slice(4).reduce((s, x) => s + x[1], 0)]];
-    if (!sources.length && income > 0) sources = [["Income (Settings)", income]];
-    /* spending side — categories, colored exactly like Budget */
-    const catTotals = {};
-    tx.filter((t) => t.kind === "out").forEach((t) => {
-      const name = d.cats.find((c) => c.id === t.catId)?.name || "Uncategorized";
-      catTotals[name] = (catTotals[name] || 0) + (Number(t.amount) || 0);
-    });
-    let cats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
-    if (cats.length > 7) cats = [...cats.slice(0, 6), ["Other", cats.slice(6).reduce((s, x) => s + x[1], 0)]];
-    const inTotal = sources.reduce((s, x) => s + x[1], 0);
-    const outTotal = cats.reduce((s, x) => s + x[1], 0);
-    const kept = inTotal - outTotal;
-    const left = sources.map(([n, v]) => ({ n, v, color: "var(--s3)" }));
-    if (kept < -0.005) left.push({ n: "From savings", v: -kept, color: "var(--red)" });
-    const right = cats.map(([n, v]) => ({
-      n, v,
-      color: n === "Uncategorized" || n === "Other" ? "var(--faint)" : seriesColor(d.cats.findIndex((c) => c.name === n)),
-    })).filter((f) => f.v > 0.005);
-    if (kept > 0.005) right.push({ n: "Kept", v: kept, color: "var(--up)" });
-    /* two columns, income straight into spending — no middle bar. The app can't know
-       which dollar paid which bill, so each source splits proportionally; links
-       under $1 are dropped to keep the ribbons readable. */
-    const nodes = [...left, ...right].map((f) => ({ name: f.n, color: f.color }));
-    const links = [];
-    const grand = right.reduce((s, f) => s + f.v, 0) || 1;
-    left.forEach((f, i) => right.forEach((o, j) => {
-      const v = f.v * (o.v / grand);
-      if (v >= 1) links.push({ source: i, target: left.length + j, value: Math.round(v * 100) / 100 });
-    }));
-    return { nodes, links };
-  }, [tx, d.cats, income]);
+function MonthReview({ d, config }) {
+  const [m, setM] = useState(thisMonth());
+  const [recap, setRecap] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const cur = useMemo(() => monthStats(d, m), [d.txns, d.cats, m]);
+  const prev = useMemo(() => monthStats(d, prevMonth(m)), [d.txns, d.cats, m]);
+
+  const shift = (n) => { const [y, mm] = m.split("-").map(Number); const dt = new Date(y, mm - 1 + n, 1); setM(dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0")); setRecap(null); };
+
+  /* biggest category swings vs last month, in dollars */
+  const movers = useMemo(() => {
+    const names = [...new Set([...Object.keys(cur.byCat), ...Object.keys(prev.byCat)])];
+    return names.map((n) => ({ name: n, now: cur.byCat[n] || 0, was: prev.byCat[n] || 0, delta: (cur.byCat[n] || 0) - (prev.byCat[n] || 0) }))
+      .filter((x) => Math.abs(x.delta) >= 5).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 4);
+  }, [cur, prev]);
+  const biggest = useMemo(() => cur.tx.filter((t) => t.kind === "out").sort((a, b) => b.amount - a.amount).slice(0, 4), [cur]);
+  const over = d.cats.filter((c) => Number(c.limit) > 0 && (cur.byCat[c.name] || 0) > Number(c.limit))
+    .map((c) => ({ name: c.name, spent: cur.byCat[c.name] || 0, limit: Number(c.limit) }));
+  const rate = cur.income > 0 ? (cur.kept / cur.income) * 100 : null;
+
+  const writeRecap = async () => {
+    setBusy(true);
+    try {
+      const payload = {
+        month: m, income: Math.round(cur.income), spending: Math.round(cur.spending), kept: Math.round(cur.kept),
+        savingsRatePct: rate == null ? null : Math.round(rate),
+        byCategory: Object.fromEntries(Object.entries(cur.byCat).map(([k, v]) => [k, Math.round(v)])),
+        lastMonth: { income: Math.round(prev.income), spending: Math.round(prev.spending), byCategory: Object.fromEntries(Object.entries(prev.byCat).map(([k, v]) => [k, Math.round(v)])) },
+        overBudget: over, biggestExpenses: biggest.map((t) => ({ note: t.note, amount: t.amount })),
+      };
+      setRecap((await callClaude(
+        "Here is one month of someone's finances as JSON:\n" + JSON.stringify(payload) +
+        "\n\nWrite a short month-in-review for them (plain text, no markdown, under 140 words): what actually happened, " +
+        "the one or two changes that mattered most vs last month, and one concrete thing to watch next month. " +
+        "Talk to them directly, cite the real numbers, skip generic advice. General financial education only."
+      )).trim());
+    } catch (e) { toast("Recap failed — " + e.message, "err"); }
+    setBusy(false);
+  };
+
+  const Stat = ({ label, now, was, goodDown }) => {
+    const delta = now - was;
+    const good = goodDown ? delta < 0 : delta > 0;
+    return (
+      <div>
+        <div className="sub">{label}</div>
+        <div className="mono" style={{ fontSize: 20, fontWeight: 600 }}>{fmt(now)}</div>
+        {was > 0 && Math.abs(delta) >= 1 && (
+          <span className={"chip " + (good ? "up" : "dn")} style={{ marginTop: 4 }}>
+            {delta > 0 ? "▲" : "▼"} {fmt(Math.abs(delta))} vs {MONTH_NAMES[Number(prevMonth(m).slice(5)) - 1].slice(0, 3)}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="card" style={{ marginTop: 16 }}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-        <h3>Cash flow</h3>
-        <span className="note" style={{ margin: 0 }}>
-          <span className="dot" style={{ background: "var(--s3)", marginRight: 5 }} />money in
-          <span className="dot" style={{ background: "var(--red)", margin: "0 5px 0 14px" }} />drawn from savings
-          <span style={{ margin: "0 5px 0 14px", color: "var(--faint)" }}>→</span>right side: where it went
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3>{monthLabel(m)} in review</h3>
+        <span className="row" style={{ gap: 6 }}>
+          <button className="btn small" onClick={() => shift(-1)}>←</button>
+          <button className="btn small" disabled={m >= thisMonth()} onClick={() => shift(1)}>→</button>
         </span>
       </div>
-      {links.length ? (
-        <div className="hscroll">
-          <div style={{ minWidth: 560, height: 330, marginTop: 8 }}>
-            <ResponsiveContainer>
-              <Sankey data={{ nodes, links }} node={<SankeyNode />} link={<SankeyLink />}
-                nodePadding={22} nodeWidth={10} margin={{ top: 14, right: 118, bottom: 14, left: 118 }} />
-            </ResponsiveContainer>
+      {!cur.tx.length ? (
+        <div className="note">Nothing logged in {monthLabel(m)} yet.</div>
+      ) : (
+        <>
+          <div className="grid3" style={{ marginTop: 10 }}>
+            <Stat label="Income" now={cur.income} was={prev.income} />
+            <Stat label="Spending" now={cur.spending} was={prev.spending} goodDown />
+            <div>
+              <div className="sub">Kept</div>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 600 }}>
+                <span className={cur.kept >= 0 ? "good" : "bad"}>{fmt(cur.kept)}</span>
+                {rate != null && <span style={{ fontSize: 13, color: "var(--faint)" }}> ({pct(rate)})</span>}
+              </div>
+            </div>
           </div>
-        </div>
-      ) : <div className="note">Log income and spending (or run a sync) and the flow chart appears here.</div>}
+
+          <div className="grid2" style={{ marginTop: 14 }}>
+            <div>
+              <div className="sub" style={{ marginBottom: 4 }}>Biggest changes vs {monthLabel(prevMonth(m))}</div>
+              {movers.length ? movers.map((x) => (
+                <div className="kv" key={x.name}>
+                  <span className="k row" style={{ gap: 7 }}>
+                    <Icon k={catIconKey(x.name)} size={13} color={seriesColor(d.cats.findIndex((c) => c.name === x.name))} />{x.name}
+                  </span>
+                  <span className="row" style={{ gap: 8 }}>
+                    <span className="mono" style={{ fontSize: 12.5, color: "var(--faint)" }}>{fmt(x.was)} → {fmt(x.now)}</span>
+                    <span className={"chip " + (x.delta > 0 ? "dn" : "up")}>{x.delta > 0 ? "▲" : "▼"} {fmt(Math.abs(x.delta))}</span>
+                  </span>
+                </div>
+              )) : <div className="note" style={{ marginTop: 0 }}>No category moved by more than $5.</div>}
+            </div>
+            <div>
+              <div className="sub" style={{ marginBottom: 4 }}>Largest expenses</div>
+              {biggest.map((t) => (
+                <div className="kv" key={t.id}>
+                  <span className="k" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titleCase(t.note) || d.cats.find((c) => c.id === t.catId)?.name || "—"}</span>
+                  <span className="mono" style={{ flexShrink: 0 }}>{fmt2(Number(t.amount))}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {over.length > 0 && (
+            <div className="note" style={{ marginTop: 10 }}>
+              <b className="bad">Over budget:</b> {over.map((o) => o.name + " " + fmt(o.spent) + " of " + fmt(o.limit)).join(" · ")}
+            </div>
+          )}
+
+          {config?.aiEnabled && (
+            <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 10 }}>
+              <button className="btn small" disabled={busy} onClick={writeRecap}>{busy ? "Writing…" : recap ? "Rewrite recap" : "Write my recap"}</button>
+            </div>
+          )}
+          {recap && <div className="aiout">{recap}</div>}
+        </>
+      )}
     </div>
   );
 }
@@ -2582,12 +2667,28 @@ function Dashboard({ d, setD, config, setTab }) {
     const key = dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0"); // local, not UTC — toISOString shifts the month east of Greenwich
     const mt = d.txns.filter((t) => (t.date || "").startsWith(key));
     const mIn = mt.filter((t) => t.kind === "in").reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    /* a month with nothing logged is a gap in the data, not a month you earned the
+       Settings figure — only fall back for months that actually have activity */
     months.push({
       m: MONTH_NAMES[dt.getMonth()].slice(0, 3),
-      Income: Math.round(mIn > 0 ? mIn : Number(d.settings.incomeMonthly) || 0),
+      Income: Math.round(mIn > 0 ? mIn : mt.length ? Number(d.settings.incomeMonthly) || 0 : 0),
       Spending: Math.round(mt.filter((t) => t.kind === "out").reduce((s, t) => s + (Number(t.amount) || 0), 0)),
     });
   }
+
+  /* category breakdown — color follows the CATEGORY (stable index in d.cats), never its rank */
+  const byCat = {};
+  tx.filter((t) => t.kind === "out").forEach((t) => { byCat[t.catId] = (byCat[t.catId] || 0) + (Number(t.amount) || 0); });
+  const catRows = Object.entries(byCat)
+    .map(([id, v]) => ({
+      name: d.cats.find((c) => c.id === id)?.name || (id ? "?" : "Uncategorized"),
+      value: Math.round(v),
+      color: seriesColor(d.cats.findIndex((c) => c.id === id)),
+    }))
+    .sort((a, b) => b.value - a.value);
+  const donutData = catRows.length > 7
+    ? [...catRows.slice(0, 6), { name: "Other", value: catRows.slice(6).reduce((s, x) => s + x.value, 0), color: "var(--faint)" }]
+    : catRows;
 
   /* upcoming bills (30d) */
   const upcoming = d.recurring
@@ -2676,7 +2777,40 @@ function Dashboard({ d, setD, config, setTab }) {
         </div>
       </div>
 
-      <CashFlow d={d} tx={tx} income={income} />
+      <div className="grid2" style={{ marginTop: 14 }}>
+        <div className="card">
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <h3>Income vs spending</h3>
+            <span className="row" style={{ gap: 12, fontSize: 12, color: "var(--muted)" }}>
+              <span className="row" style={{ gap: 5 }}><span className="dot" style={{ background: "var(--s3)" }} />Income</span>
+              <span className="row" style={{ gap: 5 }}><span className="dot" style={{ background: "var(--s8)" }} />Spending</span>
+            </span>
+          </div>
+          <HScroll minWidth={Math.max(240, months.length * 54)}>
+            <div style={{ width: "100%", height: 210 }}>
+              <ResponsiveContainer>
+                <BarChart data={months} margin={{ top: 6, right: 6, left: -14, bottom: 0 }} barGap={2}>
+                  <CartesianGrid stroke="var(--line)" vertical={false} />
+                  <XAxis dataKey="m" tick={{ fill: "var(--faint)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "var(--faint)", fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={fmtK} width={46} />
+                  <Tooltip cursor={{ fill: "var(--acc-soft)" }} formatter={(v) => fmt(v)}
+                    contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 10, fontSize: 12 }} />
+                  <Bar dataKey="Income" fill="var(--s3)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Spending" fill="var(--s8)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </HScroll>
+        </div>
+        <div className="card">
+          <h3>Spending by category</h3>
+          {donutData.length
+            ? <div style={{ marginTop: 10 }}><Donut data={donutData} centerTop={fmt(spend)} centerBottom="spent" /></div>
+            : <div className="note">No spending logged in this range yet.</div>}
+        </div>
+      </div>
+
+      <MonthReview d={d} config={config} />
 
       <div className="grid2" style={{ marginTop: 16 }}>
         <div className="card">
@@ -2802,6 +2936,11 @@ function buildAskPrompt(d, hist, question) {
     "Ground every limit in their actual monthly spending from monthlyTotals, prefer their existing category names (you may add up to 2 new ones), " +
     "keep the total comfortably under realistic monthly income, and leave room for their goals' monthly contributions. " +
     "When revising an earlier plan from this conversation, return the FULL updated plan, not a diff." +
+    "\n\nIf — and only if — the user is describing a purchase, trip, or one-off expense they are considering, respond with ONLY this JSON " +
+    "(no fences, no prose): {\"purchase\":{\"name\":\"<short label>\",\"cost\":<integer total $>,\"by\":\"YYYY-MM-DD\"|null,\"note\":\"<how you got the number, every assumption stated>\"}}. " +
+    "Do the arithmetic yourself and show it in note: for a drive, estimate the road distance between the named places, divide by the stated MPG, " +
+    "multiply by a realistic current US gas price, and assume a round trip unless they say one-way; include tolls, lodging, or food only if they mention them. " +
+    "If they name a timeframe, convert it to a date; otherwise use null." +
     "\n\nOtherwise answer in plain text (no markdown), under 180 words, citing specific numbers from the data. Be direct and concrete. " +
     "General financial education only — never recommend specific securities or products.";
 }
@@ -2817,12 +2956,13 @@ function AskAtlas({ d, setD, config }) {
     setBusy(true); setQ("");
     try {
       const a = (await callClaude(buildAskPrompt(d, hist, question))).trim();
-      let plan = null;
+      let plan = null, buy = null;
       try {
         const j = extractJSON(a);
         if (j && Array.isArray(j.limits) && j.limits.length) plan = j;
+        else if (j && j.purchase && j.purchase.name && Number(j.purchase.cost) > 0) buy = j.purchase;
       } catch {}
-      setHist((p) => [...p.slice(-3), plan ? { q: question, a: "", plan } : { q: question, a }]);
+      setHist((p) => [...p.slice(-3), plan ? { q: question, a: "", plan } : buy ? { q: question, a: "", buy } : { q: question, a }]);
     } catch (e) { toast("Ask failed — " + e.message, "err"); }
     setBusy(false);
   };
@@ -2844,6 +2984,13 @@ function AskAtlas({ d, setD, config }) {
     setHist((p) => p.map((h, i) => (i === idx ? { ...h, applied: true } : h)));
     toast("Budget applied — the limits are live in the Budget tab.");
   };
+  const addPurchase = (idx) => {
+    const b = hist[idx]?.buy;
+    if (!b) return;
+    setD((p) => ({ ...p, purchases: [...(p.purchases || []), { id: uid(), name: String(b.name).slice(0, 60), cost: Math.round(Number(b.cost) || 0), by: /^\d{4}-\d{2}-\d{2}$/.test(b.by || "") ? b.by : "", monthly: 0 }] }));
+    setHist((p) => p.map((h, i) => (i === idx ? { ...h, applied: true } : h)));
+    toast("Added to your Purchase planner — see the Plan tab.");
+  };
   return (
     <div className="card">
       <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
@@ -2852,7 +2999,7 @@ function AskAtlas({ d, setD, config }) {
       </div>
       {!hist.length && (
         <div className="row" style={{ marginTop: 8 }}>
-          {["Make me a budget plan", "Summarize this month", "Where did my money go last month?", "What subscriptions am I paying for?"].map((s) => (
+          {["Make me a budget plan", "Plan a trip: Atlanta to Ruston, 24 mpg", "Where did my money go last month?", "What subscriptions am I paying for?"].map((s) => (
             <button key={s} className="btn small" disabled={busy} onClick={() => ask(s)}>{s}</button>
           ))}
         </div>
@@ -2888,13 +3035,48 @@ function AskAtlas({ d, setD, config }) {
                     </>}
               </div>
             </div>
-          ) : (
+          ) : h.buy ? (() => {
+            const cost = Math.round(Number(h.buy.cost) || 0);
+            const monthlyKept = Math.max(0, (Number(d.settings.incomeMonthly) || 0) - avgMonthlySpend(d.txns));
+            const months = h.buy.by ? Math.max(1, Math.ceil((new Date(h.buy.by) - new Date()) / (30.44 * 864e5))) : null;
+            const perMo = months ? cost / months : null;
+            const liq = liquid(d.accounts);
+            return (
+              <div className="aiout" style={{ marginTop: 6 }}>
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <b>{h.buy.name}</b>
+                  <b className="mono">{fmt(cost)}</b>
+                </div>
+                {h.buy.note && <div className="note" style={{ marginTop: 4 }}>{h.buy.note}</div>}
+                <div className="kv" style={{ marginTop: 8 }}>
+                  <span className="k">Liquid savings after</span>
+                  <span className="mono">{fmt(liq)} → <b className={liq - cost < 0 ? "bad" : ""}>{fmt(liq - cost)}</b></span>
+                </div>
+                {perMo != null && (
+                  <div className="kv"><span className="k">To have it by {h.buy.by}</span>
+                    <span className="mono">{fmt(Math.round(perMo))}/mo for {months} mo{monthlyKept > 0 ? " · " + Math.round((perMo / monthlyKept) * 100) + "% of a typical month's surplus" : ""}</span></div>
+                )}
+                {monthlyKept > 0 && perMo == null && (
+                  <div className="kv"><span className="k">At your usual surplus</span>
+                    <span className="mono">~{Math.ceil(cost / monthlyKept)} mo to save up</span></div>
+                )}
+                <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 8 }}>
+                  {h.applied
+                    ? <span className="good">✓ Added — it's in the Plan tab</span>
+                    : <>
+                        <button className="btn small primary" onClick={() => addPurchase(i)}>Add to planner</button>
+                        <span className="note" style={{ margin: 0 }}>or tell me what to change (dates, extra costs…)</span>
+                      </>}
+                </div>
+              </div>
+            );
+          })() : (
             <div className="aiout" style={{ marginTop: 6 }}>{h.a}</div>
           )}
         </div>
       ))}
       <div className="row" style={{ marginTop: 10 }}>
-        <input className="in" style={{ flex: 1, minWidth: 200 }} placeholder="Ask anything about your money…"
+        <input className="in" style={{ flex: 1, minWidth: 200 }} placeholder="Ask anything — or describe a purchase to plan…"
           value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask()} />
         <button className="btn primary" disabled={busy || !q.trim()} onClick={() => ask()}>{busy ? "Thinking…" : "Ask"}</button>
         {hist.length > 0 && <button className="btn" disabled={busy} onClick={() => setHist([])}>Clear</button>}
