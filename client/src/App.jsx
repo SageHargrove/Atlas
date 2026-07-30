@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
+import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 
 /* ------------------------------------------------------ */
@@ -113,6 +113,8 @@ function extractJSON(text) {
 
 const fmt = (n) =>
   n == null || isNaN(n) ? "—" : (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString();
+/* "KROGER #442" -> "Kroger #442" — display only, raw note is preserved */
+const titleCase = (s) => String(s || "").toLowerCase().replace(/(^|[\s#/&-])([a-z])/g, (m, a, b) => a + b.toUpperCase());
 const fmt2 = (n) =>
   n == null || isNaN(n) ? "—" : (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtK = (n) => (Math.abs(n) >= 1000 ? "$" + (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : "$" + Math.round(n));
@@ -256,8 +258,23 @@ const CSS = `
 .fh .mh{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
 .fh .mrow{ display:flex; gap:8px; justify-content:flex-end; margin-top:18px; flex-wrap:wrap; }
 .fh .aiout{ background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-top:12px; white-space:pre-wrap; font-size:13.5px; line-height:1.6; }
-.fh .chip{ display:inline-flex; align-items:center; gap:7px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:5px 10px; font-size:12.5px; }
-.fh .dot{ width:9px; height:9px; border-radius:3px; flex-shrink:0; }
+.fh .chip{ display:inline-flex; align-items:center; gap:5px; border-radius:999px; padding:3px 10px; font-size:12px; font-weight:600; }
+.fh .chip.up{ background:var(--up-soft); color:var(--up); }
+.fh .chip.dn{ background:var(--red-soft); color:var(--red); }
+.fh .chip.ghost{ background:var(--panel2); color:var(--muted); border:1px solid var(--line); font-weight:500; }
+.fh .wchip{ display:inline-flex; align-items:center; gap:7px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:5px 10px; font-size:12.5px; }
+.fh .dot{ width:9px; height:9px; border-radius:3px; flex-shrink:0; display:inline-block; }
+.fh .pills{ display:flex; gap:2px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:2px; }
+.fh .pill{ font:inherit; border:none; background:none; cursor:pointer; padding:4px 11px; border-radius:8px; font-size:12px; color:var(--muted); }
+.fh .pill:hover{ color:var(--text); }
+.fh .pill.on{ background:var(--acc); color:#fff; font-weight:600; }
+.fh .av{ width:30px; height:30px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#fff; flex-shrink:0; }
+.fh .cat{ display:inline-flex; align-items:center; gap:5px; font-size:11px; border:1px solid var(--line); background:var(--panel2); border-radius:6px; padding:1.5px 7px; color:var(--muted); }
+.fh .sleg{ display:flex; gap:16px; flex-wrap:wrap; margin-top:10px; font-size:12.5px; color:var(--muted); }
+.fh .sleg .dot{ margin-right:6px; }
+.fh .toasts{ position:fixed; right:22px; bottom:22px; z-index:80; display:flex; flex-direction:column; gap:8px; }
+.fh .toastmsg{ background:var(--panel); border:1px solid var(--up); border-radius:12px; padding:11px 15px; font-size:13px; box-shadow:0 10px 30px rgba(2,6,16,.55); animation:rise .25s ease both; max-width:360px; }
+.fh .toastmsg.err{ border-color:var(--red); color:var(--red); }
 .fh .glow .recharts-line-curve{ filter:drop-shadow(0 0 6px color-mix(in srgb, var(--up) 55%, transparent)); }
 /* logo: pages sweep open from the spine on mount, and again on hover */
 .fh .atlas-logo .pg{ transform-origin:24px 24px; animation:pageOpen .62s cubic-bezier(.22,.9,.28,1) both; }
@@ -301,6 +318,117 @@ const Logo = ({ size = 30 }) => {
 /* categorical series colors — validated palette, assigned by entity (stable index), never by rank */
 const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
 const seriesColor = (i) => (i < 0 ? "var(--faint)" : SERIES[i % SERIES.length]);
+
+/* ---- hand-drawn 24x24 stroke icon set (no emoji, no external assets) ---- */
+const ICONS = {
+  home: ["M3 11.5 L12 4 L21 11.5", "M5.5 10 V20 H18.5 V10"],
+  cart: ["M3 4 H5.5 L8 15 H18 L20.8 7 H6.6", "M9.5 19.5 a0.4 0.4 0 1 0 0.001 0", "M16.8 19.5 a0.4 0.4 0 1 0 0.001 0"],
+  food: ["M6 3 V10", "M9 3 V10", "M7.5 3 V21", "M7.5 10 C6 10 6 8 6 8", "M16.5 3 C14.5 5.5 14.5 9 16.5 11 V21"],
+  car: ["M4.5 15.5 L5.6 10 C5.9 8.7 6.7 8 8 8 H16 C17.3 8 18.1 8.7 18.4 10 L19.5 15.5", "M3.8 15.5 H20.2 V18.5 H3.8 Z", "M6.8 18.5 V20", "M17.2 18.5 V20"],
+  play: ["M3.5 6.5 a2 2 0 0 1 2 -2 H18.5 a2 2 0 0 1 2 2 V17.5 a2 2 0 0 1 -2 2 H5.5 a2 2 0 0 1 -2 -2 Z", "M10 9 L15 12 L10 15 Z"],
+  game: ["M7 5.5 H17 C20 5.5 21.2 8.5 21 12 C20.8 15 19.5 16 18 15 L16 13 H8 L6 15 C4.5 16 3.2 15 3 12 C2.8 8.5 4 5.5 7 5.5 Z", "M7.5 9 V12", "M6 10.5 H9", "M15.5 9.5 h0.01", "M17.5 11.5 h0.01"],
+  bag: ["M5.5 8.5 H18.5 L17.5 20 H6.5 Z", "M9 8.5 V6.5 a3 3 0 0 1 6 0 V8.5"],
+  heart: ["M12 19.5 C5.5 14.5 4.5 9.5 7.7 7.6 C9.9 6.3 12 8.3 12 8.3 C12 8.3 14.1 6.3 16.3 7.6 C19.5 9.5 18.5 14.5 12 19.5 Z"],
+  plane: ["M3 12.5 L21 4 L15.5 20.5 L12 14 Z", "M12 14 L21 4"],
+  dollar: ["M12 3.5 V20.5", "M15.8 6.8 C15.8 5 14 4.3 12 4.3 C10 4.3 8.3 5.3 8.3 7.1 C8.3 11 15.8 9.6 15.8 13.6 C15.8 15.8 14 16.8 12 16.8 C10 16.8 8.2 15.9 8.2 14"],
+  zap: ["M13 2.5 L5 13 H11 L9.5 21.5 L19 9.5 H13 Z"],
+  gift: ["M4.5 10.5 H19.5 V20 H4.5 Z", "M3.8 7 H20.2 V10.5 H3.8 Z", "M12 7 V20", "M12 7 C9.2 7 7.8 5.4 8.7 4 C9.7 2.6 12 4.2 12 7", "M12 7 C14.8 7 16.2 5.4 15.3 4 C14.3 2.6 12 4.2 12 7"],
+  coffee: ["M4.5 9 H16.5 V15.5 a4 4 0 0 1 -4 4 H8.5 a4 4 0 0 1 -4 -4 Z", "M16.5 10 H18.5 a2.4 2.4 0 0 1 0 4.8 H16.5"],
+  book: ["M4.5 5 a2 2 0 0 1 2 -2 H19.5 V19 H6.5 a2 2 0 0 0 -2 2 Z", "M19.5 17 H6.5 a2 2 0 0 0 -2 2"],
+  tag: ["M3.5 10.5 V4 H10 L20.5 14.5 L14 21 Z", "M7.2 7.7 h0.01"],
+};
+function catIconKey(name) {
+  const n = String(name || "").toLowerCase();
+  if (/rent|home|mortgage|hous/.test(n)) return "home";
+  if (/grocer/.test(n)) return "cart";
+  if (/eat|food|dining|restaur/.test(n)) return "food";
+  if (/coffee|cafe/.test(n)) return "coffee";
+  if (/transport|gas|car|auto|fuel|uber|commut/.test(n)) return "car";
+  if (/subscript|stream/.test(n)) return "play";
+  if (/fun|game|entertain|hobby/.test(n)) return "game";
+  if (/shop|cloth|amazon/.test(n)) return "bag";
+  if (/health|gym|fitness|medic|pharm|doctor/.test(n)) return "heart";
+  if (/travel|flight|vacation|trip/.test(n)) return "plane";
+  if (/income|salary|pay/.test(n)) return "dollar";
+  if (/utilit|electric|power|internet|phone|bill/.test(n)) return "zap";
+  if (/gift|donat/.test(n)) return "gift";
+  if (/educat|book|school|tuition/.test(n)) return "book";
+  return "tag";
+}
+const Icon = ({ k, size = 14, color = "currentColor", style }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.9"
+    strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true">
+    {(ICONS[k] || ICONS.tag).map((d, i) => <path key={i} d={d} />)}
+  </svg>
+);
+const CatChip = ({ name, color }) => (
+  <span className="cat"><Icon k={catIconKey(name)} size={12} color={color} /> {name}</span>
+);
+const Avatar = ({ label, color }) => (
+  <span className="av" style={{ background: color }}>{(String(label || "?").trim()[0] || "?").toUpperCase()}</span>
+);
+
+const ThemeIcon = ({ dark }) => dark
+  ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7" /></svg>
+  : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20.5 13.5 A8.4 8.4 0 1 1 10.5 3.5 A6.8 6.8 0 0 0 20.5 13.5 Z" /></svg>;
+const KeyIcon = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -2, marginRight: 6 }} aria-hidden="true"><circle cx="7.5" cy="15.5" r="3.8" /><path d="M10.5 12.5 L20 3 M15 8 L17.6 10.6 M17.8 5.2 L20.3 7.7" /></svg>;
+
+/* tiny sparkline for stat tiles */
+const Spark = ({ data, color = "var(--up)", w = 108, h = 30 }) => {
+  if (!data || data.length < 2) return null;
+  const min = Math.min(...data), max = Math.max(...data);
+  const sx = (w - 4) / (data.length - 1), sy = (h - 6) / ((max - min) || 1);
+  const pts = data.map((v, i) => (2 + i * sx).toFixed(1) + "," + (h - 3 - (v - min) * sy).toFixed(1)).join(" ");
+  return <svg width={w} height={h} aria-hidden="true"><polyline points={pts} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" /></svg>;
+};
+
+/* delta chip: ▲/▼ + label */
+const Delta2 = ({ v, label, goodDown = false }) => {
+  if (v == null || isNaN(v) || Math.abs(v) < 1) return null;
+  const up = v > 0;
+  const good = goodDown ? !up : up;
+  return <span className={"chip " + (good ? "up" : "dn")}>{up ? "▲" : "▼"} {fmt(Math.abs(v))}{label ? " " + label : ""}</span>;
+};
+
+/* horizontal stacked bar + legend — the flattened allocation donut */
+function StackBar({ segs, height = 18 }) {
+  const total = segs.reduce((s, x) => s + x.value, 0) || 1;
+  return (
+    <>
+      <div style={{ display: "flex", height, borderRadius: 9, overflow: "hidden", marginTop: 12, gap: 2 }}>
+        {segs.map((s) => (
+          <div key={s.name} title={s.name + " " + fmt(s.value)} style={{ width: Math.max(0.8, (s.value / total) * 100) + "%", background: s.color }} />
+        ))}
+      </div>
+      <div className="sleg">
+        {segs.map((s) => (
+          <span key={s.name}><span className="dot" style={{ background: s.color }} />{s.name} <b className="mono">{Math.round((s.value / total) * 100)}%</b> <span style={{ color: "var(--faint)" }}>{fmtK(s.value)}</span></span>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* ---- toasts: replace alert() so errors match the app instead of the browser ---- */
+let __pushToast = null;
+const toast = (msg, kind = "ok") => { if (__pushToast) __pushToast(msg, kind); else if (kind === "err") alert(msg); };
+function Toasts() {
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    __pushToast = (msg, kind) => {
+      const id = uid();
+      setList((p) => [...p.slice(-3), { id, msg, kind }]);
+      setTimeout(() => setList((p) => p.filter((t) => t.id !== id)), 5500);
+    };
+    return () => { __pushToast = null; };
+  }, []);
+  if (!list.length) return null;
+  return (
+    <div className="toasts">
+      {list.map((t) => <div key={t.id} className={"toastmsg " + t.kind}>{t.msg}</div>)}
+    </div>
+  );
+}
 
 /* donut + legend rows; data: [{name, value, color}] already sorted for display */
 function Donut({ data, size = 185, centerTop, centerBottom }) {
@@ -449,7 +577,7 @@ function BankSync({ d, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBan
         Get a token: sign up at <a href="https://beta-bridge.simplefin.org/" target="_blank" rel="noreferrer noopener" style={{ color: "var(--acc)" }}>beta-bridge.simplefin.org</a> →
         add your banks under <b>Financial Institutions</b> → then <b>Apps → New Connection</b> → <b>Create Setup Token</b>. Tokens are one-time use.
       </div>
-      <div className="note">Synced transactions land in Budget as "uncategorized" for you (or the AI) to sort. Brokerages like Fidelity aren't covered — use the Invest tab's positions-CSV import instead.</div>
+      <div className="note">Synced transactions land in Budget as "uncategorized" for you (or the AI) to sort. Brokerage connections (Fidelity included) also bring their holdings into the Invest tab automatically.</div>
 
       {legacy.length > 0 && (
         <>
@@ -564,8 +692,11 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRem
           .sort((a, b) => b.value - a.value);
         return rows.length >= 2 ? (
           <div className="card">
-            <h3>Asset allocation</h3>
-            <div style={{ marginTop: 10 }}><Donut data={rows} centerTop={fmt(assets)} centerBottom="assets" /></div>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+              <h3>Asset allocation</h3>
+              <span className="note" style={{ margin: 0 }}><b className="mono">{fmt(assets)}</b> in assets</span>
+            </div>
+            <StackBar segs={rows} />
           </div>
         ) : null;
       })()}
@@ -603,7 +734,7 @@ function Budget({ d, setD, config }) {
       const j = extractJSON(out);
       if (Array.isArray(j.limits)) setReco(j);
       else throw new Error("Unexpected response");
-    } catch (e) { alert("Recommendation failed — " + e.message); }
+    } catch (e) { toast("Recommendation failed — " + e.message, "err"); }
     setRecoBusy(false);
   };
   const [month, setMonth] = useState(thisMonth());
@@ -686,14 +817,14 @@ function Budget({ d, setD, config }) {
             </div>
           </div>
         )}
-        {d.cats.map((c) => {
+        {d.cats.map((c, ci) => {
           const spent = spentBy[c.id] || 0;
           const lim = Number(c.limit) || 0;
           const p = lim > 0 ? Math.min(100, (spent / lim) * 100) : 0;
           return (
             <div key={c.id} style={{ padding: "7px 0", borderBottom: "1px solid var(--line)" }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <span>{c.name}</span>
+                <span className="row" style={{ gap: 8, flexWrap: "nowrap" }}><Icon k={catIconKey(c.name)} size={14} color={seriesColor(ci)} />{c.name}</span>
                 <span className="row" style={{ gap: 6 }}>
                   <span className="mono" style={{ fontSize: 13 }}>
                     <span className={lim > 0 && spent > lim ? "bad" : ""}>{fmt(spent)}</span>
@@ -735,7 +866,7 @@ function Budget({ d, setD, config }) {
                     const hit = j.find((x) => x.i === t.id);
                     return hit && byName[(hit.cat || "").toLowerCase()] ? { ...t, catId: byName[hit.cat.toLowerCase()] } : t;
                   }) }));
-                } catch (e) { alert("Categorize failed — " + e.message); }
+                } catch (e) { toast("Categorize failed — " + e.message, "err"); }
                 setCatBusy(false);
               }}>{catBusy ? "Sorting…" : "AI categorize (" + monthTxns.filter((t) => !t.catId && t.kind !== "in").length + ")"}</button>
             )}
@@ -779,7 +910,14 @@ function Budget({ d, setD, config }) {
           <div className="trow" key={t.id}>
             <span className="mono" style={{ fontSize: 12.5 }}>{searching ? t.date : t.date.slice(5)}</span>
             {t.catId
-              ? <span>{d.cats.find((c) => c.id === t.catId)?.name || "?"}</span>
+              ? (() => {
+                  const ci = d.cats.findIndex((c) => c.id === t.catId);
+                  const cn = d.cats[ci]?.name || "?";
+                  return <span className="row" style={{ gap: 7, flexWrap: "nowrap", overflow: "hidden" }}>
+                    <Icon k={catIconKey(cn)} size={13} color={seriesColor(ci)} style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cn}</span>
+                  </span>;
+                })()
               : <select className="in" style={{ padding: "3px 6px", fontSize: 12, borderColor: "var(--gold)" }} value=""
                   onChange={(e) => setD((p) => ({ ...p, txns: p.txns.map((x) => x.id === t.id ? { ...x, catId: e.target.value } : x) }))}>
                   <option value="" disabled>— pick —</option>
@@ -788,7 +926,7 @@ function Budget({ d, setD, config }) {
             <span className="mono" style={t.kind === "in" ? { color: "var(--acc)" } : null}>{t.kind === "in" ? "+" : ""}{fmt(Number(t.amount))}</span>
             <span>{t.kind === "in" ? <span className="tag" style={{ color: "var(--acc)" }}>income</span> : null}</span>
             <span className="tacct">{t.accountId ? <span className="tag">{(d.accounts.find((a) => a.id === t.accountId)?.name || "").slice(0, 18)}</span> : null}</span>
-            <span className="tnote" style={{ color: "var(--muted)", fontSize: 13 }}>{t.note}</span>
+            <span className="tnote" style={{ color: "var(--muted)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titleCase(t.note)}</span>
             <button className="x" onClick={() => setD((p) => ({ ...p, txns: p.txns.filter((x) => x.id !== t.id) }))}>✕</button>
           </div>
         ))}
@@ -1360,8 +1498,8 @@ function FinanceHQ({ config }) {
             ))}
           </div>
           <div className="row" style={{ flexWrap: "nowrap" }}>
-            <button className="btn small" title="Toggle theme" onClick={() => setD((p) => ({ ...p, settings: { ...p.settings, theme: p.settings.theme === "dark" ? "light" : "dark" } }))}>
-              {d.settings.theme === "dark" ? "☀" : "☾"}
+            <button className="btn small" title="Toggle theme" style={{ display: "inline-flex", alignItems: "center" }} onClick={() => setD((p) => ({ ...p, settings: { ...p.settings, theme: p.settings.theme === "dark" ? "light" : "dark" } }))}>
+              <ThemeIcon dark={d.settings.theme === "dark"} />
             </button>
             <button className="btn small" onClick={() => setShowSecurity(true)}>Security</button>
             <button className="btn small" onClick={() => setShowSettings(true)}>Settings</button>
@@ -1405,6 +1543,7 @@ function FinanceHQ({ config }) {
         </Modal>
       )}
       {showSecurity && <SecurityModal onClose={() => setShowSecurity(false)} />}
+      <Toasts />
     </div>
   );
 }
@@ -1494,7 +1633,7 @@ function BankImport({ d, setD, onClose }) {
           </div>
           <div className="note" style={{ marginTop: 6 }}><b>{fname}</b> — {rows.length} rows, {nInc} selected{rows.some((r) => r.dup) ? " (duplicates unchecked)" : ""}.</div>
           <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 6 }}>
-            <button className="btn" disabled={busy || !nInc} onClick={autoCat}>{busy ? "Categorizing…" : "Auto-categorize ✨"}</button>
+            <button className="btn" disabled={busy || !nInc} onClick={autoCat}>{busy ? "Categorizing…" : "Auto-categorize"}</button>
           </div>
           <div style={{ maxHeight: 300, overflowY: "auto", marginTop: 8, border: "1px solid var(--line)", borderRadius: 10, padding: "4px 10px" }}>
             {rows.map((r, i) => (
@@ -1705,8 +1844,8 @@ function Invest({ d, setD, config }) {
   const totCost = rows.filter((r) => r.cost > 0 && r.value != null).reduce((s, r) => s + r.cost, 0);
   const totCostVal = rows.filter((r) => r.cost > 0 && r.value != null).reduce((s, r) => s + r.value, 0);
   const totGain = totCost > 0 ? totCostVal - totCost : null;
-  const alloc = rows.filter((r) => r.value > 0).map((r, ) => ({ name: r.symbol, value: Math.round(r.value), color: seriesColor(holdings.findIndex((h) => h.symbol === r.symbol)) }));
-  const allocData = alloc.length > 7 ? [...alloc.slice(0, 6), { name: "Other", value: alloc.slice(6).reduce((s, x) => s + x.value, 0), color: "var(--faint)" }] : alloc;
+  const alloc = rows.filter((r) => r.value > 0).map((r) => ({ name: r.symbol, value: Math.round(r.value), color: seriesColor(holdings.findIndex((h) => h.symbol === r.symbol)) }));
+  const allocSegs = alloc.length > 7 ? [...alloc.slice(0, 6), { name: "Other", value: alloc.slice(6).reduce((s, x) => s + x.value, 0), color: "var(--faint)" }] : alloc;
 
   const addHolding = () => {
     const sym = nh.symbol.trim().toUpperCase();
@@ -1803,7 +1942,7 @@ function Invest({ d, setD, config }) {
             <span className="mono">{r.shares}</span>
             <span className="mono">{fmt2(r.price)}</span>
             <span className="iday" style={{ fontSize: 12.5 }}><Delta v={dayPct(r.symbol)} /></span>
-            <span className="mono">{fmt(r.value)}</span>
+            <span className="mono">{fmt(r.value)}{r.value != null && totValue > 0 && <span style={{ color: "var(--faint)", fontSize: 11 }}> {Math.round((r.value / totValue) * 100)}%</span>}</span>
             <span className="igain mono" style={{ fontSize: 12.5, color: r.gain == null ? "var(--faint)" : r.gain >= 0 ? "var(--up)" : "var(--red)" }}>{r.gain == null ? "—" : (r.gain >= 0 ? "+" : "") + fmt(r.gain)}</span>
             <button className="x" onClick={() => setD((p) => ({ ...p, invest: { ...p.invest, holdings: p.invest.holdings.filter((h) => h.id !== r.id) } }))}>✕</button>
           </div>
@@ -1830,10 +1969,10 @@ function Invest({ d, setD, config }) {
         )}
       </div>
 
-      {allocData.length >= 2 && (
+      {allocSegs.length >= 2 && (
         <div className="card">
           <h3>Allocation</h3>
-          <div style={{ marginTop: 10 }}><Donut data={allocData} centerTop={fmt(totValue)} centerBottom="portfolio" /></div>
+          <StackBar segs={allocSegs} />
         </div>
       )}
 
@@ -1849,7 +1988,7 @@ function Invest({ d, setD, config }) {
         </div>
         <div className="row" style={{ marginTop: 8 }}>
           {watch.map((s) => (
-            <span className="chip" key={s}>
+            <span className="wchip" key={s}>
               <b className="mono">{s}</b>
               <span className="mono" style={{ color: "var(--muted)" }}>{fmt2(px(s))}</span>
               <Delta v={dayPct(s)} />
@@ -2088,6 +2227,22 @@ function Dashboard({ d, setTab }) {
   const { assets, debts, nw } = netWorth(d.accounts);
   const hist = d.history.filter((h) => h.date >= start).map((h) => ({ date: h.date.slice(5), nw: h.nw }));
 
+  /* hero chips: change vs last month-end and vs Jan 1 */
+  const baseMonth = [...d.history].reverse().find((h) => h.date < thisMonth() + "-01")?.nw;
+  const monthDelta = baseMonth != null ? nw - baseMonth : null;
+  const monthPct = baseMonth ? (monthDelta / Math.abs(baseMonth)) * 100 : null;
+  const jan1 = new Date().getFullYear() + "-01-01";
+  const baseYear = [...d.history].reverse().find((h) => h.date < jan1)?.nw
+    ?? (d.history.length > 1 && d.history[0].date >= jan1 ? d.history[0].nw : null);
+  const ytdDelta = baseYear != null ? nw - baseYear : null;
+  const avgSpend = avgMonthlySpend(d.txns);
+  const runway = avgSpend > 0 ? liquid(d.accounts) / avgSpend : null;
+  const endDot = (p) => (p.index === hist.length - 1
+    ? <circle key="end" cx={p.cx} cy={p.cy} r={4} fill="var(--up)" />
+    : <g key={p.index} />);
+
+  const recent = [...d.txns].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 5);
+
   /* income vs spending by month */
   const months = [];
   for (let i = Math.min(monthsN, 12) - 1; i >= 0; i--) {
@@ -2147,32 +2302,78 @@ function Dashboard({ d, setTab }) {
 
   return (
     <>
-      <div className="row" style={{ gap: 6, marginBottom: 12 }}>
-        {RANGES.map(([v, l]) => (
-          <button key={v} className={"btn small" + (range === v ? " primary" : "")} onClick={() => setRange(v)}>{l}</button>
-        ))}
-      </div>
-
       <div className="card">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div className="note" style={{ margin: 0 }}>Net worth</div>
-            <div className="big mono" style={{ color: nw >= 0 ? "var(--acc)" : "var(--red)" }}>{fmt(nw)}</div>
+            <div className="note" style={{ margin: 0, textTransform: "uppercase", letterSpacing: ".07em", fontSize: 11 }}>Net worth</div>
+            <div className="row" style={{ gap: 10 }}>
+              <span className="big mono">{fmt(nw)}</span>
+              {monthDelta != null && Math.abs(monthDelta) >= 1 && (
+                <span className={"chip " + (monthDelta >= 0 ? "up" : "dn")}>
+                  {monthDelta >= 0 ? "▲" : "▼"} {fmt(Math.abs(monthDelta))}{monthPct != null ? " · " + Math.abs(monthPct).toFixed(1) + "%" : ""} this month
+                </span>
+              )}
+              {ytdDelta != null && Math.abs(ytdDelta) >= 1 && (
+                <span className="chip ghost">{ytdDelta >= 0 ? "▲" : "▼"} {fmt(Math.abs(ytdDelta))} YTD</span>
+              )}
+            </div>
+            <div className="note" style={{ marginTop: 2 }}>assets <b className="mono">{fmt(assets)}</b> · debts <b className="mono" style={{ color: "var(--red)" }}>{fmt(debts)}</b></div>
           </div>
-          <div className="note" style={{ margin: 0, textAlign: "right" }}>
-            assets <b className="mono">{fmt(assets)}</b> · debts <b className="mono" style={{ color: "var(--red)" }}>{fmt(debts)}</b>
+          <div className="pills">
+            {RANGES.map(([v, l]) => (
+              <button key={v} className={"pill" + (range === v ? " on" : "")} onClick={() => setRange(v)}>{l}</button>
+            ))}
           </div>
         </div>
-        {hist.length >= 2
-          ? <ChartBox data={hist} dataKey="nw" xKey="date" />
-          : <div className="note">Net worth logs one point per day — the trend appears as days accumulate.</div>}
+        {hist.length >= 2 ? (
+          <div style={{ width: "100%", height: 210, marginTop: 6 }} className="glow">
+            <ResponsiveContainer>
+              <AreaChart data={hist} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="nw-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--up)" stopOpacity={0.26} />
+                    <stop offset="100%" stopColor="var(--up)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: "var(--faint)", fontSize: 11 }} tickLine={false} axisLine={{ stroke: "var(--line)" }} minTickGap={28} />
+                <YAxis tick={{ fill: "var(--faint)", fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={fmtK} width={52} domain={["auto", "auto"]} />
+                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 10, color: "var(--text)", fontSize: 13 }} />
+                <Area type="monotone" dataKey="nw" stroke="var(--up)" strokeWidth={2} fill="url(#nw-grad)" dot={endDot} activeDot={{ r: 4, fill: "var(--up)" }} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        ) : <div className="note">Net worth logs one point per day — the trend appears as days accumulate.</div>}
       </div>
 
-      <div className="grid4" style={{ marginTop: 14 }}>
-        <div className="card"><div className="note" style={{ margin: 0 }}>Income</div><div className="big mono" style={{ fontSize: 22 }}>{fmt(income)}</div><div className="note" style={{ margin: 0 }}>{inSum > 0 ? "logged" : "from Settings"}</div></div>
-        <div className="card"><div className="note" style={{ margin: 0 }}>Spending</div><div className="big mono" style={{ fontSize: 22 }}>{fmt(spend)}</div><div className="note" style={{ margin: 0 }}>{RANGES.find((x) => x[0] === range)[1].toLowerCase()}</div></div>
-        <div className="card"><div className="note" style={{ margin: 0 }}>Net cash flow</div><div className="big mono" style={{ fontSize: 22, color: net >= 0 ? "var(--acc)" : "var(--red)" }}>{fmt(net)}</div><div className="note" style={{ margin: 0 }}>income − spending</div></div>
-        <div className="card"><div className="note" style={{ margin: 0 }}>Savings rate</div><div className="big mono" style={{ fontSize: 22 }}>{rate == null ? "—" : rate + "%"}</div><div className="note" style={{ margin: 0 }}>{rate == null ? "set income" : rate >= 20 ? "strong" : rate >= 0 ? "keep pushing" : "spending exceeds income"}</div></div>
+      <div className="grid4" style={{ marginTop: 16 }}>
+        <div className="card">
+          <div className="note" style={{ margin: 0 }}>Income</div>
+          <div className="big mono" style={{ fontSize: 22 }}>{fmt(income)}</div>
+          <div style={{ margin: "4px 0 6px" }}><Spark data={months.map((m) => m.Income)} color="var(--s3)" /></div>
+          {months.length >= 2
+            ? <Delta2 v={months[months.length - 1].Income - months[months.length - 2].Income} label={"vs " + months[months.length - 2].m} />
+            : <span className="chip ghost">{inSum > 0 ? "logged" : "from Settings"}</span>}
+        </div>
+        <div className="card">
+          <div className="note" style={{ margin: 0 }}>Spending</div>
+          <div className="big mono" style={{ fontSize: 22 }}>{fmt(spend)}</div>
+          <div style={{ margin: "4px 0 6px" }}><Spark data={months.map((m) => m.Spending)} color="var(--s8)" /></div>
+          {months.length >= 2
+            ? <Delta2 v={months[months.length - 1].Spending - months[months.length - 2].Spending} label={"vs " + months[months.length - 2].m} goodDown />
+            : <span className="chip ghost">{RANGES.find((x) => x[0] === range)[1].toLowerCase()}</span>}
+        </div>
+        <div className="card">
+          <div className="note" style={{ margin: 0 }}>Net cash flow</div>
+          <div className="big mono" style={{ fontSize: 22, color: net >= 0 ? "var(--up)" : "var(--red)" }}>{(net >= 0 ? "+" : "") + fmt(net)}</div>
+          <div style={{ margin: "4px 0 6px" }}><Spark data={months.map((m) => m.Income - m.Spending)} /></div>
+          <span className={"chip " + (rate == null ? "ghost" : rate >= 20 ? "up" : rate >= 0 ? "ghost" : "dn")}>{rate == null ? "set income" : rate + "% kept"}</span>
+        </div>
+        <div className="card">
+          <div className="note" style={{ margin: 0 }}>Runway</div>
+          <div className="big mono" style={{ fontSize: 22 }}>{runway == null ? "—" : runway >= 99 ? "99+" : runway.toFixed(1) + " mo"}</div>
+          <div className="note" style={{ marginTop: 6 }}>how long checking + savings last if income stopped</div>
+        </div>
       </div>
 
       <div className="grid2" style={{ marginTop: 14 }}>
@@ -2205,7 +2406,32 @@ function Dashboard({ d, setTab }) {
         </div>
       </div>
 
-      <div className="grid2" style={{ marginTop: 14 }}>
+      <div className="grid2" style={{ marginTop: 16 }}>
+        <div className="card">
+          <h3>Recent activity</h3>
+          {recent.length ? recent.map((t) => {
+            const ci = d.cats.findIndex((c) => c.id === t.catId);
+            const cn = d.cats[ci]?.name;
+            const color = t.kind === "in" ? "var(--s3)" : seriesColor(ci);
+            return (
+              <div className="kv" key={t.id}>
+                <span className="row" style={{ gap: 10, flexWrap: "nowrap", overflow: "hidden" }}>
+                  <Avatar label={t.note || cn || "?"} color={color} />
+                  <span style={{ overflow: "hidden" }}>
+                    <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titleCase(t.note) || cn || "—"}</span>
+                    {t.kind === "in"
+                      ? <span className="cat"><Icon k="dollar" size={12} color="var(--up)" /> Income</span>
+                      : cn ? <CatChip name={cn} color={seriesColor(ci)} /> : <span className="cat">Uncategorized</span>}
+                  </span>
+                </span>
+                <span style={{ textAlign: "right", flexShrink: 0 }}>
+                  <span className="mono" style={t.kind === "in" ? { color: "var(--up)" } : {}}>{t.kind === "in" ? "+" : "−"}{fmt(Number(t.amount))}</span>
+                  <span className="note" style={{ display: "block", margin: 0, fontSize: 11 }}>{t.date}</span>
+                </span>
+              </div>
+            );
+          }) : <div className="note">No transactions yet — connect a bank or log one in Budget.</div>}
+        </div>
         <div className="card">
           <h3>Upcoming bills — next 30 days</h3>
           {upcoming.length ? upcoming.map(({ r, when }) => (
@@ -2216,6 +2442,9 @@ function Dashboard({ d, setTab }) {
             </div>
           )) : <div className="note">Nothing due — add recurring bills in Budget and they show here.</div>}
         </div>
+      </div>
+
+      <div className="grid2" style={{ marginTop: 16 }}>
         <div className="card">
           <div className="row" style={{ justifyContent: "space-between" }}>
             <h3>Budget — {monthLabel(mKey)}</h3>
@@ -2230,9 +2459,6 @@ function Dashboard({ d, setTab }) {
             </div>
           )) : <div className="note">Set category budgets to track progress here.</div>}
         </div>
-      </div>
-
-      <div className="grid2" style={{ marginTop: 14 }}>
         <div className="card">
           <h3>vs last month</h3>
           {movers.length ? movers.map((m) => (
@@ -2251,7 +2477,7 @@ function Dashboard({ d, setTab }) {
           {biggest.length ? biggest.map((t) => (
             <div className="kv" key={t.id}>
               <span className="k" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>
-                {t.note || d.cats.find((c) => c.id === t.catId)?.name || "—"}
+                {titleCase(t.note) || d.cats.find((c) => c.id === t.catId)?.name || "—"}
                 <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · {t.date}</span>
               </span>
               <span className="mono">{fmt(Number(t.amount))}</span>
@@ -2365,7 +2591,7 @@ export default function App() {
                 <div className="row" style={{ alignItems: "center", gap: 10, margin: "14px 0 10px", color: "var(--faint)", fontSize: 12 }}>
                   <span style={{ flex: 1, height: 1, background: "var(--line)" }} /> or <span style={{ flex: 1, height: 1, background: "var(--line)" }} />
                 </div>
-                <button className="btn" style={{ width: "100%" }} disabled={busy} onClick={passkeyLogin}>🔑 Sign in with a passkey</button>
+                <button className="btn" style={{ width: "100%" }} disabled={busy} onClick={passkeyLogin}><KeyIcon />Sign in with a passkey</button>
                 <div className="note" style={{ textAlign: "center", marginTop: 10 }}>
                   <a href="#" onClick={(e) => { e.preventDefault(); setMode("recovery"); setErr(""); }} style={{ color: "var(--faint)" }}>Lost your device? Use a recovery code</a>
                 </div>
