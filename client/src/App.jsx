@@ -174,7 +174,7 @@ const CSS = `
     var(--bg); }
 .fh[data-theme="dark"]{ color-scheme:dark;
   --bg:#070b14; --panel:#0e1524; --panel2:#141d31; --line:#1b2740; --line2:#2b3c5c;
-  --text:#e8eef7; --muted:#8b9bb4; --faint:#5d6d87;
+  --text:#e8eef7; --muted:#8b9bb4; --faint:#69819e;
   --acc:#3987e5; --acc-soft:rgba(57,135,229,.14); --acc-ink:#ffffff;
   --up:#3ddba0; --up-soft:rgba(61,219,160,.11);
   --red:#ef7d7d; --red-soft:rgba(239,125,125,.11);
@@ -194,7 +194,7 @@ const CSS = `
   --glow1:rgba(42,120,214,.06); --glow2:rgba(15,138,95,.04);
   --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
   --shadow:0 10px 28px rgba(22,34,47,.13); }
-.fh .wrap{ max-width:1240px; margin:0 auto; padding:0 24px; }
+.fh .wrap{ max-width:1360px; margin:0 auto; padding:0 26px; }
 .fh header{ position:sticky; top:0; z-index:40; background:color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border-bottom:1px solid var(--line); }
 .fh .hrow{ display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:12px 0; }
 .fh .brand{ display:flex; align-items:center; gap:10px; }
@@ -283,11 +283,18 @@ const CSS = `
 @keyframes tape{ to{ transform:translateX(-50%); } }
 @media (prefers-reduced-motion: reduce){ .fh .tapein{ animation:none; flex-wrap:wrap; width:auto; padding:0 16px; } .fh .tapecopy:last-child{ display:none; } }
 .fh .glow .recharts-line-curve{ filter:drop-shadow(0 0 6px color-mix(in srgb, var(--up) 55%, transparent)); }
-/* logo: pages sweep open from the spine on mount, and again on hover */
-.fh .atlas-logo .pg{ transform-origin:24px 24px; animation:pageOpen .62s cubic-bezier(.22,.9,.28,1) both; }
-.fh .atlas-logo .pgr{ animation-delay:.07s; }
-.fh .brand:hover .atlas-logo .pg{ animation:pageOpen .5s cubic-bezier(.22,.9,.28,1) both; }
+/* logo: pages sweep open, the route draws itself, the pin pops; replays on hover.
+   Defaults are the FINISHED state so prefers-reduced-motion (animation:none) shows the full mark. */
+.fh .atlas-logo .pg{ transform-origin:24px 24px; animation:pageOpen .55s cubic-bezier(.22,.9,.28,1) both; }
+.fh .atlas-logo .pgr{ animation-delay:.06s; }
+.fh .atlas-logo .rt{ stroke-dasharray:100 0; animation:routeDraw .7s cubic-bezier(.3,.6,.3,1) .5s backwards; }
+.fh .atlas-logo .rtdot{ transform-origin:33.8px 16.6px; animation:pinPop .35s cubic-bezier(.2,1.6,.4,1) 1.05s backwards; }
+.fh .brand:hover .atlas-logo .pg{ animation:pageOpen .45s cubic-bezier(.22,.9,.28,1) both; }
+.fh .brand:hover .atlas-logo .rt{ animation:routeDraw .6s cubic-bezier(.3,.6,.3,1) .35s backwards; }
+.fh .brand:hover .atlas-logo .rtdot{ animation:pinPop .35s cubic-bezier(.2,1.6,.4,1) .85s backwards; }
 @keyframes pageOpen{ from{ transform:scaleX(.06); opacity:.35; } to{ transform:none; opacity:1; } }
+@keyframes routeDraw{ from{ stroke-dasharray:0 100; } to{ stroke-dasharray:100 0; } }
+@keyframes pinPop{ from{ transform:scale(0); } to{ transform:scale(1); } }
 .fh .banner{ border:1px solid var(--acc); background:var(--acc-soft); border-radius:12px; padding:10px 14px; margin-top:12px; font-size:13px; animation:rise .3s ease both; }
 @media (max-width:760px){
   .fh .grid2,.fh .grid3{ grid-template-columns:1fr; }
@@ -303,8 +310,9 @@ const CSS = `
 
 /* ---------------- shared bits ---------------- */
 
-/* Atlas mark: an open book — an atlas is literally a book of maps. The pages
-   sweep open from the spine on mount and again on hover. */
+/* Atlas mark: an open book of maps with a route charting up and to the right —
+   book + map + trend line in one. Pages sweep open, then the route draws itself
+   and the destination pin pops. Replays on hover. */
 const Logo = ({ size = 30 }) => {
   /* useId() contains ':' which is invalid inside url(#…) — strip it */
   const gid = "atlas" + React.useId().replace(/:/g, "");
@@ -312,12 +320,22 @@ const Logo = ({ size = 30 }) => {
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" className="atlas-logo" role="img" aria-label="Atlas">
       <defs>
         <linearGradient id={gid} gradientUnits="userSpaceOnUse" x1="0" y1="48" x2="48" y2="0">
-          <stop offset="0" stopColor="#2a78d6" /><stop offset="1" stopColor="#34d399" />
+          <stop offset="0" stopColor="#1e63c8" /><stop offset="1" stopColor="#34d399" />
         </linearGradient>
       </defs>
       <rect x="1" y="1" width="46" height="46" rx="14" fill={`url(#${gid})`} />
-      <path className="pg pgl" d="M24 17C20.5 14 14.5 12.8 9.5 13.4V31.6C14.5 31 20.5 32.2 24 35.2Z" fill="#fff" />
-      <path className="pg pgr" d="M24 17C27.5 14 33.5 12.8 38.5 13.4V31.6C33.5 31 27.5 32.2 24 35.2Z" fill="#fff" fillOpacity=".82" />
+      {/* subtle inner glow so the tile reads dimensional, not flat */}
+      <rect x="1" y="1" width="46" height="46" rx="14" fill="#fff" fillOpacity=".07" style={{ mixBlendMode: "overlay" }} />
+      <path className="pg pgl" d="M24 16.5C20.3 13.6 14.3 12.5 9 13.1V32.2C14.3 31.6 20.3 32.8 24 35.8Z" fill="#fff" />
+      <path className="pg pgr" d="M24 16.5C27.7 13.6 33.7 12.5 39 13.1V32.2C33.7 31.6 27.7 32.8 24 35.8Z" fill="#fff" fillOpacity=".85" />
+      {/* spine shadow */}
+      <path d="M24 16.5V35.8" stroke="#0d2b52" strokeOpacity=".22" strokeWidth="1.6" strokeLinecap="round" />
+      {/* the route: dashed trail across both pages, rising */}
+      <path className="rt" d="M12.5 28.5 C16 27.5 17.5 23.5 20.5 24.5 C23.5 25.5 24.5 20.5 28 19.5 C30.5 18.8 32 17.6 33.8 16.6"
+        stroke={`url(#${gid})`} strokeWidth="2.1" strokeLinecap="round" fill="none" pathLength="100" />
+      {/* destination pin */}
+      <circle className="rtdot" cx="33.8" cy="16.6" r="2.5" fill="#0f8a5f" />
+      <circle className="rtdot" cx="33.8" cy="16.6" r="1" fill="#fff" />
     </svg>
   );
 };
@@ -1527,7 +1545,7 @@ function FinanceHQ({ config }) {
           </div>
         </div>
       </header>
-      <div className="wrap">
+      <main className="wrap">
         {saveErr && (
           <div className="card" style={{ borderColor: "var(--red)", background: "var(--red-soft)", marginBottom: 12 }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 10 }}>
@@ -1543,7 +1561,7 @@ function FinanceHQ({ config }) {
         {tab === "invest" && <Invest d={d} setD={setD} config={config} />}
         {tab === "goals" && <Goals d={d} setD={setD} />}
         {tab === "plan" && <Plan d={d} setD={setD} />}
-      </div>
+      </main>
       {showSettings && (
         <Modal title="Settings" onClose={() => setShowSettings(false)}>
           <label className="f">Monthly take-home income ($)</label>
@@ -1990,7 +2008,7 @@ function Invest({ d, setD, config }) {
         {!rows.length && <div className="note">No holdings yet — {synced ? "hit Sync now under Accounts and your brokerage positions land here." : "add a ticker below or import a positions CSV."}</div>}
         {!synced && (
           <div className="row" style={{ marginTop: 10 }}>
-            <input className="in mono" style={{ width: 110 }} placeholder="Ticker" value={nh.symbol}
+            <input className="in mono" style={{ width: 150 }} placeholder="Symbol (e.g. AAPL)" title="The stock's ticker symbol — AAPL for Apple, VOO for Vanguard S&P 500" value={nh.symbol}
               onChange={(e) => setNh({ ...nh, symbol: e.target.value.toUpperCase() })} onKeyDown={(e) => e.key === "Enter" && addHolding()} />
             <input className="in mono" type="number" style={{ width: 110 }} placeholder="Shares" value={nh.shares} onChange={(e) => setNh({ ...nh, shares: e.target.value })} />
             <input className="in mono" type="number" style={{ width: 150 }} placeholder="Cost basis $ (opt.)" title="Total amount paid for the whole position" value={nh.cost} onChange={(e) => setNh({ ...nh, cost: e.target.value })} />
@@ -2022,7 +2040,7 @@ function Invest({ d, setD, config }) {
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h3>Watchlist</h3>
           <span className="row">
-            <input className="in mono" style={{ width: 100, padding: "4px 9px" }} placeholder="Ticker" value={nw}
+            <input className="in mono" style={{ width: 140, padding: "4px 9px" }} placeholder="Symbol (e.g. TSLA)" value={nw}
               onChange={(e) => setNw(e.target.value.toUpperCase())}
               onKeyDown={(e) => { if (e.key === "Enter" && /^[A-Z0-9.^-]{1,10}$/.test(nw.trim()) && !watch.includes(nw.trim())) { setD((p) => ({ ...p, invest: { ...p.invest, watch: [...p.invest.watch, nw.trim()] } })); setNw(""); } }} />
             <span className="note" style={{ margin: 0 }}>enter ↵</span>
@@ -2520,7 +2538,7 @@ export default function App() {
   if (me === null) return <div className="fh" data-theme="dark"><style>{CSS}</style><div className="wrap" style={{ padding: 60, color: "#8b9bb4" }}>Loading…</div></div>;
   if (!me.authed) return (
     <div className="fh" data-theme="dark"><style>{CSS}</style>
-      <div className="wrap" style={{ maxWidth: 430, paddingTop: 72 }}>
+      <main className="wrap" style={{ maxWidth: 430, paddingTop: 72 }}>
         <div className="brand" style={{ justifyContent: "center", marginBottom: 6 }}><Logo size={44} /></div>
         <h1 style={{ textAlign: "center", fontSize: 28 }}>Atlas</h1>
         <div className="sub" style={{ marginBottom: 18, textAlign: "center" }}>your money, all in one place</div>
@@ -2579,7 +2597,7 @@ export default function App() {
           </>
         )}
         </div>
-      </div>
+      </main>
     </div>
   );
   if (!config) return null;
