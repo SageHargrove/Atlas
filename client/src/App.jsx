@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
+import Career from "./Career.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -38,6 +39,7 @@ const DEFAULTS = {
   recurring: [],
   purchases: [],
   invest: { holdings: [], watch: [] },
+  career: { apps: [], settings: {} },
   settings: { theme: "dark", incomeMonthly: 0, efMonths: 6, expReturn: 7 },
 };
 
@@ -1448,6 +1450,7 @@ function FinanceHQ({ config }) {
             recurring: (saved.recurring || []).map((r) => ({ freq: "m", month: 1, ...r })),
             purchases: saved.purchases || [],
             invest: { holdings: saved.invest?.holdings || [], watch: saved.invest?.watch || [] },
+            career: { apps: saved.career?.apps || [], settings: saved.career?.settings || {} },
             txns: (saved.txns || []).map((t) => ({ kind: "out", accountId: "", ...t })),
             settings: { ...DEFAULTS.settings, ...(saved.settings || {}) },
           });
@@ -1638,7 +1641,7 @@ function FinanceHQ({ config }) {
   );
 
   const TABS = [["dash", "Dashboard"], ["overview", "Accounts"], ["budget", "Budget"], ["merchants", "Merchants"],
-    ["assistant", "Assistant"], ["invest", "Invest"], ["goals", "Goals"], ["plan", "Plan"]];
+    ["assistant", "Assistant"], ["career", "Career"], ["invest", "Invest"], ["goals", "Goals"], ["plan", "Plan"]];
   /* phones get a 4-up bottom bar; the rest live behind More */
   const PRIMARY = [["dash", "Dashboard", "grid"], ["overview", "Accounts", "bank"], ["budget", "Budget", "bars"], ["assistant", "Atlas", "chat"]];
   const SECONDARY = TABS.filter(([id]) => !PRIMARY.some((p) => p[0] === id));
@@ -1678,6 +1681,7 @@ function FinanceHQ({ config }) {
         {tab === "budget" && <Budget d={d} setD={setD} config={config} />}
         {tab === "merchants" && <Merchants d={d} setD={setD} />}
         {tab === "assistant" && <AskAtlas d={d} setD={setD} config={config} />}
+        {tab === "career" && <Career d={d} setD={setD} config={config} toast={toast} />}
         {tab === "invest" && <Invest d={d} setD={setD} config={config} />}
         {tab === "goals" && <Goals d={d} setD={setD} />}
         {tab === "plan" && <Plan d={d} setD={setD} />}
@@ -3138,9 +3142,12 @@ function buildAskPrompt(d, hist, question) {
   });
   const rollup = Object.fromEntries(Object.entries(months).sort((a, b) => a[0].localeCompare(b[0])).slice(-12)
     .map(([m, v]) => [m, { income: Math.round(v.income), spending: Math.round(v.spending), byCat: v.byCat }]));
+  /* Career questions need the resume, which is long — so trade transaction
+     detail for it rather than blowing the server's prompt cap. */
+  const careerMode = /\bjob|resume|career|interview|offer|salary|comp\b|apply|applying|hiring|recruit|intern/i.test(question);
   const start = dstr(new Date(Date.now() - 180 * 864e5));
   const recent = d.txns.filter((t) => (t.date || "") >= start)
-    .sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 220)
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, careerMode ? 60 : 220)
     .map((t) => [t.date, t.kind, Number(t.amount), catName(t.catId), (t.note || "").slice(0, 26), acctName(t.accountId).slice(0, 16)]);
   const data = {
     today: today(),
@@ -3150,12 +3157,36 @@ function buildAskPrompt(d, hist, question) {
     goals: d.goals.map((g) => ({ name: g.name, target: g.target, saved: g.accountId ? Number(d.accounts.find((a) => a.id === g.accountId)?.balance || 0) : g.current, monthlyContribution: g.monthly, deadline: g.deadline || null })),
     recurringBills: d.recurring.map((r) => ({ name: r.name || catName(r.catId), amount: r.amount, freq: (r.freq || "m") === "m" ? "monthly" : "yearly" })),
     holdings: d.invest.holdings.map((h) => ({ symbol: h.symbol, shares: h.shares })),
+    jobSearch: (() => {
+      const apps = d.career?.apps || [];
+      if (!apps.length && !(d.career?.settings?.resume || "").trim()) return null;
+      const by = (s) => apps.filter((a) => a.status === s).length;
+      return {
+        tracked: apps.length, applied: by("Applied"), interviewing: by("Interviewing"), offers: by("Offer"),
+        hasResume: !!(d.career?.settings?.resume || "").trim(),
+        topTargets: apps.filter((a) => a.status !== "Rejected" && a.status !== "Withdrawn")
+          .sort((a, b) => (Number(b.comp) || 0) - (Number(a.comp) || 0)).slice(0, 12)
+          .map((a) => ({ company: a.company, status: a.status, comp: a.comp, city: a.locationType === "Remote" ? "Remote" : a.city, window: a.window })),
+      };
+    })(),
     settings: { statedMonthlyTakeHome: d.settings.incomeMonthly, emergencyFundMonths: d.settings.efMonths, assumedReturnPct: d.settings.expReturn },
     monthlyTotals: rollup,
     recentTransactions: { columns: ["date", "kind(in|out|xfer)", "amount", "category", "note", "account"], rows: recent },
   };
+  if (careerMode) {
+    const resume = (d.career?.settings?.resume || "").trim();
+    if (resume) data.resume = resume.slice(0, 4000);
+    if (d.career?.apps?.length) {
+      data.jobApplications = d.career.apps
+        .filter((a) => a.status !== "Rejected" && a.status !== "Withdrawn")
+        .slice(0, 40)
+        .map((a) => ({ company: a.company, role: a.role, status: a.status, comp: a.comp,
+          city: a.locationType === "Remote" ? "Remote" : a.city, clearance: a.clearance, window: a.window, next: a.nextDate || null }));
+    }
+  }
   const convo = hist.map((h) => "Q: " + h.q + "\nA: " + (h.plan ? JSON.stringify(h.plan) : h.a)).join("\n");
-  return "You are Atlas, the built-in assistant of a self-hosted personal finance app. Below is this user's financial data as JSON. " +
+  return "You are Atlas, the built-in assistant of a self-hosted personal finance app. Below is this user's financial data as JSON — " +
+    "and, when the question is about work, their resume and job search too, so you can answer career questions with their real money in view. " +
     "Amounts are USD. kind \"xfer\" is a transfer between the user's own accounts — already excluded from all income/spending totals.\n\n" +
     JSON.stringify(data) +
     (convo ? "\n\nEarlier in this conversation:\n" + convo : "") +
@@ -3182,13 +3213,14 @@ function AskAtlas({ d, setD, config }) {
   const [q, setQ] = useState("");
   const [hist, setHist] = useState([]); // [{q, a, plan?, applied?}] — last few exchanges ride along in the prompt
   const [busy, setBusy] = useState(false);
+  const [web, setWeb] = useState(false); // let it search — costs a beat, worth it for jobs/prices
   if (!config?.aiEnabled) return null;
   const ask = async (preset) => {
     const question = (preset || q).trim();
     if (!question || busy) return;
     setBusy(true); setQ("");
     try {
-      const a = (await callClaude(buildAskPrompt(d, hist, question))).trim();
+      const a = (await callClaude(buildAskPrompt(d, hist, question), web)).trim();
       let plan = null, buy = null;
       try {
         const j = extractJSON(a);
@@ -3313,6 +3345,13 @@ function AskAtlas({ d, setD, config }) {
           value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask()} />
         <button className="btn primary" disabled={busy || !q.trim()} onClick={() => ask()}>{busy ? "Thinking…" : "Ask"}</button>
         {hist.length > 0 && <button className="btn" disabled={busy} onClick={() => setHist([])}>Clear</button>}
+      </div>
+      <div className="row" style={{ marginTop: 6, justifyContent: "space-between" }}>
+        <label className="note" style={{ margin: 0, display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+          <input type="checkbox" checked={web} onChange={(e) => setWeb(e.target.checked)} />
+          Search the web — for salaries, companies and open roles
+        </label>
+        <span className="note" style={{ margin: 0 }}>knows your money, and your job search</span>
       </div>
       <div className="note">Answers come from the numbers in this app — educational, not financial advice.</div>
     </div>

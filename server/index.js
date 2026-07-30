@@ -471,6 +471,7 @@ app.put("/api/data", auth, async (req, res) => {
     if (k in d && !Array.isArray(d[k])) return res.status(400).json({ error: "Invalid data payload (" + k + ")" });
   if (d.settings != null && (typeof d.settings !== "object" || Array.isArray(d.settings))) return res.status(400).json({ error: "Invalid data payload (settings)" });
   if (d.invest != null && (typeof d.invest !== "object" || Array.isArray(d.invest))) return res.status(400).json({ error: "Invalid data payload (invest)" });
+  if (d.career != null && (typeof d.career !== "object" || Array.isArray(d.career))) return res.status(400).json({ error: "Invalid data payload (career)" });
   try {
     let conflictRev = null, newRev = 0;
     await withLock("data:" + req.userId, () => {
@@ -490,6 +491,43 @@ app.put("/api/data", auth, async (req, res) => {
     if (conflictRev !== null) return res.status(409).json({ error: "Saved from another device since you loaded — refreshing.", rev: conflictRev });
     res.json({ ok: true, rev: newRev });
   } catch (e) { console.error("data write failed for", req.userId, e.message); res.status(500).json({ error: "Could not save — your existing data was left untouched" }); }
+});
+
+/* ---------------- resume file (Career tab) ----------------
+   The PDF is stored as bytes next to the data file (0600, same private dir)
+   rather than base64 inside it — a 400KB resume would otherwise be re-sent on
+   every 500ms autosave. The extracted TEXT lives in the data blob, because
+   that is what the AI reads and what the user edits. */
+const resumePath = (uid) => path.join(DATA_DIR, "resume-" + uid + ".pdf");
+const MAX_RESUME_BYTES = 2.5 * 1024 * 1024;
+
+app.put("/api/resume", auth, (req, res) => {
+  const b64 = String(req.body?.pdf || "");
+  if (!b64) return res.status(400).json({ error: "No file received" });
+  let buf;
+  try { buf = Buffer.from(b64, "base64"); } catch { return res.status(400).json({ error: "Could not read that file" }); }
+  if (!buf.length) return res.status(400).json({ error: "That file is empty" });
+  if (buf.length > MAX_RESUME_BYTES) return res.status(413).json({ error: "Resume must be under 2.5 MB" });
+  /* trust the bytes, not the filename — this is written to disk and served back */
+  if (buf.subarray(0, 5).toString("latin1") !== "%PDF-") return res.status(400).json({ error: "That doesn't look like a PDF" });
+  try {
+    fs.writeFileSync(resumePath(req.userId) + ".tmp", buf, { mode: 0o600 });
+    fs.renameSync(resumePath(req.userId) + ".tmp", resumePath(req.userId));
+    res.json({ ok: true, bytes: buf.length });
+  } catch (e) { console.error("resume write failed:", e.message); res.status(500).json({ error: "Could not save the resume" }); }
+});
+
+app.get("/api/resume", auth, (req, res) => {
+  const p = resumePath(req.userId);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: "No resume uploaded" });
+  res.type("application/pdf");
+  res.set("Content-Disposition", 'inline; filename="resume.pdf"');
+  fs.createReadStream(p).pipe(res);
+});
+
+app.delete("/api/resume", auth, (req, res) => {
+  try { fs.rmSync(resumePath(req.userId), { force: true }); res.json({ ok: true }); }
+  catch (e) { console.error("resume delete failed:", e.message); res.status(500).json({ error: "Could not remove the resume" }); }
 });
 
 /* ---------------- market quotes (Invest tab) ----------------
