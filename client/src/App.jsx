@@ -275,6 +275,13 @@ const CSS = `
 .fh .toasts{ position:fixed; right:22px; bottom:22px; z-index:80; display:flex; flex-direction:column; gap:8px; }
 .fh .toastmsg{ background:var(--panel); border:1px solid var(--up); border-radius:12px; padding:11px 15px; font-size:13px; box-shadow:0 10px 30px rgba(2,6,16,.55); animation:rise .25s ease both; max-width:360px; }
 .fh .toastmsg.err{ border-color:var(--red); color:var(--red); }
+.fh .tape{ overflow:hidden; }
+.fh .tapein{ display:inline-flex; white-space:nowrap; width:max-content; animation:tape 30s linear infinite; will-change:transform; }
+.fh .tape:hover .tapein{ animation-play-state:paused; }
+.fh .tapecopy{ display:inline-flex; gap:36px; padding-right:36px; }
+.fh .tapeitem{ display:inline-flex; align-items:center; gap:6px; font-size:13.5px; }
+@keyframes tape{ to{ transform:translateX(-50%); } }
+@media (prefers-reduced-motion: reduce){ .fh .tapein{ animation:none; flex-wrap:wrap; width:auto; padding:0 16px; } .fh .tapecopy:last-child{ display:none; } }
 .fh .glow .recharts-line-curve{ filter:drop-shadow(0 0 6px color-mix(in srgb, var(--up) 55%, transparent)); }
 /* logo: pages sweep open from the spine on mount, and again on hover */
 .fh .atlas-logo .pg{ transform-origin:24px 24px; animation:pageOpen .62s cubic-bezier(.22,.9,.28,1) both; }
@@ -652,15 +659,19 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRem
         <h3>Accounts</h3>
         {d.accounts.map((a) => (
           <div className="kv" key={a.id}>
-            <span className="k">{a.name} <span style={{ color: "var(--faint)", fontSize: 11.5 }}>· {a.type}</span></span>
+            <span className="k">{a.name} <span style={{ color: "var(--faint)", fontSize: 11.5 }}>· {a.type}</span>
+              {a.tellerId && <span className="tag" style={{ marginLeft: 5 }} title="Balance updates from bank sync — hand edits would be overwritten anyway">synced</span>}
+            </span>
             <span className="row" style={{ gap: 6 }}>
               {isDebt(a) && <span className="bad" style={{ fontSize: 12 }}>debt</span>}
               <input className="in mono" style={{ width: 66, textAlign: "right", padding: "4px 6px" }} type="number" step="0.1"
                 title={isDebt(a) ? "APR %" : INVESTED.includes(a.type) ? "Expected return %/yr" : "APY %"}
                 placeholder={isDebt(a) ? "APR%" : LIQUID.includes(a.type) ? "APY%" : "%/yr"}
                 value={a.rate ?? ""} onChange={(e) => setD((p) => ({ ...p, accounts: p.accounts.map((x) => x.id === a.id ? { ...x, rate: e.target.value === "" ? "" : Number(e.target.value) } : x) }))} />
-              <input className="in mono" style={{ width: 120, textAlign: "right", padding: "4px 8px" }} type="number"
-                value={a.balance} onChange={(e) => setBal(a.id, e.target.value)} />
+              {a.tellerId
+                ? <span className="mono" style={{ width: 120, textAlign: "right", padding: "4px 8px" }}>{fmt2(Number(a.balance))}</span>
+                : <input className="in mono" style={{ width: 120, textAlign: "right", padding: "4px 8px" }} type="number"
+                    value={a.balance} onChange={(e) => setBal(a.id, e.target.value)} />}
               <button className="x" onClick={() => setD((p) => ({ ...p, accounts: p.accounts.filter((x) => x.id !== a.id) }))}>✕</button>
             </span>
           </div>
@@ -744,6 +755,7 @@ function Budget({ d, setD, config }) {
   const [impMsg, setImpMsg] = useState("");
   const [q, setQ] = useState("");
   const [fCat, setFCat] = useState("");
+  const [showAllTx, setShowAllTx] = useState(false);
 
   const monthTxns = d.txns.filter((t) => (t.date || "").startsWith(month)).sort((a, b) => b.date.localeCompare(a.date));
   /* search spans ALL months (find that one charge from last spring); month view otherwise */
@@ -906,10 +918,12 @@ function Budget({ d, setD, config }) {
             setNt({ date: nt.date, catId: nt.catId, amount: "", note: "", kind: nt.kind, accountId: nt.accountId });
           }}>+</button>
         </div>
-        {shownTxns.map((t) => (
+        {(searching || showAllTx ? shownTxns : shownTxns.slice(0, 12)).map((t) => (
           <div className="trow" key={t.id}>
             <span className="mono" style={{ fontSize: 12.5 }}>{searching ? t.date : t.date.slice(5)}</span>
-            {t.catId
+            {t.kind === "in"
+              ? <span className="note" style={{ margin: 0 }}>Income</span>
+              : t.catId
               ? (() => {
                   const ci = d.cats.findIndex((c) => c.id === t.catId);
                   const cn = d.cats[ci]?.name || "?";
@@ -930,6 +944,13 @@ function Budget({ d, setD, config }) {
             <button className="x" onClick={() => setD((p) => ({ ...p, txns: p.txns.filter((x) => x.id !== t.id) }))}>✕</button>
           </div>
         ))}
+        {!searching && shownTxns.length > 12 && (
+          <div className="mrow" style={{ justifyContent: "center", marginTop: 10 }}>
+            <button className="btn small" onClick={() => setShowAllTx((v) => !v)}>
+              {showAllTx ? "Show fewer" : "Show all " + shownTxns.length + " transactions"}
+            </button>
+          </div>
+        )}
         {!shownTxns.length && <div className="note">{searching ? "Nothing matches this search." : "No transactions this month yet — log spending above as it happens, or import your bank's CSV."}</div>}
       </div>
 
@@ -1764,15 +1785,21 @@ function SubscriptionRadar({ d, setD }) {
         <h3>Subscription radar</h3>
         <span className="note" style={{ margin: 0 }}>~<b className="mono">{fmt(total)}</b>/mo detected</span>
       </div>
-      <div className="note">Charges that repeat monthly at a stable amount. "Watch" adds one to Upcoming bills without double-logging it (the charges keep arriving via sync/CSV as they do now). This is also the list to prune — every line is money leaving on autopilot.</div>
+      <div className="note">Charges that repeat monthly at a stable amount. <b>Watch</b> moves one into your Recurring list (and Upcoming bills on the dashboard) without double-logging — the charges keep arriving via sync/CSV as they do now. This is also the list to prune: every line is money leaving on autopilot.</div>
       {found.map((f) => (
         <div className="kv" key={f.key}>
           <span className="k"><b style={{ color: "var(--text)" }}>{f.name}</b>
             <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · seen {f.count}× · ~day {f.day}</span></span>
           <span className="row" style={{ gap: 6 }}>
             <span className="mono">{fmt(f.amount)}/mo</span>
-            <button className="btn small" onClick={() => setD((p) => ({ ...p, recurring: [...p.recurring, { id: uid(), name: f.name, catId: f.catId || p.cats[0]?.id || "", amount: f.amount, freq: "m", day: f.day, watch: true }] }))}>Watch</button>
-            <button className="x" title="Not a subscription — hide" onClick={() => setD((p) => ({ ...p, settings: { ...p.settings, subIgnore: [...(p.settings.subIgnore || []), f.key] } }))}>✕</button>
+            <button className="btn small" onClick={() => {
+              setD((p) => ({ ...p, recurring: [...p.recurring, { id: uid(), name: f.name, catId: f.catId || p.cats[0]?.id || "", amount: f.amount, freq: "m", day: f.day, watch: true }] }));
+              toast("Watching " + f.name + " — it's now under Recurring, and in Upcoming bills on the dashboard.");
+            }}>Watch</button>
+            <button className="x" title="Not a subscription — hide" onClick={() => {
+              setD((p) => ({ ...p, settings: { ...p.settings, subIgnore: [...(p.settings.subIgnore || []), f.key] } }));
+              toast("Hidden — " + f.name + " won't be suggested again.");
+            }}>✕</button>
           </span>
         </div>
       ))}
@@ -1895,31 +1922,42 @@ function Invest({ d, setD, config }) {
   const Delta = ({ v, suffix = "%" }) => v == null ? <span style={{ color: "var(--faint)" }}>—</span> :
     <span className={v >= 0 ? "good" : "bad"}>{v >= 0 ? "▲" : "▼"} {Math.abs(v).toFixed(2)}{suffix}</span>;
 
+  /* scrolling ticker tape: indexes + your holdings + your watchlist (deduped) */
+  const tapeLabels = { SPY: "S&P 500", QQQ: "Nasdaq 100", DIA: "Dow" };
+  const tapeSyms = [...new Set([...MARKET.map(([s]) => s), ...holdings.map((h) => h.symbol), ...watch])];
+  const tapeItems = tapeSyms.map((s) => (
+    <span className="tapeitem" key={s}>
+      <b className="mono">{s}</b>
+      {tapeLabels[s] && <span style={{ color: "var(--faint)", fontSize: 11.5 }}> {tapeLabels[s]}</span>}
+      <span className="mono" style={{ color: "var(--muted)" }}> {fmt2(px(s))}</span>
+      <span style={{ fontSize: 12 }}> <Delta v={dayPct(s)} /></span>
+    </span>
+  ));
+  const synced = (d.simplefin || []).length > 0;
+
   return (
     <>
-      <div className="grid3">
-        {MARKET.map(([sym, label]) => (
-          <div className="card" key={sym}>
-            <div className="note" style={{ margin: 0 }}>{label} <span className="tag">{sym}</span></div>
-            <div className="big mono" style={{ fontSize: 24 }}>{fmt2(px(sym))}</div>
-            <div style={{ fontSize: 12.5, marginTop: 2 }}><Delta v={dayPct(sym)} /> <span style={{ color: "var(--faint)" }}>today</span></div>
-          </div>
-        ))}
+      <div className="tape card" style={{ padding: "12px 0" }} aria-label="Market ticker">
+        <div className="tapein" style={{ animationDuration: Math.max(24, tapeSyms.length * 5) + "s" }}>
+          <span className="tapecopy">{tapeItems}</span>
+          <span className="tapecopy" aria-hidden="true">{tapeItems.map((el) => React.cloneElement(el, { key: el.key + "-b" }))}</span>
+        </div>
       </div>
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>Portfolio</h3>
+          <h3>Portfolio {synced && <span className="tag" title="Positions come from your brokerage via SimpleFIN">auto-synced</span>}</h3>
           <span className="row" style={{ gap: 6 }}>
             <button className="btn small" disabled={busy} onClick={refresh}>{busy ? "Refreshing…" : "↻ Refresh quotes"}</button>
-            <button className="btn small" onClick={() => document.getElementById("inv-csv").click()}>Import positions CSV</button>
+            {!synced && <button className="btn small" onClick={() => document.getElementById("inv-csv").click()}>Import positions CSV</button>}
             <input id="inv-csv" type="file" accept=".csv,text/csv" style={{ display: "none" }}
               onChange={(e) => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ""; }} />
           </span>
         </div>
         <div className="note" style={{ marginTop: 2 }}>
-          Connect a brokerage under <b>Accounts → Bank sync</b> and positions fill in automatically (SimpleFIN covers Fidelity).
-          Otherwise import a positions CSV or add tickers by hand. Prices are delayed quotes, refreshed on demand.
+          {synced
+            ? "Positions sync from your brokerage connection — manual entry is off so the two can't fight (each sync would overwrite hand edits). Disconnect the bank under Accounts to manage holdings by hand."
+            : <>Connect a brokerage under <b>Accounts → Bank sync</b> and positions fill in automatically (SimpleFIN covers Fidelity). Otherwise import a positions CSV or add tickers by hand. Prices are delayed quotes, refreshed on demand.</>}
         </div>
         {impMsg && <div className="note good">{impMsg}</div>}
         {qErr && <div className="err">{qErr}</div>}
@@ -1944,17 +1982,21 @@ function Invest({ d, setD, config }) {
             <span className="iday" style={{ fontSize: 12.5 }}><Delta v={dayPct(r.symbol)} /></span>
             <span className="mono">{fmt(r.value)}{r.value != null && totValue > 0 && <span style={{ color: "var(--faint)", fontSize: 11 }}> {Math.round((r.value / totValue) * 100)}%</span>}</span>
             <span className="igain mono" style={{ fontSize: 12.5, color: r.gain == null ? "var(--faint)" : r.gain >= 0 ? "var(--up)" : "var(--red)" }}>{r.gain == null ? "—" : (r.gain >= 0 ? "+" : "") + fmt(r.gain)}</span>
-            <button className="x" onClick={() => setD((p) => ({ ...p, invest: { ...p.invest, holdings: p.invest.holdings.filter((h) => h.id !== r.id) } }))}>✕</button>
+            {synced && r.src === "simplefin"
+              ? <span />
+              : <button className="x" onClick={() => setD((p) => ({ ...p, invest: { ...p.invest, holdings: p.invest.holdings.filter((h) => h.id !== r.id) } }))}>✕</button>}
           </div>
         ))}
-        {!rows.length && <div className="note">No holdings yet — add a ticker below or import a positions CSV.</div>}
-        <div className="row" style={{ marginTop: 10 }}>
-          <input className="in mono" style={{ width: 110 }} placeholder="Ticker" value={nh.symbol}
-            onChange={(e) => setNh({ ...nh, symbol: e.target.value.toUpperCase() })} onKeyDown={(e) => e.key === "Enter" && addHolding()} />
-          <input className="in mono" type="number" style={{ width: 110 }} placeholder="Shares" value={nh.shares} onChange={(e) => setNh({ ...nh, shares: e.target.value })} />
-          <input className="in mono" type="number" style={{ width: 150 }} placeholder="Cost basis $ (opt.)" title="Total amount paid for the whole position" value={nh.cost} onChange={(e) => setNh({ ...nh, cost: e.target.value })} />
-          <button className="btn small primary" onClick={addHolding}>Add / update</button>
-        </div>
+        {!rows.length && <div className="note">No holdings yet — {synced ? "hit Sync now under Accounts and your brokerage positions land here." : "add a ticker below or import a positions CSV."}</div>}
+        {!synced && (
+          <div className="row" style={{ marginTop: 10 }}>
+            <input className="in mono" style={{ width: 110 }} placeholder="Ticker" value={nh.symbol}
+              onChange={(e) => setNh({ ...nh, symbol: e.target.value.toUpperCase() })} onKeyDown={(e) => e.key === "Enter" && addHolding()} />
+            <input className="in mono" type="number" style={{ width: 110 }} placeholder="Shares" value={nh.shares} onChange={(e) => setNh({ ...nh, shares: e.target.value })} />
+            <input className="in mono" type="number" style={{ width: 150 }} placeholder="Cost basis $ (opt.)" title="Total amount paid for the whole position" value={nh.cost} onChange={(e) => setNh({ ...nh, cost: e.target.value })} />
+            <button className="btn small primary" onClick={addHolding}>Add / update</button>
+          </div>
+        )}
         {rows.length > 0 && invAccounts.length > 0 && (
           <div className="row" style={{ marginTop: 12 }}>
             <span className="note" style={{ margin: 0 }}>Push value to account:</span>
@@ -2278,28 +2320,6 @@ function Dashboard({ d, setTab }) {
     .sort((a, b) => a.when - b.when)
     .slice(0, 6);
 
-  /* budget progress (current month) */
-  const mKey = thisMonth();
-  const prog = d.cats.filter((c) => Number(c.limit) > 0).map((c) => {
-    const sp = d.txns.filter((t) => t.kind !== "in" && t.catId === c.id && (t.date || "").startsWith(mKey)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-    return { name: c.name, sp, lim: Number(c.limit), pct: Math.min(100, Math.round((sp / Number(c.limit)) * 100)) };
-  }).sort((a, b) => b.pct - a.pct).slice(0, 5);
-
-  /* month-over-month movers + largest expenses (Copilot-style insights) */
-  const prevKey = (() => { const [y, m] = mKey.split("-").map(Number); const p = new Date(y, m - 2, 1); return p.getFullYear() + "-" + String(p.getMonth() + 1).padStart(2, "0"); })();
-  const catSpend = (key) => {
-    const out = {};
-    d.txns.filter((t) => t.kind !== "in" && (t.date || "").startsWith(key)).forEach((t) => { out[t.catId || ""] = (out[t.catId || ""] || 0) + (Number(t.amount) || 0); });
-    return out;
-  };
-  const curCat = catSpend(mKey), prevCat = catSpend(prevKey);
-  const movers = [...new Set([...Object.keys(curCat), ...Object.keys(prevCat)])]
-    .map((id) => ({ name: d.cats.find((c) => c.id === id)?.name || (id ? "?" : "Uncategorized"), now: curCat[id] || 0, delta: (curCat[id] || 0) - (prevCat[id] || 0) }))
-    .filter((x) => Math.abs(x.delta) >= 1)
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 5);
-  const biggest = tx.filter((t) => t.kind !== "in")
-    .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0)).slice(0, 5);
-
   return (
     <>
       <div className="card">
@@ -2444,47 +2464,6 @@ function Dashboard({ d, setTab }) {
         </div>
       </div>
 
-      <div className="grid2" style={{ marginTop: 16 }}>
-        <div className="card">
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <h3>Budget — {monthLabel(mKey)}</h3>
-            <button className="btn small" onClick={() => setTab("budget")}>Open</button>
-          </div>
-          {prog.length ? prog.map((p) => (
-            <div key={p.name} style={{ marginTop: 6 }}>
-              <div className="row" style={{ justifyContent: "space-between", fontSize: 12.5 }}>
-                <span>{p.name}</span><span className="mono" style={{ color: p.pct >= 100 ? "var(--red)" : "var(--muted)" }}>{fmt(p.sp)} / {fmt(p.lim)}</span>
-              </div>
-              <div className="bar"><i style={{ width: p.pct + "%", background: p.pct >= 100 ? "var(--red)" : p.pct >= 80 ? "var(--gold)" : "var(--acc)" }} /></div>
-            </div>
-          )) : <div className="note">Set category budgets to track progress here.</div>}
-        </div>
-        <div className="card">
-          <h3>vs last month</h3>
-          {movers.length ? movers.map((m) => (
-            <div className="kv" key={m.name}>
-              <span className="k">{m.name}</span>
-              <span className="mono" style={{ fontSize: 13 }}>{fmt(m.now)}
-                <span style={{ color: m.delta > 0 ? "var(--red)" : "var(--acc)", marginLeft: 6 }}>
-                  {m.delta > 0 ? "▲" : "▼"} {fmt(Math.abs(m.delta))}
-                </span>
-              </span>
-            </div>
-          )) : <div className="note">Once two months have transactions, the biggest category shifts show here.</div>}
-        </div>
-        <div className="card">
-          <h3>Largest expenses</h3>
-          {biggest.length ? biggest.map((t) => (
-            <div className="kv" key={t.id}>
-              <span className="k" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>
-                {titleCase(t.note) || d.cats.find((c) => c.id === t.catId)?.name || "—"}
-                <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · {t.date}</span>
-              </span>
-              <span className="mono">{fmt(Number(t.amount))}</span>
-            </div>
-          )) : <div className="note">No spending in this range yet.</div>}
-        </div>
-      </div>
     </>
   );
 }
