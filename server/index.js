@@ -653,6 +653,9 @@ function markTransferPairs(txns) {
 const normMerchant = (note) =>
   String(note || "").toLowerCase().replace(/\(recurring\)/g, "").replace(/[#*\d]+/g, " ").replace(/[^a-z& ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 28);
 const CAT_RULES = [
+  /* big p2p payments are almost always rent/housing — small ones could be anything.
+     The third element is a minimum $ amount for the rule to apply. */
+  [/venmo payment|zelle (payment|to)/, "Rent", 500],
   [/kroger|trader joe|aldi|wal-?mart|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
   [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
   [/exxon|shell oil|chevron|texaco|citgo|valero|racetrac|quiktrip|\bqt\b|speedway|murphy usa|circle k|7-?eleven fuel|uber(?! ?eats)|lyft|parking|toll|jiffy lube|autozone|o'?reilly|discount tire|car wash/, "Transport"],
@@ -662,22 +665,26 @@ const CAT_RULES = [
   [/gym|planet fitness|la fitness|ymca|crunch fitness|walgreens|cvs\b|rite aid|pharmacy|clinic|dental|doctor|hospital|urgent care|optical|optometr/, "Health"],
   [/cinema|cinemark|\bamc\b|regal|steam(games| purchase)|steampowered|epic games|riot|blizzard|ticketmaster|stubhub|bowling|arcade|spotify concert|eventbrite/, "Fun"],
 ];
+/* p2p sends share one merchant key ("venmo payment web id") but mean something
+   different every time — never let one categorization spread to all of them */
+const P2P_RE = /venmo (payment|cashout)|cash ?app|zelle/i;
 function buildMerchantMemory(txns, cats) {
   const catIds = new Set((cats || []).map((c) => c.id));
   const mem = {};
   for (const t of txns) { // insertion order: later (newer) categorizations overwrite older ones
-    if (t.kind === "out" && t.catId && catIds.has(t.catId) && t.note) {
+    if (t.kind === "out" && t.catId && catIds.has(t.catId) && t.note && !P2P_RE.test(t.note)) {
       const k = normMerchant(t.note);
       if (k.length >= 3) mem[k] = t.catId;
     }
   }
   return mem;
 }
-function autoCategorize(note, cats, memory) {
+function autoCategorize(note, cats, memory, amount) {
   const key = normMerchant(note);
   if (key && memory[key]) return memory[key];
   const n = String(note || "").toLowerCase();
-  for (const [re, name] of CAT_RULES) {
+  for (const [re, name, min] of CAT_RULES) {
+    if (min && !(Number(amount) >= min)) continue;
     if (re.test(n)) {
       const c = (cats || []).find((x) => x.name.toLowerCase() === name.toLowerCase());
       if (c) return c.id;
@@ -760,7 +767,7 @@ app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
           if (!(amt < 0) && !(amt > 0 && a.type === "depository")) continue;
           const note = (t.description || "").slice(0, 60);
           const kind = classifyKind(amt, acc.type, note);
-          const catId = kind === "out" ? autoCategorize(note, d.cats, merchantMem) : "";
+          const catId = kind === "out" ? autoCategorize(note, d.cats, merchantMem, Math.abs(amt)) : "";
           d.txns.push({ id: crypto.randomUUID(), tellerId: t.id, accountId: acc.id, kind, date: t.date, amount: Math.round(Math.abs(amt) * 100) / 100, catId, note });
           newTx++;
         }
@@ -914,7 +921,7 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
             const date = new Date((Number(t.posted) || 0) * 1000).toISOString().slice(0, 10);
             const note = String(t.description || t.payee || "").slice(0, 60);
             const kind = classifyKind(amt, acc.type, note);
-            const catId = kind === "out" ? autoCategorize(note, d.cats, merchantMem) : "";
+            const catId = kind === "out" ? autoCategorize(note, d.cats, merchantMem, Math.abs(amt)) : "";
             if (catId) autoCat++;
             d.txns.push({ id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind, date, amount: Math.round(Math.abs(amt) * 100) / 100, catId, note });
             newTx++;

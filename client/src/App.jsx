@@ -169,7 +169,7 @@ async function callClaude(prompt, useSearch) {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Spline+Sans:wght@400;500;600&family=Spline+Sans+Mono:wght@400;500;600&display=swap');
 .fh * { box-sizing:border-box; margin:0; }
-.fh { min-height:100vh; font-family:'Spline Sans',system-ui,sans-serif; color:var(--text); padding-bottom:90px; font-size:15px; line-height:1.5;
+.fh { min-height:100vh; font-family:'Spline Sans',system-ui,sans-serif; color:var(--text); padding-bottom:90px; font-size:15px; line-height:1.5; overflow-x:clip;
   background:
     radial-gradient(1100px 480px at 18% -8%, var(--glow1), transparent 60%),
     radial-gradient(900px 460px at 92% -4%, var(--glow2), transparent 55%),
@@ -299,14 +299,19 @@ const CSS = `
 @keyframes pinPop{ from{ transform:scale(0); } to{ transform:scale(1); } }
 .fh .banner{ border:1px solid var(--acc); background:var(--acc-soft); border-radius:12px; padding:10px 14px; margin-top:12px; font-size:13px; animation:rise .3s ease both; }
 @media (max-width:760px){
+  .fh .wrap{ padding:0 12px; }
   .fh .grid2,.fh .grid3{ grid-template-columns:1fr; }
   .fh .grid4{ grid-template-columns:1fr 1fr; }
+  .fh .card{ padding:14px 14px; }
   .fh .trow{ grid-template-columns:80px 1fr .7fr .6fr 30px; }
   .fh .trow .tnote,.fh .trow .tacct{ display:none; }
   .fh .irow{ grid-template-columns:1.4fr .8fr 1fr 30px; }
   .fh .irow .iday,.fh .irow .igain{ display:none; }
   .fh .big{ font-size:28px; }
+  .fh .hrow{ padding:8px 0; gap:8px; }
 }
+/* wide charts scroll inside their own card on phones — never the whole page */
+.fh .hscroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
 @media (prefers-reduced-motion: reduce){ .fh *, .fh *::before, .fh *::after{ animation:none !important; transition:none !important; } }
 `;
 
@@ -1515,7 +1520,7 @@ function FinanceHQ({ config }) {
       let n = 0;
       const txns = p.txns.map((t) => {
         if (t.kind !== "out" || t.catId || !t.note) return t;
-        const c = autoCategorize(t.note, p.cats, memory);
+        const c = autoCategorize(t.note, p.cats, memory, Number(t.amount));
         if (!c) return t;
         n++;
         return { ...t, catId: c };
@@ -1636,6 +1641,9 @@ function FinanceHQ({ config }) {
 
 const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|payment to .{0,28}(?:card|loan|mortgage)|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|automatic payment.{0,6}thank|thank you.*payment|internet payment|jpmorgan chase bank|e-?payment\b|\bepay\b|directpay/i;
 const CAT_RULES = [
+  /* big p2p payments are almost always rent/housing — small ones could be anything.
+     The third element is a minimum $ amount for the rule to apply. */
+  [/venmo payment|zelle (payment|to)/, "Rent", 500],
   [/kroger|trader joe|aldi|wal-?mart|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
   [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
   [/exxon|shell oil|chevron|texaco|citgo|valero|racetrac|quiktrip|\bqt\b|speedway|murphy usa|circle k|7-?eleven fuel|uber(?! ?eats)|lyft|parking|toll|jiffy lube|autozone|o'?reilly|discount tire|car wash/, "Transport"],
@@ -1645,22 +1653,26 @@ const CAT_RULES = [
   [/gym|planet fitness|la fitness|ymca|crunch fitness|walgreens|cvs\b|rite aid|pharmacy|clinic|dental|doctor|hospital|urgent care|optical|optometr/, "Health"],
   [/cinema|cinemark|\bamc\b|regal|steam(games| purchase)|steampowered|epic games|riot|blizzard|ticketmaster|stubhub|bowling|arcade|spotify concert|eventbrite/, "Fun"],
 ];
+/* p2p sends share one merchant key ("venmo payment web id") but mean something
+   different every time — never let one categorization spread to all of them */
+const P2P_RE = /venmo (payment|cashout)|cash ?app|zelle/i;
 function buildMerchantMemory(txns, cats) {
   const catIds = new Set((cats || []).map((c) => c.id));
   const mem = {};
   for (const t of txns) { // later (newer) categorizations overwrite older ones
-    if (t.kind === "out" && t.catId && catIds.has(t.catId) && t.note) {
+    if (t.kind === "out" && t.catId && catIds.has(t.catId) && t.note && !P2P_RE.test(t.note)) {
       const k = normMerchant(t.note);
       if (k.length >= 3) mem[k] = t.catId;
     }
   }
   return mem;
 }
-function autoCategorize(note, cats, memory) {
+function autoCategorize(note, cats, memory, amount) {
   const key = normMerchant(note);
   if (key && memory[key]) return memory[key];
   const n = String(note || "").toLowerCase();
-  for (const [re, name] of CAT_RULES) {
+  for (const [re, name, min] of CAT_RULES) {
+    if (min && !(Number(amount) >= min)) continue;
     if (re.test(n)) {
       const c = (cats || []).find((x) => x.name.toLowerCase() === name.toLowerCase());
       if (c) return c.id;
@@ -1738,7 +1750,7 @@ function BankImport({ d, setD, onClose }) {
         return {
           ...r, dup, xfer,
           include: !r.credit && !dup && !xfer,
-          catId: autoCategorize(r.desc, d.cats, memory) || d.cats[0]?.id || "",
+          catId: autoCategorize(r.desc, d.cats, memory, r.amount) || d.cats[0]?.id || "",
         };
       }));
       setFname(file.name);
@@ -2437,8 +2449,7 @@ function SankeyNode({ x, y, width, height, payload, containerWidth }) {
 function SankeyLink(props) {
   const { sourceX, targetX, sourceY, targetY, sourceControlX, targetControlX, linkWidth, payload } = props;
   if (!Number.isFinite(sourceX)) return null;
-  /* inflows carry their source color (green/red), outflows their category color */
-  const color = (payload?.target?.name === "Total" ? payload?.source?.color : payload?.target?.color) || "var(--line2)";
+  const color = payload?.target?.color || "var(--line2)";
   return (
     <path d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
       fill="none" stroke={color} strokeWidth={Math.max(1, linkWidth)} strokeOpacity={0.3} />
@@ -2467,24 +2478,23 @@ function CashFlow({ d, tx, income }) {
     const inTotal = sources.reduce((s, x) => s + x[1], 0);
     const outTotal = cats.reduce((s, x) => s + x[1], 0);
     const kept = inTotal - outTotal;
-    const flowsIn = sources.map(([n, v]) => ({ n, v, color: "var(--s3)" }));
-    if (kept < -0.005) flowsIn.push({ n: "From savings", v: -kept, color: "var(--red)" });
-    const flowsOut = cats.map(([n, v]) => ({
+    const left = sources.map(([n, v]) => ({ n, v, color: "var(--s3)" }));
+    if (kept < -0.005) left.push({ n: "From savings", v: -kept, color: "var(--red)" });
+    const right = cats.map(([n, v]) => ({
       n, v,
       color: n === "Uncategorized" || n === "Other" ? "var(--faint)" : seriesColor(d.cats.findIndex((c) => c.name === n)),
+    })).filter((f) => f.v > 0.005);
+    if (kept > 0.005) right.push({ n: "Kept", v: kept, color: "var(--up)" });
+    /* two columns, income straight into spending — no middle bar. The app can't know
+       which dollar paid which bill, so each source splits proportionally; links
+       under $1 are dropped to keep the ribbons readable. */
+    const nodes = [...left, ...right].map((f) => ({ name: f.n, color: f.color }));
+    const links = [];
+    const grand = right.reduce((s, f) => s + f.v, 0) || 1;
+    left.forEach((f, i) => right.forEach((o, j) => {
+      const v = f.v * (o.v / grand);
+      if (v >= 1) links.push({ source: i, target: left.length + j, value: Math.round(v * 100) / 100 });
     }));
-    if (kept > 0.005) flowsOut.push({ n: "Kept", v: kept, color: "var(--up)" });
-    const nodes = [], links = [];
-    flowsIn.forEach((f) => nodes.push({ name: f.n, color: f.color }));
-    const cashIdx = nodes.length;
-    nodes.push({ name: "Total", color: "var(--acc)" });
-    flowsIn.forEach((f, i) => { if (f.v > 0.005) links.push({ source: i, target: cashIdx, value: Math.round(f.v * 100) / 100 }); });
-    flowsOut.forEach((f) => {
-      if (f.v <= 0.005) return;
-      const idx = nodes.length;
-      nodes.push({ name: f.n, color: f.color });
-      links.push({ source: cashIdx, target: idx, value: Math.round(f.v * 100) / 100 });
-    });
     return { nodes, links };
   }, [tx, d.cats, income]);
 
@@ -2499,14 +2509,13 @@ function CashFlow({ d, tx, income }) {
         </span>
       </div>
       {links.length ? (
-        <div style={{ width: "100%", height: 330, marginTop: 8 }}>
-          <ResponsiveContainer>
-            <Sankey data={{ nodes, links }} node={<SankeyNode />} link={<SankeyLink />}
-              nodePadding={22} nodeWidth={10} margin={{ top: 14, right: 120, bottom: 14, left: 120 }}>
-              <Tooltip formatter={(v) => fmt2(v)}
-                contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 10, color: "var(--text)", fontSize: 13 }} />
-            </Sankey>
-          </ResponsiveContainer>
+        <div className="hscroll">
+          <div style={{ minWidth: 560, height: 330, marginTop: 8 }}>
+            <ResponsiveContainer>
+              <Sankey data={{ nodes, links }} node={<SankeyNode />} link={<SankeyLink />}
+                nodePadding={22} nodeWidth={10} margin={{ top: 14, right: 118, bottom: 14, left: 118 }} />
+            </ResponsiveContainer>
+          </div>
         </div>
       ) : <div className="note">Log income and spending (or run a sync) and the flow chart appears here.</div>}
     </div>
