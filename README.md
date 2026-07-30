@@ -1,5 +1,8 @@
 # Atlas — self-hosted personal finance, multi-user
 
+> MIT-licensed. Run it on your own server; your financial data never touches
+> anyone else's cloud. See `SETUP.md` for the full setup walkthrough.
+
 React + Express. Real bank sync (SimpleFIN, read-only), an Invest tab with live
 delayed quotes + watchlist + Fidelity positions-CSV import, AI categorization
 and budgeting (your Anthropic key, server-side), full dashboard with donut
