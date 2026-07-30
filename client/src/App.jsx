@@ -682,11 +682,20 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRem
         <h3>Accounts</h3>
         {d.accounts.map((a) => (
           <div className="kv" key={a.id}>
-            <span className="k">{a.name} <span style={{ color: "var(--faint)", fontSize: 11.5 }}>· {a.type}</span>
+            <span className="k">{a.name}
               {a.tellerId && <span className="tag" style={{ marginLeft: 5 }} title="Balance updates from bank sync — hand edits would be overwritten anyway">synced</span>}
             </span>
             <span className="row" style={{ gap: 6 }}>
               {isDebt(a) && <span className="bad" style={{ fontSize: 12 }}>debt</span>}
+              <select className="in" style={{ width: 132, padding: "4px 6px", fontSize: 12 }} value={a.type}
+                title="Asset vs debt follows the type. Sync guesses it from the account name and can miss credit cards — fix it here and the math (and transfer detection) follows."
+                onChange={(e) => {
+                  const type = e.target.value;
+                  setD((p) => ({ ...p, accounts: p.accounts.map((x) => x.id === a.id ? { ...x, type, balance: DEBT_TYPES.includes(type) ? Math.abs(Number(x.balance) || 0) : Number(x.balance) || 0 } : x) }));
+                }}>
+                <optgroup label="Assets">{ASSET_TYPES.map((t) => <option key={t}>{t}</option>)}</optgroup>
+                <optgroup label="Debts">{DEBT_TYPES.map((t) => <option key={t}>{t}</option>)}</optgroup>
+              </select>
               <input className="in mono" style={{ width: 66, textAlign: "right", padding: "4px 6px" }} type="number" step="0.1"
                 title={isDebt(a) ? "APR %" : INVESTED.includes(a.type) ? "Expected return %/yr" : "APY %"}
                 placeholder={isDebt(a) ? "APR%" : LIQUID.includes(a.type) ? "APY%" : "%/yr"}
@@ -1625,7 +1634,7 @@ function FinanceHQ({ config }) {
    The server classifies NEW transactions at sync time; this covers everything
    already on the books plus CSV imports. */
 
-const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|thank you.*payment|internet payment|e-?payment\b|\bepay\b|directpay/i;
+const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|payment to .{0,28}(?:card|loan|mortgage)|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|automatic payment.{0,6}thank|thank you.*payment|internet payment|jpmorgan chase bank|e-?payment\b|\bepay\b|directpay/i;
 const CAT_RULES = [
   [/kroger|trader joe|aldi|wal-?mart|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
   [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],

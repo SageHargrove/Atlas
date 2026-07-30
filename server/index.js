@@ -615,7 +615,7 @@ const DEBT = ["Credit card", "Auto loan", "Student loan", "Mortgage", "Other deb
    (which were already imported as spending), and counting the card credit as income
    fabricates income. Same story for checking→savings moves. These are classified
    as kind "xfer" — kept in the ledger, excluded from income/spending math. */
-const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|thank you.*payment|internet payment|e-?payment\b|\bepay\b|directpay/i;
+const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|payment to .{0,28}(?:card|loan|mortgage)|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|automatic payment.{0,6}thank|thank you.*payment|internet payment|jpmorgan chase bank|e-?payment\b|\bepay\b|directpay/i;
 
 /* Classify a synced transaction. Inflows on debt accounts (card/loan payments
    arriving — or the odd refund) are never income. */
@@ -810,7 +810,7 @@ async function simplefinFetch(accessUrl, sinceDays) {
    editable in the UI and only affects which side of net worth it lands on. */
 function guessType(name) {
   const n = String(name || "").toLowerCase();
-  if (/credit|card|visa|mastercard|amex/.test(n)) return "Credit card";
+  if (/credit|card|visa|mastercard|amex|freedom|sapphire|quicksilver/.test(n)) return "Credit card";
   if (/save|saving|hysa|money ?market/.test(n)) return "Savings / HYSA";
   if (/check|chequing|debit/.test(n)) return "Checking";
   if (/401|403b|ira|roth|brokerage|invest/.test(n)) return "Brokerage";
