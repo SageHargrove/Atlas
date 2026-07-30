@@ -23,3 +23,6 @@ __smoke*
 
 # personal runbook with real server details — never commit
 SETUP.local.md
+
+# deploy artifact
+atlas.tar.gz
