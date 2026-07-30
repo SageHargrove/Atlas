@@ -244,6 +244,7 @@ const CSS = `
 .fh .bar{ height:10px; border-radius:6px; background:var(--panel2); overflow:hidden; margin-top:6px; }
 .fh .bar i{ display:block; height:100%; background:linear-gradient(90deg, var(--acc), color-mix(in srgb, var(--acc) 65%, #34d399)); border-radius:6px; transition:width .5s cubic-bezier(.2,.7,.3,1); }
 .fh .bar i.over{ background:var(--red); }
+.fh .bar i.near{ background:var(--gold); }
 .fh .note{ font-size:12.5px; color:var(--muted); margin-top:8px; }
 .fh .err{ color:var(--red); font-size:13px; margin-top:8px; }
 .fh .good{ color:var(--up); font-weight:600; }
@@ -321,8 +322,20 @@ const CSS = `
 /* installed to the home screen: clear the notch / status bar and the home indicator */
 @media (display-mode:standalone){
   .fh header{ padding-top:env(safe-area-inset-top); }
-  .fh{ padding-bottom:calc(90px + env(safe-area-inset-bottom)); }
   .fh .wrap{ padding-left:max(12px, env(safe-area-inset-left)); padding-right:max(12px, env(safe-area-inset-right)); }
+}
+/* phone navigation: thumb-reachable bar pinned to the bottom, like a native app */
+.fh .bottomnav{ display:none; }
+@media (max-width:760px){
+  .fh header .tabs{ display:none; }
+  .fh{ padding-bottom:calc(78px + env(safe-area-inset-bottom)); }
+  .fh .bottomnav{ display:flex; position:fixed; left:0; right:0; bottom:0; z-index:45;
+    background:color-mix(in srgb, var(--panel) 94%, transparent); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    border-top:1px solid var(--line); padding:6px 4px calc(6px + env(safe-area-inset-bottom)); }
+  .fh .bottomnav button{ flex:1; min-width:0; background:none; border:none; color:var(--muted); font:inherit; font-size:10.5px;
+    display:flex; flex-direction:column; align-items:center; gap:3px; padding:5px 2px; cursor:pointer; border-radius:10px; }
+  .fh .bottomnav button.on{ color:var(--acc); }
+  .fh .bottomnav button:active{ background:var(--panel2); }
 }
 @media (prefers-reduced-motion: reduce){ .fh *, .fh *::before, .fh *::after{ animation:none !important; transition:none !important; } }
 `;
@@ -380,6 +393,12 @@ const ICONS = {
   coffee: ["M4.5 9 H16.5 V15.5 a4 4 0 0 1 -4 4 H8.5 a4 4 0 0 1 -4 -4 Z", "M16.5 10 H18.5 a2.4 2.4 0 0 1 0 4.8 H16.5"],
   book: ["M4.5 5 a2 2 0 0 1 2 -2 H19.5 V19 H6.5 a2 2 0 0 0 -2 2 Z", "M19.5 17 H6.5 a2 2 0 0 0 -2 2"],
   tag: ["M3.5 10.5 V4 H10 L20.5 14.5 L14 21 Z", "M7.2 7.7 h0.01"],
+  /* navigation */
+  grid: ["M4 4 H10.5 V10.5 H4 Z", "M13.5 4 H20 V10.5 H13.5 Z", "M4 13.5 H10.5 V20 H4 Z", "M13.5 13.5 H20 V20 H13.5 Z"],
+  bank: ["M3 9.5 L12 4 L21 9.5", "M5.8 9.5 V17", "M10 9.5 V17", "M14 9.5 V17", "M18.2 9.5 V17", "M3.5 20 H20.5"],
+  bars: ["M4.5 20 V11", "M12 20 V4.5", "M19.5 20 V14", "M3 20.5 H21"],
+  chat: ["M20.5 13.5 a2 2 0 0 1 -2 2 H9.5 L5 19.5 V6.5 a2 2 0 0 1 2 -2 H18.5 a2 2 0 0 1 2 2 Z"],
+  dots: ["M6 12 h0.01", "M12 12 h0.01", "M18 12 h0.01"],
 };
 function catIconKey(name) {
   const n = String(name || "").toLowerCase();
@@ -889,7 +908,7 @@ function Budget({ d, setD, config }) {
                 <span className="row" style={{ gap: 8, flexWrap: "nowrap" }}><Icon k={catIconKey(c.name)} size={14} color={seriesColor(ci)} />{c.name}</span>
                 <span className="row" style={{ gap: 6 }}>
                   <span className="mono" style={{ fontSize: 13 }}>
-                    <span className={lim > 0 && spent > lim ? "bad" : ""}>{fmt(spent)}</span>
+                    <span className={lim > 0 && spent > lim ? "bad" : lim > 0 && spent >= lim * 0.8 ? "warn" : ""}>{fmt(spent)}</span>
                     <span style={{ color: "var(--faint)" }}> / </span>
                   </span>
                   <input className="in mono" type="number" style={{ width: 90, textAlign: "right", padding: "3px 8px" }}
@@ -898,7 +917,7 @@ function Budget({ d, setD, config }) {
                   <button className="x" onClick={() => setD((p2) => ({ ...p2, cats: p2.cats.filter((x) => x.id !== c.id) }))}>✕</button>
                 </span>
               </div>
-              {lim > 0 && <div className="bar"><i className={spent > lim ? "over" : ""} style={{ width: p + "%" }} /></div>}
+              {lim > 0 && <div className="bar"><i className={spent > lim ? "over" : spent >= lim * 0.8 ? "near" : ""} style={{ width: p + "%" }} /></div>}
             </div>
           );
         })}
@@ -1411,6 +1430,7 @@ function FinanceHQ({ config }) {
   const [tab, setTab] = useState("dash");
   const [showSettings, setShowSettings] = useState(false);
   const [showSecurity, setShowSecurity] = useState(false);
+  const [showMore, setShowMore] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
 
@@ -1529,19 +1549,54 @@ function FinanceHQ({ config }) {
     if (!loaded) return;
     setD((p) => {
       const memory = buildMerchantMemory(p.txns, p.cats);
+      /* A rule can want a category you don't have yet — a $4,700 IRS payment
+         sitting in "Uncategorized" is exactly the case. Create those, so the
+         money lands somewhere that explains itself. */
+      const cats = [...p.cats];
+      const wantNames = new Set();
+      p.txns.forEach((t) => {
+        if (t.kind !== "out" || t.catId || !t.note) return;
+        if (memory[normMerchant(t.note)]) return;
+        const name = ruleCategoryName(t.note, Number(t.amount));
+        if (name && !cats.some((c) => c.name.toLowerCase() === name.toLowerCase())) wantNames.add(name);
+      });
+      wantNames.forEach((name) => cats.push({ id: uid(), name, limit: 0 }));
+
       let n = 0;
       const txns = p.txns.map((t) => {
         if (t.kind !== "out" || t.catId || !t.note) return t;
-        const c = autoCategorize(t.note, p.cats, memory, Number(t.amount));
+        const c = autoCategorize(t.note, cats, memory, Number(t.amount));
         if (!c) return t;
         n++;
         return { ...t, catId: c };
       });
       if (!n) return p;
-      setTimeout(() => toast("Auto-categorized " + n + (n === 1 ? " transaction" : " transactions") + " using your history and built-in merchant rules."), 0);
-      return { ...p, txns };
+      const made = [...wantNames];
+      setTimeout(() => toast("Auto-categorized " + n + (n === 1 ? " transaction" : " transactions")
+        + (made.length ? " — added " + made.join(" and ") + (made.length === 1 ? " as a category" : " as categories") : "") + "."), 0);
+      return { ...p, cats, txns };
     });
   }, [loaded]);
+
+  /* Once a month has closed, write its recap on its own — one call, stored with
+     your data, never repeated. Skipped if the month had no activity. */
+  const recapTried = useRef(false);
+  useEffect(() => {
+    if (!loaded || !config?.aiEnabled || recapTried.current) return;
+    const last = prevMonth(thisMonth());
+    if ((d.settings.recaps || {})[last]) return;
+    if (!d.txns.some((t) => (t.date || "").startsWith(last))) return;
+    recapTried.current = true;
+    let cancelled = false;
+    generateRecap(d, last)
+      .then((text) => {
+        if (cancelled) return;
+        setD((p) => ({ ...p, settings: { ...p.settings, recaps: { ...(p.settings.recaps || {}), [last]: text } } }));
+        toast("Wrote your " + monthLabel(last) + " recap — it's on the Dashboard.");
+      })
+      .catch(() => {}); // a failed auto-recap is not worth interrupting anyone over
+    return () => { cancelled = true; };
+  }, [loaded, config]);
 
   /* auto-log recurring transactions when their day arrives */
   useEffect(() => {
@@ -1582,7 +1637,11 @@ function FinanceHQ({ config }) {
     </div>
   );
 
-  const TABS = [["dash", "Dashboard"], ["overview", "Accounts"], ["budget", "Budget"], ["invest", "Invest"], ["goals", "Goals"], ["plan", "Plan"]];
+  const TABS = [["dash", "Dashboard"], ["overview", "Accounts"], ["budget", "Budget"], ["merchants", "Merchants"],
+    ["assistant", "Assistant"], ["invest", "Invest"], ["goals", "Goals"], ["plan", "Plan"]];
+  /* phones get a 4-up bottom bar; the rest live behind More */
+  const PRIMARY = [["dash", "Dashboard", "grid"], ["overview", "Accounts", "bank"], ["budget", "Budget", "bars"], ["assistant", "Atlas", "chat"]];
+  const SECONDARY = TABS.filter(([id]) => !PRIMARY.some((p) => p[0] === id));
 
   return (
     <div className="fh" data-theme={d.settings.theme}>
@@ -1617,6 +1676,8 @@ function FinanceHQ({ config }) {
         {tab === "dash" && <Dashboard d={d} setD={setD} config={config} setTab={setTab} />}
         {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onConnect={connectBank} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
         {tab === "budget" && <Budget d={d} setD={setD} config={config} />}
+        {tab === "merchants" && <Merchants d={d} setD={setD} />}
+        {tab === "assistant" && <AskAtlas d={d} setD={setD} config={config} />}
         {tab === "invest" && <Invest d={d} setD={setD} config={config} />}
         {tab === "goals" && <Goals d={d} setD={setD} />}
         {tab === "plan" && <Plan d={d} setD={setD} />}
@@ -1641,6 +1702,27 @@ function FinanceHQ({ config }) {
         </Modal>
       )}
       {showSecurity && <SecurityModal onClose={() => setShowSecurity(false)} />}
+
+      <nav className="bottomnav" aria-label="Sections">
+        {PRIMARY.map(([id, label, icon]) => (
+          <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)} aria-current={tab === id}>
+            <Icon k={icon} size={20} />{label}
+          </button>
+        ))}
+        <button className={SECONDARY.some(([id]) => id === tab) ? "on" : ""} onClick={() => setShowMore(true)}>
+          <Icon k="dots" size={20} />More
+        </button>
+      </nav>
+      {showMore && (
+        <Modal title="More" onClose={() => setShowMore(false)}>
+          {SECONDARY.map(([id, label]) => (
+            <div className="kv" key={id}>
+              <button className="btn" style={{ width: "100%", textAlign: "left", background: tab === id ? "var(--acc-soft)" : undefined }}
+                onClick={() => { setTab(id); setShowMore(false); }}>{label}</button>
+            </div>
+          ))}
+        </Modal>
+      )}
       <Toasts />
     </div>
   );
@@ -1655,6 +1737,7 @@ const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|p
 const CAT_RULES = [
   /* big p2p payments are almost always rent/housing — small ones could be anything.
      The third element is a minimum $ amount for the rule to apply. */
+  [/\birs\b|internal revenue|us ?treasury|treas ?tax|tax ?(pmt|payment)|dept? of revenue|state tax|franchise tax|turbotax|h&r block|jackson hewitt|taxact/, "Taxes"],
   [/venmo payment|zelle (payment|to)/, "Rent", 500],
   [/kroger|trader joe|aldi|wal-?mart|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
   [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
@@ -1679,16 +1762,22 @@ function buildMerchantMemory(txns, cats) {
   }
   return mem;
 }
-function autoCategorize(note, cats, memory, amount) {
-  const key = normMerchant(note);
-  if (key && memory[key]) return memory[key];
+/* the category NAME a rule wants, whether or not that category exists yet */
+function ruleCategoryName(note, amount) {
   const n = String(note || "").toLowerCase();
   for (const [re, name, min] of CAT_RULES) {
     if (min && !(Number(amount) >= min)) continue;
-    if (re.test(n)) {
-      const c = (cats || []).find((x) => x.name.toLowerCase() === name.toLowerCase());
-      if (c) return c.id;
-    }
+    if (re.test(n)) return name;
+  }
+  return "";
+}
+function autoCategorize(note, cats, memory, amount) {
+  const key = normMerchant(note);
+  if (key && memory[key]) return memory[key];
+  const name = ruleCategoryName(note, amount);
+  if (name) {
+    const c = (cats || []).find((x) => x.name.toLowerCase() === name.toLowerCase());
+    if (c) return c.id;
   }
   return "";
 }
@@ -1986,6 +2075,119 @@ function SubscriptionRadar({ d, setD }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/* ---------------- Merchants tab ----------------
+   Who actually takes your money, ranked. Categorizing here applies to every
+   transaction from that merchant at once — the fastest way to clear a backlog
+   and the easiest way to see what a budget needs to cover. */
+
+function Merchants({ d, setD }) {
+  const [range, setRange] = useState("3m");
+  const [sort, setSort] = useState("total");
+  const [q, setQ] = useState("");
+
+  const rows = useMemo(() => {
+    const start = rangeStart(range);
+    const groups = {};
+    d.txns.forEach((t) => {
+      if (t.kind !== "out" || !(t.date >= start)) return;
+      const key = normMerchant(t.note) || "(no description)";
+      const g = (groups[key] = groups[key] || { key, total: 0, count: 0, last: "", label: "", cats: {}, ids: [] });
+      g.total += Number(t.amount) || 0;
+      g.count++;
+      g.ids.push(t.id);
+      if (t.date > g.last) { g.last = t.date; g.label = t.note || key; }
+      if (t.catId) g.cats[t.catId] = (g.cats[t.catId] || 0) + 1;
+    });
+    let list = Object.values(groups).map((g) => ({
+      ...g,
+      avg: g.total / g.count,
+      catId: Object.entries(g.cats).sort((a, b) => b[1] - a[1])[0]?.[0] || "",
+      uncatted: g.count - Object.values(g.cats).reduce((s, v) => s + v, 0),
+      mixed: P2P_RE.test(g.label),
+    }));
+    const ql = q.trim().toLowerCase();
+    if (ql) list = list.filter((g) => g.label.toLowerCase().includes(ql) || g.key.includes(ql));
+    const cmp = { total: (a, b) => b.total - a.total, count: (a, b) => b.count - a.count, recent: (a, b) => b.last.localeCompare(a.last) };
+    return list.sort(cmp[sort]);
+  }, [d.txns, range, sort, q]);
+
+  const grand = rows.reduce((s, r) => s + r.total, 0);
+  const setCat = (r, catId) => {
+    const ids = new Set(r.ids);
+    setD((p) => ({ ...p, txns: p.txns.map((t) => (ids.has(t.id) ? { ...t, catId } : t)) }));
+    toast("Filed " + r.count + (r.count === 1 ? " transaction" : " transactions") + " from " + titleCase(r.label).slice(0, 24) + " under " + (d.cats.find((c) => c.id === catId)?.name || "?") + ".");
+  };
+  const makeTransfers = (r) => {
+    const ids = new Set(r.ids);
+    setD((p) => ({ ...p, txns: p.txns.map((t) => (ids.has(t.id) ? { ...t, kind: "xfer", kindSet: true, catId: "" } : t)) }));
+    toast("Moved " + r.count + " out of spending — they're transfers now.");
+  };
+
+  return (
+    <>
+      <div className="card">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h3>Merchants</h3>
+          <div className="pills">
+            {RANGES.map(([v, l]) => <button key={v} className={"pill" + (range === v ? " on" : "")} onClick={() => setRange(v)}>{l}</button>)}
+          </div>
+        </div>
+        <div className="note">
+          Every place your money went, biggest first. Setting a category here files <b>all</b> of that merchant's
+          transactions at once, and Atlas remembers it for future syncs.
+        </div>
+        <div className="row" style={{ marginTop: 10 }}>
+          <input className="in" style={{ flex: 1, minWidth: 160 }} placeholder="Filter merchants…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <select className="in" style={{ width: 170 }} value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="total">Sort: most spent</option>
+            <option value="count">Sort: most visits</option>
+            <option value="recent">Sort: most recent</option>
+          </select>
+        </div>
+        <div className="note">{rows.length} merchant{rows.length === 1 ? "" : "s"} · <b className="mono">{fmt(grand)}</b> total</div>
+      </div>
+
+      <div className="card">
+        {rows.length ? rows.map((r) => {
+          const ci = d.cats.findIndex((c) => c.id === r.catId);
+          return (
+            <div key={r.key} style={{ padding: "9px 0", borderBottom: "1px solid var(--line)" }}>
+              <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
+                <span className="row" style={{ gap: 8, flexWrap: "nowrap", overflow: "hidden", flex: 1 }}>
+                  <Avatar label={r.label} color={r.catId ? seriesColor(ci) : "var(--faint)"} />
+                  <span style={{ overflow: "hidden" }}>
+                    <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>
+                      {titleCase(r.label)}
+                      {r.mixed && <span className="tag" style={{ marginLeft: 6 }} title="Person-to-person payments land under one name but can mean different things — categorize these individually in Budget">mixed</span>}
+                    </span>
+                    <span className="note" style={{ margin: 0, fontSize: 11.5 }}>
+                      {r.count}× · avg {fmt2(r.avg)} · last {r.last}
+                      {r.uncatted > 0 && <span className="warn"> · {r.uncatted} uncategorized</span>}
+                    </span>
+                  </span>
+                </span>
+                <span className="row" style={{ gap: 6, flexShrink: 0 }}>
+                  <span className="mono" style={{ fontSize: 15 }}>{fmt(r.total)}</span>
+                  <select className="in" style={{ width: 132, padding: "4px 6px", fontSize: 12 }} value={r.catId}
+                    title="Files every transaction from this merchant"
+                    onChange={(e) => e.target.value === "__xfer" ? makeTransfers(r) : setCat(r, e.target.value)}>
+                    <option value="">— category —</option>
+                    {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <option value="__xfer">Not spending (transfer)</option>
+                  </select>
+                </span>
+              </div>
+              <div className="bar" style={{ marginTop: 6, height: 5 }}>
+                <i style={{ width: (grand > 0 ? (r.total / grand) * 100 : 0) + "%", background: r.catId ? seriesColor(ci) : "var(--faint)" }} />
+              </div>
+            </div>
+          );
+        }) : <div className="note">No spending in this range yet — sync or log some transactions.</div>}
+      </div>
+    </>
   );
 }
 
@@ -2482,14 +2684,34 @@ function monthStats(d, m) {
 }
 const prevMonth = (m) => { const [y, mm] = m.split("-").map(Number); const dt = new Date(y, mm - 2, 1); return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0"); };
 
-function MonthReview({ d, config }) {
+/* one place builds the recap so the button and the automatic monthly run agree */
+async function generateRecap(d, m) {
+  const cur = monthStats(d, m), prev = monthStats(d, prevMonth(m));
+  const round = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
+  const payload = {
+    month: m, income: Math.round(cur.income), spending: Math.round(cur.spending), kept: Math.round(cur.kept),
+    savingsRatePct: cur.income > 0 ? Math.round((cur.kept / cur.income) * 100) : null,
+    byCategory: round(cur.byCat),
+    lastMonth: { income: Math.round(prev.income), spending: Math.round(prev.spending), byCategory: round(prev.byCat) },
+    budgets: d.cats.filter((c) => Number(c.limit) > 0).map((c) => ({ name: c.name, limit: Number(c.limit), spent: Math.round(cur.byCat[c.name] || 0) })),
+    biggestExpenses: cur.tx.filter((t) => t.kind === "out").sort((a, b) => b.amount - a.amount).slice(0, 5).map((t) => ({ note: t.note, amount: t.amount })),
+  };
+  return (await callClaude(
+    "Here is one month of someone's finances as JSON:\n" + JSON.stringify(payload) +
+    "\n\nWrite a short month-in-review for them (plain text, no markdown, under 140 words): what actually happened, " +
+    "the one or two changes that mattered most vs last month, and one concrete thing to watch next month. " +
+    "Talk to them directly, cite the real numbers, skip generic advice. General financial education only."
+  )).trim();
+}
+
+function MonthReview({ d, setD, config }) {
   const [m, setM] = useState(thisMonth());
-  const [recap, setRecap] = useState(null);
   const [busy, setBusy] = useState(false);
   const cur = useMemo(() => monthStats(d, m), [d.txns, d.cats, m]);
   const prev = useMemo(() => monthStats(d, prevMonth(m)), [d.txns, d.cats, m]);
+  const recap = (d.settings.recaps || {})[m]; // written once, kept with your data
 
-  const shift = (n) => { const [y, mm] = m.split("-").map(Number); const dt = new Date(y, mm - 1 + n, 1); setM(dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0")); setRecap(null); };
+  const shift = (n) => { const [y, mm] = m.split("-").map(Number); const dt = new Date(y, mm - 1 + n, 1); setM(dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0")); };
 
   /* biggest category swings vs last month, in dollars */
   const movers = useMemo(() => {
@@ -2498,26 +2720,17 @@ function MonthReview({ d, config }) {
       .filter((x) => Math.abs(x.delta) >= 5).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 4);
   }, [cur, prev]);
   const biggest = useMemo(() => cur.tx.filter((t) => t.kind === "out").sort((a, b) => b.amount - a.amount).slice(0, 4), [cur]);
-  const over = d.cats.filter((c) => Number(c.limit) > 0 && (cur.byCat[c.name] || 0) > Number(c.limit))
-    .map((c) => ({ name: c.name, spent: cur.byCat[c.name] || 0, limit: Number(c.limit) }));
+  const budgeted = d.cats.filter((c) => Number(c.limit) > 0)
+    .map((c) => ({ name: c.name, spent: cur.byCat[c.name] || 0, limit: Number(c.limit) }))
+    .sort((a, b) => b.spent / b.limit - a.spent / a.limit);
+  const over = budgeted.filter((b) => b.spent > b.limit);
   const rate = cur.income > 0 ? (cur.kept / cur.income) * 100 : null;
 
   const writeRecap = async () => {
     setBusy(true);
     try {
-      const payload = {
-        month: m, income: Math.round(cur.income), spending: Math.round(cur.spending), kept: Math.round(cur.kept),
-        savingsRatePct: rate == null ? null : Math.round(rate),
-        byCategory: Object.fromEntries(Object.entries(cur.byCat).map(([k, v]) => [k, Math.round(v)])),
-        lastMonth: { income: Math.round(prev.income), spending: Math.round(prev.spending), byCategory: Object.fromEntries(Object.entries(prev.byCat).map(([k, v]) => [k, Math.round(v)])) },
-        overBudget: over, biggestExpenses: biggest.map((t) => ({ note: t.note, amount: t.amount })),
-      };
-      setRecap((await callClaude(
-        "Here is one month of someone's finances as JSON:\n" + JSON.stringify(payload) +
-        "\n\nWrite a short month-in-review for them (plain text, no markdown, under 140 words): what actually happened, " +
-        "the one or two changes that mattered most vs last month, and one concrete thing to watch next month. " +
-        "Talk to them directly, cite the real numbers, skip generic advice. General financial education only."
-      )).trim());
+      const text = await generateRecap(d, m);
+      setD((p) => ({ ...p, settings: { ...p.settings, recaps: { ...(p.settings.recaps || {}), [m]: text } } }));
     } catch (e) { toast("Recap failed — " + e.message, "err"); }
     setBusy(false);
   };
@@ -2589,15 +2802,33 @@ function MonthReview({ d, config }) {
             </div>
           </div>
 
-          {over.length > 0 && (
-            <div className="note" style={{ marginTop: 10 }}>
-              <b className="bad">Over budget:</b> {over.map((o) => o.name + " " + fmt(o.spent) + " of " + fmt(o.limit)).join(" · ")}
+          {budgeted.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div className="sub" style={{ marginBottom: 4 }}>Budget check</div>
+              {budgeted.map((b) => (
+                <div key={b.name} style={{ padding: "5px 0" }}>
+                  <div className="row" style={{ justifyContent: "space-between", fontSize: 13 }}>
+                    <span className="row" style={{ gap: 7 }}>
+                      <Icon k={catIconKey(b.name)} size={13} color={seriesColor(d.cats.findIndex((c) => c.name === b.name))} />{b.name}
+                    </span>
+                    <span className="mono" style={{ fontSize: 12.5 }}>
+                      <span className={b.spent > b.limit ? "bad" : b.spent >= b.limit * 0.8 ? "warn" : ""}>{fmt(b.spent)}</span>
+                      <span style={{ color: "var(--faint)" }}> / {fmt(b.limit)}</span>
+                    </span>
+                  </div>
+                  <div className="bar" style={{ height: 6, marginTop: 3 }}>
+                    <i className={b.spent > b.limit ? "over" : b.spent >= b.limit * 0.8 ? "near" : ""}
+                      style={{ width: Math.min(100, (b.spent / b.limit) * 100) + "%" }} />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 
           {config?.aiEnabled && (
             <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 10 }}>
               <button className="btn small" disabled={busy} onClick={writeRecap}>{busy ? "Writing…" : recap ? "Rewrite recap" : "Write my recap"}</button>
+              {!recap && m !== thisMonth() && <span className="note" style={{ margin: 0 }}>closed months get written automatically</span>}
             </div>
           )}
           {recap && <div className="aiout">{recap}</div>}
@@ -2810,7 +3041,7 @@ function Dashboard({ d, setD, config, setTab }) {
         </div>
       </div>
 
-      <MonthReview d={d} config={config} />
+      <MonthReview d={d} setD={setD} config={config} />
 
       <div className="grid2" style={{ marginTop: 16 }}>
         <div className="card">
@@ -2851,8 +3082,6 @@ function Dashboard({ d, setD, config, setTab }) {
           )) : <div className="note">Nothing due — add recurring bills in Budget and they show here.</div>}
         </div>
       </div>
-
-      <AskAtlas d={d} setD={setD} config={config} />
 
       {drill && (() => {
         const rows = tx.filter((t) => t.kind === drill).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -2918,7 +3147,7 @@ function buildAskPrompt(d, hist, question) {
     netWorth: netWorth(d.accounts),
     accounts: d.accounts.map((a) => ({ name: a.name, type: a.type, balance: Math.round((Number(a.balance) || 0) * 100) / 100 })),
     budgets: d.cats.map((c) => ({ name: c.name, monthlyLimit: Number(c.limit) || 0 })),
-    goals: d.goals.map((g) => ({ name: g.name, target: g.target, saved: g.accountId ? Number(d.accounts.find((a) => a.id === g.accountId)?.balance || 0) : g.current, monthlyContribution: g.monthly })),
+    goals: d.goals.map((g) => ({ name: g.name, target: g.target, saved: g.accountId ? Number(d.accounts.find((a) => a.id === g.accountId)?.balance || 0) : g.current, monthlyContribution: g.monthly, deadline: g.deadline || null })),
     recurringBills: d.recurring.map((r) => ({ name: r.name || catName(r.catId), amount: r.amount, freq: (r.freq || "m") === "m" ? "monthly" : "yearly" })),
     holdings: d.invest.holdings.map((h) => ({ symbol: h.symbol, shares: h.shares })),
     settings: { statedMonthlyTakeHome: d.settings.incomeMonthly, emergencyFundMonths: d.settings.efMonths, assumedReturnPct: d.settings.expReturn },
@@ -2934,7 +3163,11 @@ function buildAskPrompt(d, hist, question) {
     "\n\nIf — and only if — the user is asking you to create, revise, or adjust a budget or spending plan, respond with ONLY this JSON " +
     "(no fences, no prose): {\"limits\":[{\"cat\":\"<category name>\",\"limit\":<integer monthly $>}],\"note\":\"<under 60 words on the key choices>\"}. " +
     "Ground every limit in their actual monthly spending from monthlyTotals, prefer their existing category names (you may add up to 2 new ones), " +
-    "keep the total comfortably under realistic monthly income, and leave room for their goals' monthly contributions. " +
+    "and keep the total comfortably under realistic monthly income. " +
+    "GOALS COME FIRST: for any goal with a deadline — or any savings target the user names in their question — back-solve the monthly " +
+    "contribution needed ((target − saved) ÷ months remaining), reserve that money before allocating anything else, and say in note exactly " +
+    "which categories had to give and by how much to fund it. If the goal is not reachable without cutting essentials, say so plainly in note " +
+    "and show the closest plan that is. " +
     "When revising an earlier plan from this conversation, return the FULL updated plan, not a diff." +
     "\n\nIf — and only if — the user is describing a purchase, trip, or one-off expense they are considering, respond with ONLY this JSON " +
     "(no fences, no prose): {\"purchase\":{\"name\":\"<short label>\",\"cost\":<integer total $>,\"by\":\"YYYY-MM-DD\"|null,\"note\":\"<how you got the number, every assumption stated>\"}}. " +
@@ -2999,7 +3232,7 @@ function AskAtlas({ d, setD, config }) {
       </div>
       {!hist.length && (
         <div className="row" style={{ marginTop: 8 }}>
-          {["Make me a budget plan", "Plan a trip: Atlanta to Ruston, 24 mpg", "Where did my money go last month?", "What subscriptions am I paying for?"].map((s) => (
+          {["Make me a budget plan", "Budget that funds my goals on time", "Plan a trip: Atlanta to Ruston, 24 mpg", "Where did my money go last month?"].map((s) => (
             <button key={s} className="btn small" disabled={busy} onClick={() => ask(s)}>{s}</button>
           ))}
         </div>
