@@ -43,7 +43,7 @@ app.use(cookieParser());
 
 /* passkey relying-party config — also reused by the Origin check below */
 const RP_ID = process.env.RP_ID || "localhost";
-const RP_NAME = "Cache";
+const RP_NAME = "Atlas";
 const RP_ORIGINS = (process.env.RP_ORIGIN || "http://localhost:5173").split(",").map((s) => s.trim()).filter(Boolean);
 
 /* financial data must never sit in a browser/proxy cache */
@@ -547,7 +547,7 @@ app.post("/api/ai", auth, aiLimiter, async (req, res) => {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return res.status(400).json({ error: "AI disabled — no ANTHROPIC_API_KEY in .env" });
   const prompt = String(req.body.prompt || "");
-  if (prompt.length > 12000) return res.status(400).json({ error: "Prompt too long" }); // cap runs on the owner's API bill
+  if (prompt.length > 24000) return res.status(400).json({ error: "Prompt too long" }); // cap runs on the owner's API bill (24k chars ≈ 6k tokens; the assistant sends a compact data summary)
   const gate = await reserveAi(req.userId);
   if (!gate.ok) return res.status(429).json({ error: gate.error });
   try {
@@ -609,6 +609,83 @@ function tellerGet(p, token) {
 const TYPE_MAP = { checking: "Checking", savings: "Savings / HYSA", credit_card: "Credit card", credit: "Credit card" };
 const DEBT = ["Credit card", "Auto loan", "Student loan", "Mortgage", "Other debt"];
 
+/* ---------------- transfer detection ----------------
+   A credit-card payment appears TWICE in a sync: an outflow from checking AND an
+   inflow on the card. Counting the outflow as spending double-counts the purchases
+   (which were already imported as spending), and counting the card credit as income
+   fabricates income. Same story for checking→savings moves. These are classified
+   as kind "xfer" — kept in the ledger, excluded from income/spending math. */
+const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|thank you.*payment|internet payment|e-?payment\b|\bepay\b|directpay/i;
+
+/* Classify a synced transaction. Inflows on debt accounts (card/loan payments
+   arriving — or the odd refund) are never income. */
+function classifyKind(amt, accType, note) {
+  if (XFER_RE.test(String(note || ""))) return "xfer";
+  if (amt > 0 && DEBT.includes(accType)) return "xfer";
+  return amt > 0 ? "in" : "out";
+}
+
+/* Same amount, opposite direction, different accounts, within 4 days → the two
+   sides of one transfer that keyword matching missed. Only synced, uncategorized
+   rows without a manual kind override (kindSet) are touched. */
+function markTransferPairs(txns) {
+  const cand = txns.filter((t) => t.tellerId && !t.catId && !t.kindSet && (t.kind === "in" || t.kind === "out"));
+  const ins = cand.filter((t) => t.kind === "in");
+  const used = new Set();
+  let n = 0;
+  for (const o of cand) {
+    if (o.kind !== "out") continue;
+    const m = ins.find((i) => !used.has(i.id) && i.accountId !== o.accountId &&
+      Math.abs(Number(i.amount) - Number(o.amount)) < 0.005 &&
+      Math.abs(new Date(i.date) - new Date(o.date)) <= 4 * 864e5);
+    if (m) { o.kind = "xfer"; m.kind = "xfer"; used.add(m.id); n += 2; }
+  }
+  return n;
+}
+
+/* ---------------- auto-categorization ----------------
+   Deterministic first pass so synced transactions don't all land uncategorized:
+   1) merchant memory — how the user categorized this merchant before always wins;
+   2) keyword rules for common US merchants, mapped onto the user's category NAMES
+      (case-insensitive; a rule whose category the user deleted is skipped).
+   The AI categorize button remains for whatever these two miss.
+   normMerchant + CAT_RULES are mirrored in client/src/App.jsx — keep in sync. */
+const normMerchant = (note) =>
+  String(note || "").toLowerCase().replace(/\(recurring\)/g, "").replace(/[#*\d]+/g, " ").replace(/[^a-z& ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 28);
+const CAT_RULES = [
+  [/kroger|trader joe|aldi|wal-?mart|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
+  [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
+  [/exxon|shell oil|chevron|texaco|citgo|valero|racetrac|quiktrip|\bqt\b|speedway|murphy usa|circle k|7-?eleven fuel|uber(?! ?eats)|lyft|parking|toll|jiffy lube|autozone|o'?reilly|discount tire|car wash/, "Transport"],
+  [/netflix|spotify|hulu|disney ?\+|hbo ?max|paramount|peacock|crunchyroll|youtube ?(premium|tv)|apple\.com\/bill|apple ?one|icloud|google ?(one|storage)|dropbox|adobe|microsoft 365|xbox game|playstation|nintendo|patreon|twitch|discord|cloudflare|github|godaddy|namecheap|\bvpn\b|audible|kindle unltd/, "Subscriptions"],
+  [/amazon|amzn|target\b|best buy|ebay|etsy|dollar (general|tree)|five below|ross store|tj ?maxx|marshalls|old navy|h&m\b|zara|nike|shein|temu|home depot|lowe'?s|ikea/, "Shopping"],
+  [/rent\b|apartment|property (mgmt|management)|landlord/, "Rent"],
+  [/gym|planet fitness|la fitness|ymca|crunch fitness|walgreens|cvs\b|rite aid|pharmacy|clinic|dental|doctor|hospital|urgent care|optical|optometr/, "Health"],
+  [/cinema|cinemark|\bamc\b|regal|steam(games| purchase)|steampowered|epic games|riot|blizzard|ticketmaster|stubhub|bowling|arcade|spotify concert|eventbrite/, "Fun"],
+];
+function buildMerchantMemory(txns, cats) {
+  const catIds = new Set((cats || []).map((c) => c.id));
+  const mem = {};
+  for (const t of txns) { // insertion order: later (newer) categorizations overwrite older ones
+    if (t.kind === "out" && t.catId && catIds.has(t.catId) && t.note) {
+      const k = normMerchant(t.note);
+      if (k.length >= 3) mem[k] = t.catId;
+    }
+  }
+  return mem;
+}
+function autoCategorize(note, cats, memory) {
+  const key = normMerchant(note);
+  if (key && memory[key]) return memory[key];
+  const n = String(note || "").toLowerCase();
+  for (const [re, name] of CAT_RULES) {
+    if (re.test(n)) {
+      const c = (cats || []).find((x) => x.name.toLowerCase() === name.toLowerCase());
+      if (c) return c.id;
+    }
+  }
+  return "";
+}
+
 app.post("/api/teller/enroll", auth, async (req, res) => {
   const token = String(req.body?.accessToken || "").trim();
   if (!token) return res.status(400).json({ error: "Missing bank access token" });
@@ -664,6 +741,7 @@ app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
     await withLock("data:" + req.userId, () => {
       const d = readData(req.userId);
       d.accounts = d.accounts || []; d.txns = d.txns || [];
+      const merchantMem = buildMerchantMemory(d.txns, d.cats);
       for (const { institution, a, bal, txs } of fetched) {
         let acc = d.accounts.find((x) => x.tellerId === a.id);
         if (!acc) {
@@ -679,14 +757,12 @@ app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
         for (const t of txs) {
           if (d.txns.some((x) => x.tellerId === t.id)) continue;
           const amt = Number(t.amount);
-          if (amt < 0) {
-            d.txns.push({ id: crypto.randomUUID(), tellerId: t.id, accountId: acc.id, kind: "out", date: t.date, amount: Math.round(-amt * 100) / 100, catId: "", note: (t.description || "").slice(0, 60) });
-            newTx++;
-          } else if (amt > 0 && a.type === "depository") {
-            /* deposits imported as income (uncategorized) — delete transfer noise as you see it */
-            d.txns.push({ id: crypto.randomUUID(), tellerId: t.id, accountId: acc.id, kind: "in", date: t.date, amount: Math.round(amt * 100) / 100, catId: "", note: (t.description || "").slice(0, 60) });
-            newTx++;
-          }
+          if (!(amt < 0) && !(amt > 0 && a.type === "depository")) continue;
+          const note = (t.description || "").slice(0, 60);
+          const kind = classifyKind(amt, acc.type, note);
+          const catId = kind === "out" ? autoCategorize(note, d.cats, merchantMem) : "";
+          d.txns.push({ id: crypto.randomUUID(), tellerId: t.id, accountId: acc.id, kind, date: t.date, amount: Math.round(Math.abs(amt) * 100) / 100, catId, note });
+          newTx++;
         }
       }
       const assets = d.accounts.filter((x) => !DEBT.includes(x.type)).reduce((s, x) => s + (+x.balance || 0), 0);
@@ -807,13 +883,14 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
   }
 
   /* PHASE 2 — merge into current on-disk state under the lock (brief) */
-  let newTx = 0, updAcc = 0, updHold = 0;
+  let newTx = 0, updAcc = 0, updHold = 0, autoCat = 0, xferPairs = 0;
   try {
     await withLock("data:" + req.userId, () => {
       const d = readData(req.userId);
       d.accounts = d.accounts || []; d.txns = d.txns || [];
       d.invest = d.invest || { holdings: [], watch: [] };
       d.invest.holdings = d.invest.holdings || []; d.invest.watch = d.invest.watch || [];
+      const merchantMem = buildMerchantMemory(d.txns, d.cats);
       for (const set of sets) {
         for (const a of set.accounts || []) {
           const sfId = "sf:" + a.id;
@@ -836,8 +913,10 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
             if (!Number.isFinite(amt) || amt === 0) continue;
             const date = new Date((Number(t.posted) || 0) * 1000).toISOString().slice(0, 10);
             const note = String(t.description || t.payee || "").slice(0, 60);
-            if (amt < 0) d.txns.push({ id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind: "out", date, amount: Math.round(-amt * 100) / 100, catId: "", note });
-            else d.txns.push({ id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind: "in", date, amount: Math.round(amt * 100) / 100, catId: "", note });
+            const kind = classifyKind(amt, acc.type, note);
+            const catId = kind === "out" ? autoCategorize(note, d.cats, merchantMem) : "";
+            if (catId) autoCat++;
+            d.txns.push({ id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind, date, amount: Math.round(Math.abs(amt) * 100) / 100, catId, note });
             newTx++;
           }
           /* Brokerage accounts carry a holdings array (undocumented in the spec, but
@@ -856,6 +935,7 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
           }
         }
       }
+      xferPairs = markTransferPairs(d.txns);
       const assets = d.accounts.filter((x) => !DEBT.includes(x.type)).reduce((s, x) => s + (+x.balance || 0), 0);
       const debts = d.accounts.filter((x) => DEBT.includes(x.type)).reduce((s, x) => s + (+x.balance || 0), 0);
       const today = new Date().toISOString().slice(0, 10);
@@ -866,7 +946,7 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
       d._rev = (d._rev || 0) + 1;
       writeData(req.userId, d);
     });
-    res.json({ ok: true, newTx, updAcc, updHold, warnings: warnings.slice(0, 3) });
+    res.json({ ok: true, newTx, updAcc, updHold, autoCat, xferPairs, warnings: warnings.slice(0, 3) });
   } catch (e) { console.error("simplefin merge failed:", e.message); res.status(500).json({ error: "Synced but couldn't save — your existing data was left untouched" }); }
 });
 
@@ -906,5 +986,5 @@ if (fs.existsSync(dist)) {
 /* bind to loopback only — Caddy (same host) is the sole ingress; never listen on a public interface */
 const HOST = process.env.HOST || "127.0.0.1";
 app.listen(process.env.PORT || 3001, HOST, () =>
-  console.log("Cache server on http://" + HOST + ":" + (process.env.PORT || 3001))
+  console.log("Atlas server on http://" + HOST + ":" + (process.env.PORT || 3001))
 );

@@ -1,15 +1,15 @@
-# Deploying Cache on Oracle Cloud
+﻿# Deploying Cache on Oracle Cloud
 
 Assumes an Ubuntu VM (works fine on the Always Free ARM shape, and can share
-a VM with other services — it only needs ~150MB RAM).
+a VM with other services â€” it only needs ~150MB RAM).
 
-## 1. Open the firewall — BOTH layers
+## 1. Open the firewall â€” BOTH layers
 Oracle has two firewalls and forgetting the second is the classic trap.
 
-**a) VCN Security List** (Oracle console): your instance's subnet → Security
-List → add ingress rules for TCP **80** and **443** from `0.0.0.0/0`.
+**a) VCN Security List** (Oracle console): your instance's subnet â†’ Security
+List â†’ add ingress rules for TCP **80** and **443** from `0.0.0.0/0`.
 
-**b) On the VM itself** — Oracle's Ubuntu images ship restrictive iptables:
+**b) On the VM itself** â€” Oracle's Ubuntu images ship restrictive iptables:
 ```
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
@@ -30,21 +30,21 @@ npm run build
 ```
 cp .env.example .env && nano .env
 ```
-Set: `SESSION_SECRET` (long random — also encrypts bank tokens at rest, so keep
+Set: `SESSION_SECRET` (long random â€” also encrypts bank tokens at rest, so keep
 it stable), `INVITE_CODE`, `TELLER_APP_ID`, `TELLER_ENV=development`, cert paths,
 `ANTHROPIC_API_KEY`, and add:
 ```
 FORCE_SECURE_COOKIE=1
 NODE_ENV=production
 DATA_DIR=/home/ubuntu/cache-data
-RP_ID=cache.YOUR-IP.nip.io
-RP_ORIGIN=https://cache.YOUR-IP.nip.io
+RP_ID=atlas.YOUR-IP.nip.io
+RP_ORIGIN=https://atlas.YOUR-IP.nip.io
 ```
 `NODE_ENV=production` makes the server refuse to start without a strong
 `SESSION_SECRET`. `RP_ID`/`RP_ORIGIN` must match the exact hostname you serve
-from (below) or passkeys silently fail — `RP_ID` is the bare domain, `RP_ORIGIN`
+from (below) or passkeys silently fail â€” `RP_ID` is the bare domain, `RP_ORIGIN`
 the full `https://` origin.
-`mkdir -p /home/ubuntu/cache-data` — keeping data outside the repo means
+`mkdir -p /home/ubuntu/cache-data` â€” keeping data outside the repo means
 you can update code by re-uploading without touching anyone's data.
 Upload your Teller cert + key to the paths you set (`scp` them; never git).
 
@@ -68,7 +68,7 @@ UNIT
 sudo systemctl enable --now cache
 ```
 
-## 5. HTTPS with Caddy (required — secure cookies + Teller want it)
+## 5. HTTPS with Caddy (required â€” secure cookies + Teller want it)
 You need a domain name; a free DuckDNS subdomain pointed at your VM's public
 IP works great.
 ```
@@ -82,16 +82,16 @@ echo 'yourname.duckdns.org {
 }' | sudo tee /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
-The apt package reads `/etc/caddy/Caddyfile` — not `/etc/Caddyfile`. Writing
+The apt package reads `/etc/caddy/Caddyfile` â€” not `/etc/Caddyfile`. Writing
 the wrong path leaves Caddy serving its default welcome page and you'll chase
 it for an hour.
 Caddy fetches and renews the TLS certificate automatically. Open
-`https://yourname.duckdns.org` on your phone — create the first account
+`https://yourname.duckdns.org` on your phone â€” create the first account
 (no invite needed), and hand the invite code to family.
 
 ## Sharing the VM with another app
 
-Nothing here needs its own instance — Cache is ~150MB of RAM and one port, so
+Nothing here needs its own instance â€” Cache is ~150MB of RAM and one port, so
 put it on a VM you already have. That uses no additional Always Free resources
 (no new compute, block volume, or public IP), so it can't change your bill.
 
@@ -112,13 +112,13 @@ Caddy issues a separate certificate per hostname automatically. Two rules:
   (`sudo ss -tlnp` lists what's already listening).
 
 **On a 1GB shape (VM.Standard.E2.1.Micro), `npm run build` can get OOM-killed**
-— Vite is the memory-hungry step, not the running server. Either add swap:
+â€” Vite is the memory-hungry step, not the running server. Either add swap:
 ```
 sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
 sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
-or run `npm run build` on your laptop and upload `client/dist/` — the server
+or run `npm run build` on your laptop and upload `client/dist/` â€” the server
 serves that directory when it exists, so the VM never has to build.
 
 ## 6. Encrypted backups
@@ -141,13 +141,13 @@ For off-box safety, `scp` the `.enc` files somewhere else periodically.
 Sandbox uses fake data and needs no certificates. Real banks need a Teller
 application plus a client certificate (mutual TLS).
 
-**1. Create the Teller app** — sign up at <https://teller.io>, then in the
+**1. Create the Teller app** â€” sign up at <https://teller.io>, then in the
 dashboard create an application. Note the **Application ID** (`app_...`).
 
 **2. Download the certificate + private key.** In the Teller dashboard under
 your application's **Certificates** section, generate and download:
 `certificate.pem` and `private_key.pem`. These are the credentials that prove
-your server is you — treat them like passwords.
+your server is you â€” treat them like passwords.
 
 **3. Put them OUTSIDE the repo.** The repo directory gets replaced on every code
 update, which would delete anything stored inside it:
@@ -169,14 +169,14 @@ TELLER_KEY_PATH=/home/ubuntu/cache-secrets/private_key.pem
 `development` = real banks, free tier (limited enrollments). `production`
 requires Teller's paid plan. Then `sudo systemctl restart cache`.
 
-**5. Connect a bank** — open the app → Accounts → *Connect a bank* → pick your
-institution → log in with your real bank credentials. Those credentials go
+**5. Connect a bank** â€” open the app â†’ Accounts â†’ *Connect a bank* â†’ pick your
+institution â†’ log in with your real bank credentials. Those credentials go
 directly to Teller and never touch this server; Cache only ever receives an
 access token, which it encrypts before storing.
 
 **Not every institution is supported** (Teller covers most major banks; many
 brokerages like Fidelity are not). For anything unsupported, use the CSV import
-under Budget — download the CSV from the institution's site and import it. That
+under Budget â€” download the CSV from the institution's site and import it. That
 path involves no stored credentials at all.
 
 **Rotation:** if a cert is ever exposed, revoke it in the Teller dashboard,
@@ -188,7 +188,7 @@ must reconnect their banks.
 Cache's app-level rate limiting stops password/passkey brute-force *in the app*;
 these protect the box itself.
 
-**Key-only SSH** — you already log in with your key, so turn off password auth
+**Key-only SSH** â€” you already log in with your key, so turn off password auth
 so the internet can't guess its way in:
 ```
 sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
@@ -197,13 +197,13 @@ sudo systemctl restart ssh
 ```
 (Confirm you can still open a **second** SSH session before closing this one.)
 
-**fail2ban** — bans IPs that hammer SSH:
+**fail2ban** â€” bans IPs that hammer SSH:
 ```
 sudo apt-get install -y fail2ban
 sudo systemctl enable --now fail2ban
 ```
 
-**Finish the stalled security updates.** That wedged `apt` was a hung update —
+**Finish the stalled security updates.** That wedged `apt` was a hung update â€”
 once the lock is cleared (`sudo kill -9 <pid>` from the earlier step):
 ```
 sudo apt-get update && sudo apt-get -y upgrade

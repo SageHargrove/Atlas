@@ -3,12 +3,17 @@
 > MIT-licensed. Run it on your own server; your financial data never touches
 > anyone else's cloud. See `SETUP.md` for the full setup walkthrough.
 
-React + Express. Real bank sync (SimpleFIN, read-only), an Invest tab with live
-delayed quotes + watchlist + Fidelity positions-CSV import, AI categorization
-and budgeting (your Anthropic key, server-side), full dashboard with donut
-breakdowns, budgets, goals, debt payoff with promo-APR tracking, purchase
-planner, subscription radar (auto-detects recurring charges), month-over-month
-insights, cross-month transaction search, and one-click CSV/JSON export.
+React + Express. Real bank sync (SimpleFIN, read-only) with automatic
+transfer detection (credit-card payments and account-to-account moves never
+double-count as spending/income) and auto-categorization (learned from your
+history + built-in merchant rules), an Invest tab with live delayed quotes +
+watchlist + Fidelity positions-CSV import, AI categorization, budgeting, and
+an **Ask Atlas** dashboard assistant that answers questions across all your
+data (your Anthropic key, server-side), full dashboard with donut breakdowns
+and click-through income/spending history, budgets, goals, debt payoff with
+promo-APR tracking, purchase planner, subscription radar (auto-detects
+recurring charges), cross-month transaction search, and one-click CSV/JSON
+export.
 Registration is invite-code gated so you can share with friends/family —
 every user's data lives in its own file, invisible to other users.
 
@@ -81,11 +86,16 @@ Leave bank sync and AI unconfigured if you just want to click around.
 
 ## What syncs, exactly
 - Balances for every connected account, on demand (Sync now)
-- Spending transactions (negative amounts) → arrive **uncategorized**;
-  assign inline or hit **AI categorize**
-- Deposits into checking/savings → imported as **income** transactions.
-  Transfers between your own accounts will show up here too — delete the
-  noise; income math only counts what you keep.
+- Spending transactions arrive **pre-categorized where possible** — merchants
+  you've categorized before are remembered, common merchants match built-in
+  rules, and the **AI categorize** button handles the rest
+- Deposits into checking/savings → imported as **income** transactions
+- Credit-card payments and transfers between your own accounts are detected
+  automatically (payment/transfer keywords, inflows on card accounts, and
+  equal-and-opposite pairs across accounts) and marked as **transfers** — kept
+  in the ledger but excluded from income and spending, so a $750 card payment
+  never counts as $750 spending *and* $750 income on top of the purchases
+  themselves. Anything mis-flagged flips back via the type dropdown in Budget.
 - Every sync logs a net-worth snapshot for the Dashboard trend
 - **Brokerage holdings**: accounts that return a `holdings` array (Fidelity
   does) populate the Invest tab automatically — symbol, shares, cost basis.

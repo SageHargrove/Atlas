@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
+import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Sankey, Layer, Rectangle } from "recharts";
 import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 
 /* ------------------------------------------------------ */
@@ -117,6 +117,8 @@ const fmt = (n) =>
 const titleCase = (s) => String(s || "").toLowerCase().replace(/(^|[\s#/&-])([a-z])/g, (m, a, b) => a + b.toUpperCase());
 const fmt2 = (n) =>
   n == null || isNaN(n) ? "—" : (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/* whole-dollar amounts stay clean ($1,500), anything with cents keeps them ($15.99) */
+const fmtAmt = (n) => (Number.isInteger(Number(n)) ? fmt(n) : fmt2(n));
 const fmtK = (n) => (Math.abs(n) >= 1000 ? "$" + (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : "$" + Math.round(n));
 const pct = (n) => (isNaN(n) || !isFinite(n) ? "—" : Math.round(n) + "%");
 
@@ -132,7 +134,7 @@ const netWorth = (accs = []) => {
 /* average monthly spend over up to the last 3 months that have transactions */
 function avgMonthlySpend(txns) {
   const byMonth = {};
-  txns.filter((t) => t.kind !== "in").forEach((t) => {
+  txns.filter((t) => t.kind === "out").forEach((t) => {
     const m = (t.date || "").slice(0, 7);
     if (m) byMonth[m] = (byMonth[m] || 0) + (Number(t.amount) || 0);
   });
@@ -552,8 +554,11 @@ function BankSync({ d, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBan
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Sync failed");
       await onReload();
-      setSfMsg("Synced — " + j.newTx + " new transactions, " + j.updAcc + " balances updated"
-        + (j.updHold ? ", " + j.updHold + " holdings" : "") + "."
+      setSfMsg("Synced — " + j.newTx + " new transactions"
+        + (j.autoCat ? " (" + j.autoCat + " auto-categorized)" : "")
+        + ", " + j.updAcc + " balances updated"
+        + (j.updHold ? ", " + j.updHold + " holdings" : "")
+        + (j.xferPairs ? ", " + j.xferPairs + " marked as transfers" : "") + "."
         + (j.warnings?.length ? " (" + j.warnings.join("; ") + ")" : ""));
     } catch (e) { setSfMsg("Sync failed — " + e.message); }
     setSfBusy(false);
@@ -744,7 +749,7 @@ function Budget({ d, setD, config }) {
     setRecoBusy(true); setReco(null);
     try {
       const threeMo = new Date(Date.now() - 92 * 864e5).toISOString().slice(0, 10);
-      const recent = d.txns.filter((t) => t.kind !== "in" && (t.date || "") >= threeMo);
+      const recent = d.txns.filter((t) => t.kind === "out" && (t.date || "") >= threeMo);
       const byCat = {};
       recent.forEach((t) => { const n = d.cats.find((c) => c.id === t.catId)?.name || "Uncategorized"; byCat[n] = (byCat[n] || 0) + Number(t.amount || 0); });
       const avg = Object.fromEntries(Object.entries(byCat).map(([k, v]) => [k, Math.round(v / 3)]));
@@ -786,7 +791,7 @@ function Budget({ d, setD, config }) {
           (d.cats.find((c) => c.id === t.catId)?.name || "").toLowerCase().includes(ql)))
         .sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 200)
     : monthTxns;
-  const outTxns = monthTxns.filter((t) => t.kind !== "in");
+  const outTxns = monthTxns.filter((t) => t.kind === "out");
   const spentBy = {};
   outTxns.forEach((t) => { spentBy[t.catId] = (spentBy[t.catId] || 0) + (Number(t.amount) || 0); });
   const totalSpent = outTxns.reduce((s, t) => s + (Number(t.amount) || 0), 0);
@@ -803,6 +808,7 @@ function Budget({ d, setD, config }) {
 
   return (
     <>
+      <TransferCleanup d={d} setD={setD} />
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h3>{monthLabel(month)}</h3>
@@ -882,11 +888,11 @@ function Budget({ d, setD, config }) {
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h3>{searching ? "Search — all months" : "Transactions — " + monthLabel(month)}</h3>
           <span className="row" style={{ gap: 6 }}>
-            {config?.aiEnabled && monthTxns.some((t) => !t.catId && t.kind !== "in") && (
+            {config?.aiEnabled && monthTxns.some((t) => !t.catId && t.kind === "out") && (
               <button className="btn small" disabled={catBusy} onClick={async () => {
                 setCatBusy(true);
                 try {
-                  const un = monthTxns.filter((t) => !t.catId && t.kind !== "in").slice(0, 60).map((t) => ({ i: t.id, d: t.note || "" }));
+                  const un = monthTxns.filter((t) => !t.catId && t.kind === "out").slice(0, 60).map((t) => ({ i: t.id, d: t.note || "" }));
                   const prompt = "Categorize these bank transaction descriptions into EXACTLY one of: " + JSON.stringify(d.cats.map((c) => c.name)) +
                     ". Transactions: " + JSON.stringify(un) + '. Respond ONLY JSON array: [{"i": string, "cat": string}].';
                   const out = await callClaude(prompt);
@@ -898,7 +904,7 @@ function Budget({ d, setD, config }) {
                   }) }));
                 } catch (e) { toast("Categorize failed — " + e.message, "err"); }
                 setCatBusy(false);
-              }}>{catBusy ? "Sorting…" : "AI categorize (" + monthTxns.filter((t) => !t.catId && t.kind !== "in").length + ")"}</button>
+              }}>{catBusy ? "Sorting…" : "AI categorize (" + monthTxns.filter((t) => !t.catId && t.kind === "out").length + ")"}</button>
             )}
             <button className="btn small" onClick={() => setShowImport(true)}>Import bank CSV</button>
           </span>
@@ -923,7 +929,7 @@ function Budget({ d, setD, config }) {
           </select>
           <input className="in mono" type="number" placeholder="0" style={{ padding: "4px 6px" }} value={nt.amount} onChange={(e) => setNt({ ...nt, amount: e.target.value })} />
           <select className="in" style={{ padding: "4px 6px" }} value={nt.kind} onChange={(e) => setNt({ ...nt, kind: e.target.value })}>
-            <option value="out">Spend</option><option value="in">Income</option>
+            <option value="out">Spend</option><option value="in">Income</option><option value="xfer">Transfer</option>
           </select>
           <select className="in tacct" style={{ padding: "4px 6px" }} value={nt.accountId} onChange={(e) => setNt({ ...nt, accountId: e.target.value })}>
             <option value="">— account —</option>
@@ -931,16 +937,18 @@ function Budget({ d, setD, config }) {
           </select>
           <input className="in tnote" placeholder="Note" style={{ padding: "4px 6px" }} value={nt.note} onChange={(e) => setNt({ ...nt, note: e.target.value })} />
           <button className="btn small primary" style={{ padding: "4px 8px" }} onClick={() => {
-            if (!nt.amount || !nt.catId) return;
-            setD((p) => ({ ...p, txns: [...p.txns, { id: uid(), ...nt, amount: Number(nt.amount) }] }));
+            if (!nt.amount || (nt.kind === "out" && !nt.catId)) return;
+            setD((p) => ({ ...p, txns: [...p.txns, { id: uid(), ...nt, catId: nt.kind === "out" ? nt.catId : "", amount: Number(nt.amount), kindSet: true }] }));
             setNt({ date: nt.date, catId: nt.catId, amount: "", note: "", kind: nt.kind, accountId: nt.accountId });
           }}>+</button>
         </div>
         {(searching || showAllTx ? shownTxns : shownTxns.slice(0, 12)).map((t) => (
-          <div className="trow" key={t.id}>
+          <div className="trow" key={t.id} style={t.kind === "xfer" ? { opacity: 0.62 } : null}>
             <span className="mono" style={{ fontSize: 12.5 }}>{searching ? t.date : t.date.slice(5)}</span>
             {t.kind === "in"
               ? <span className="note" style={{ margin: 0 }}>Income</span>
+              : t.kind === "xfer"
+              ? <span className="note" style={{ margin: 0 }} title="Between your own accounts — not counted as income or spending">Transfer</span>
               : t.catId
               ? (() => {
                   const ci = d.cats.findIndex((c) => c.id === t.catId);
@@ -955,8 +963,12 @@ function Budget({ d, setD, config }) {
                   <option value="" disabled>— pick —</option>
                   {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>}
-            <span className="mono" style={t.kind === "in" ? { color: "var(--acc)" } : null}>{t.kind === "in" ? "+" : ""}{fmt(Number(t.amount))}</span>
-            <span>{t.kind === "in" ? <span className="tag" style={{ color: "var(--acc)" }}>income</span> : null}</span>
+            <span className="mono" style={t.kind === "in" ? { color: "var(--acc)" } : t.kind === "xfer" ? { color: "var(--faint)" } : null}>{t.kind === "in" ? "+" : t.kind === "xfer" ? "⇄ " : ""}{fmt2(Number(t.amount))}</span>
+            <select className="in" style={{ padding: "3px 4px", fontSize: 11.5, color: "var(--muted)" }} value={t.kind || "out"}
+              title="Spend counts toward budgets, Income toward earnings, Transfer toward neither"
+              onChange={(e) => setD((p) => ({ ...p, txns: p.txns.map((x) => x.id === t.id ? { ...x, kind: e.target.value, kindSet: true, catId: e.target.value === "out" ? x.catId : "" } : x) }))}>
+              <option value="out">Spend</option><option value="in">Income</option><option value="xfer">Transfer</option>
+            </select>
             <span className="tacct">{t.accountId ? <span className="tag">{(d.accounts.find((a) => a.id === t.accountId)?.name || "").slice(0, 18)}</span> : null}</span>
             <span className="tnote" style={{ color: "var(--muted)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titleCase(t.note)}</span>
             <button className="x" onClick={() => setD((p) => ({ ...p, txns: p.txns.filter((x) => x.id !== t.id) }))}>✕</button>
@@ -1454,10 +1466,10 @@ function FinanceHQ({ config }) {
   const exportCSV = () => {
     const rows = [["date", "type", "category", "amount", "account", "note"]];
     [...d.txns].sort((a, b) => (a.date || "").localeCompare(b.date || "")).forEach((t) =>
-      rows.push([t.date, t.kind === "in" ? "income" : "expense", d.cats.find((c) => c.id === t.catId)?.name || "", t.amount, d.accounts.find((x) => x.id === t.accountId)?.name || "", t.note || ""]));
-    dl("cache-transactions-" + today() + ".csv", rows.map((r) => r.map(csvEsc).join(",")).join("\n"), "text/csv");
+      rows.push([t.date, t.kind === "in" ? "income" : t.kind === "xfer" ? "transfer" : "expense", d.cats.find((c) => c.id === t.catId)?.name || "", t.amount, d.accounts.find((x) => x.id === t.accountId)?.name || "", t.note || ""]));
+    dl("atlas-transactions-" + today() + ".csv", rows.map((r) => r.map(csvEsc).join(",")).join("\n"), "text/csv");
   };
-  const exportJSON = () => dl("cache-backup-" + today() + ".json", JSON.stringify(d, null, 2), "application/json");
+  const exportJSON = () => dl("atlas-backup-" + today() + ".json", JSON.stringify(d, null, 2), "application/json");
 
   /* Autosave. A failure here used to be swallowed silently, so a save that never landed
      looked exactly like a successful one — surface it instead, and keep retrying.
@@ -1555,7 +1567,7 @@ function FinanceHQ({ config }) {
           </div>
         )}
         {syncNotice && <div className="banner">{syncNotice}</div>}
-        {tab === "dash" && <Dashboard d={d} setTab={setTab} />}
+        {tab === "dash" && <Dashboard d={d} setD={setD} config={config} setTab={setTab} />}
         {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onConnect={connectBank} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
         {tab === "budget" && <Budget d={d} setD={setD} config={config} />}
         {tab === "invest" && <Invest d={d} setD={setD} config={config} />}
@@ -1587,6 +1599,91 @@ function FinanceHQ({ config }) {
   );
 }
 
+/* ---------------- transfers + auto-categorization ----------------
+   Mirrors of the server-side logic in server/index.js — keep the two in sync.
+   The server classifies NEW transactions at sync time; this covers everything
+   already on the books plus CSV imports. */
+
+const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|thank you.*payment|internet payment|e-?payment\b|\bepay\b|directpay/i;
+const CAT_RULES = [
+  [/kroger|trader joe|aldi|wal-?mart|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
+  [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
+  [/exxon|shell oil|chevron|texaco|citgo|valero|racetrac|quiktrip|\bqt\b|speedway|murphy usa|circle k|7-?eleven fuel|uber(?! ?eats)|lyft|parking|toll|jiffy lube|autozone|o'?reilly|discount tire|car wash/, "Transport"],
+  [/netflix|spotify|hulu|disney ?\+|hbo ?max|paramount|peacock|crunchyroll|youtube ?(premium|tv)|apple\.com\/bill|apple ?one|icloud|google ?(one|storage)|dropbox|adobe|microsoft 365|xbox game|playstation|nintendo|patreon|twitch|discord|cloudflare|github|godaddy|namecheap|\bvpn\b|audible|kindle unltd/, "Subscriptions"],
+  [/amazon|amzn|target\b|best buy|ebay|etsy|dollar (general|tree)|five below|ross store|tj ?maxx|marshalls|old navy|h&m\b|zara|nike|shein|temu|home depot|lowe'?s|ikea/, "Shopping"],
+  [/rent\b|apartment|property (mgmt|management)|landlord/, "Rent"],
+  [/gym|planet fitness|la fitness|ymca|crunch fitness|walgreens|cvs\b|rite aid|pharmacy|clinic|dental|doctor|hospital|urgent care|optical|optometr/, "Health"],
+  [/cinema|cinemark|\bamc\b|regal|steam(games| purchase)|steampowered|epic games|riot|blizzard|ticketmaster|stubhub|bowling|arcade|spotify concert|eventbrite/, "Fun"],
+];
+function buildMerchantMemory(txns, cats) {
+  const catIds = new Set((cats || []).map((c) => c.id));
+  const mem = {};
+  for (const t of txns) { // later (newer) categorizations overwrite older ones
+    if (t.kind === "out" && t.catId && catIds.has(t.catId) && t.note) {
+      const k = normMerchant(t.note);
+      if (k.length >= 3) mem[k] = t.catId;
+    }
+  }
+  return mem;
+}
+function autoCategorize(note, cats, memory) {
+  const key = normMerchant(note);
+  if (key && memory[key]) return memory[key];
+  const n = String(note || "").toLowerCase();
+  for (const [re, name] of CAT_RULES) {
+    if (re.test(n)) {
+      const c = (cats || []).find((x) => x.name.toLowerCase() === name.toLowerCase());
+      if (c) return c.id;
+    }
+  }
+  return "";
+}
+
+/* Find existing transactions that are almost certainly transfers:
+   keyword matches, inflows on debt accounts (card payments arriving), and
+   equal-and-opposite pairs across two accounts within 4 days. Manually
+   typed rows (kindSet) are never second-guessed. */
+function detectTransferCandidates(txns, accounts) {
+  const isDebtAcc = (id) => { const a = accounts.find((x) => x.id === id); return !!a && DEBT_TYPES.includes(a.type); };
+  const ids = new Set();
+  for (const t of txns) {
+    if (t.kind === "xfer" || t.kindSet) continue;
+    if (XFER_RE.test(t.note || "")) { ids.add(t.id); continue; }
+    if (t.kind === "in" && isDebtAcc(t.accountId)) ids.add(t.id);
+  }
+  const pool = txns.filter((t) => t.tellerId && !t.catId && !t.kindSet && !ids.has(t.id));
+  const ins = pool.filter((t) => t.kind === "in");
+  const used = new Set();
+  for (const o of pool) {
+    if (o.kind !== "out") continue;
+    const m = ins.find((i) => !used.has(i.id) && i.accountId !== o.accountId &&
+      Math.abs(Number(i.amount) - Number(o.amount)) < 0.005 &&
+      Math.abs(new Date(i.date) - new Date(o.date)) <= 4 * 864e5);
+    if (m) { ids.add(o.id); ids.add(m.id); used.add(m.id); }
+  }
+  return ids;
+}
+
+function TransferCleanup({ d, setD }) {
+  const ids = useMemo(() => detectTransferCandidates(d.txns, d.accounts), [d.txns, d.accounts]);
+  if (!ids.size) return null;
+  const total = d.txns.filter((t) => ids.has(t.id)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  return (
+    <div className="banner">
+      <b>{ids.size} likely transfer{ids.size === 1 ? "" : "s"} detected</b> — credit-card payments and moves between
+      your own accounts (~<b className="mono">{fmt(total)}</b>) are being counted as income and spending, inflating both.
+      Marking them as transfers keeps them in the ledger but out of the math. Anything mis-flagged can be flipped
+      back with the type dropdown in Budget.
+      <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 8 }}>
+        <button className="btn small primary" onClick={() => {
+          setD((p) => ({ ...p, txns: p.txns.map((t) => (ids.has(t.id) ? { ...t, kind: "xfer", kindSet: true } : t)) }));
+          toast("Marked " + ids.size + " transactions as transfers — income and spending are clean now.");
+        }}>Mark {ids.size} as transfers</button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- bank CSV import ---------------- */
 
 function BankImport({ d, setD, onClose }) {
@@ -1604,12 +1701,16 @@ function BankImport({ d, setD, onClose }) {
       const parsed = bankRows(String(reader.result));
       if (!parsed.length) { setErr("Couldn't find date/description/amount columns — is this a transaction export CSV from your bank?"); return; }
       const existing = new Set(d.txns.map((t) => t.date + "|" + t.amount + "|" + (t.note || "").toLowerCase()));
-      setRows(parsed.slice(0, 250).map((r) => ({
-        ...r,
-        include: !r.credit && !existing.has(r.date + "|" + r.amount + "|" + r.desc.toLowerCase()),
-        dup: existing.has(r.date + "|" + r.amount + "|" + r.desc.toLowerCase()),
-        catId: d.cats[0]?.id || "",
-      })));
+      const memory = buildMerchantMemory(d.txns, d.cats);
+      setRows(parsed.slice(0, 250).map((r) => {
+        const dup = existing.has(r.date + "|" + r.amount + "|" + r.desc.toLowerCase());
+        const xfer = !r.credit && XFER_RE.test(r.desc); // card payments / account moves — not spending
+        return {
+          ...r, dup, xfer,
+          include: !r.credit && !dup && !xfer,
+          catId: autoCategorize(r.desc, d.cats, memory) || d.cats[0]?.id || "",
+        };
+      }));
       setFname(file.name);
     };
     reader.readAsText(file);
@@ -1637,7 +1738,7 @@ function BankImport({ d, setD, onClose }) {
 
   const doImport = () => {
     const inc = rows.filter((r) => r.include);
-    setD((p) => ({ ...p, txns: [...p.txns, ...inc.map((r) => ({ id: uid(), date: r.date, catId: r.credit ? "" : r.catId, amount: r.amount, note: r.desc.slice(0, 60), kind: r.credit ? "in" : "out", accountId: acctId }))] }));
+    setD((p) => ({ ...p, txns: [...p.txns, ...inc.map((r) => ({ id: uid(), date: r.date, catId: r.credit || r.xfer ? "" : r.catId, amount: r.amount, note: r.desc.slice(0, 60), kind: r.credit ? "in" : r.xfer ? "xfer" : "out", accountId: acctId, kindSet: true }))] }));
     onClose(inc.length);
   };
 
@@ -1646,7 +1747,7 @@ function BankImport({ d, setD, onClose }) {
   return (
     <Modal title="Import bank CSV" onClose={() => onClose(0)}>
       <div className="note">
-        Works with transaction exports from Chase, Capital One, Fidelity, and most banks (download from your bank's website — usually under Activity → Download/Export → CSV). Payments and credits are excluded by default; nothing here ever asks for a login.
+        Works with transaction exports from Chase, Capital One, Fidelity, and most banks (download from your bank's website — usually under Activity → Download/Export → CSV). Credits, card payments, and transfers are excluded by default; nothing here ever asks for a login.
       </div>
       {!rows && (
         <div className="mrow" style={{ justifyContent: "flex-start" }}>
@@ -1679,8 +1780,8 @@ function BankImport({ d, setD, onClose }) {
               <div key={i} className="row" style={{ padding: "4px 0", borderBottom: "1px solid var(--line)", opacity: r.include ? 1 : 0.45 }}>
                 <input type="checkbox" checked={r.include} onChange={(e) => setRows((p) => p.map((x, j) => j === i ? { ...x, include: e.target.checked } : x))} />
                 <span className="mono" style={{ fontSize: 12, width: 44 }}>{r.date.slice(5)}</span>
-                <span style={{ flex: 1, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.desc}>{r.desc}{r.dup ? " ·dup" : ""}{r.credit ? " ·credit" : ""}</span>
-                <span className="mono" style={{ fontSize: 12.5 }}>{fmt(r.amount)}</span>
+                <span style={{ flex: 1, fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.desc}>{r.desc}{r.dup ? " ·dup" : ""}{r.credit ? " ·credit" : ""}{r.xfer ? " ·transfer" : ""}</span>
+                <span className="mono" style={{ fontSize: 12.5 }}>{fmt2(r.amount)}</span>
                 <select className="in" style={{ width: 110, padding: "2px 6px", fontSize: 12 }} value={r.catId}
                   onChange={(e) => setRows((p) => p.map((x, j) => j === i ? { ...x, catId: e.target.value } : x))}>
                   {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1721,7 +1822,7 @@ function Recurring({ d, setD }) {
               {r.watch && <span className="tag" style={{ marginLeft: 5 }} title="Shown in Upcoming bills; the actual charges come from bank sync / CSV import">watched</span>}
             </span>
             <span className="row" style={{ gap: 6 }}>
-              <span className="mono">{fmt(r.amount)}{(r.freq || "m") === "m" ? "/mo" : "/yr"}</span>
+              <span className="mono">{fmtAmt(r.amount)}{(r.freq || "m") === "m" ? "/mo" : "/yr"}</span>
               <button className="x" onClick={() => setD((p) => ({ ...p, recurring: p.recurring.filter((x) => x.id !== r.id) }))}>✕</button>
             </span>
           </div>
@@ -1768,7 +1869,7 @@ function detectSubscriptions(d) {
   const ignored = d.settings.subIgnore || [];
   const tracked = new Set(d.recurring.map((r) => normMerchant(r.name || d.cats.find((c) => c.id === r.catId)?.name || "")));
   const groups = {};
-  d.txns.filter((t) => t.kind !== "in" && !t.recId && t.note).forEach((t) => {
+  d.txns.filter((t) => t.kind === "out" && !t.recId && t.note).forEach((t) => {
     const k = normMerchant(t.note);
     if (k.length >= 3) (groups[k] = groups[k] || []).push(t);
   });
@@ -1809,7 +1910,7 @@ function SubscriptionRadar({ d, setD }) {
           <span className="k"><b style={{ color: "var(--text)" }}>{f.name}</b>
             <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · seen {f.count}× · ~day {f.day}</span></span>
           <span className="row" style={{ gap: 6 }}>
-            <span className="mono">{fmt(f.amount)}/mo</span>
+            <span className="mono">{fmtAmt(f.amount)}/mo</span>
             <button className="btn small" onClick={() => {
               setD((p) => ({ ...p, recurring: [...p.recurring, { id: uid(), name: f.name, catId: f.catId || p.cats[0]?.id || "", amount: f.amount, freq: "m", day: f.day, watch: true }] }));
               toast("Watching " + f.name + " — it's now under Recurring, and in Upcoming bills on the dashboard.");
@@ -2273,11 +2374,108 @@ function nextOccurrence(rec) {
   return d2;
 }
 
-function Dashboard({ d, setTab }) {
+/* ---------------- cash-flow Sankey ----------------
+   Income sources (left) → Cash → categories (right). "Kept" closes the loop when
+   income exceeds spending; "From savings" feeds the gap when it doesn't.
+   Node colors follow the entity: categories reuse their stable donut/budget color,
+   income is always green, deficits red. Labels live in text tokens, not series color. */
+
+function SankeyNode({ x, y, width, height, payload, containerWidth }) {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !payload) return null;
+  const right = x > containerWidth / 2;
+  const cy = y + height / 2;
+  return (
+    <Layer>
+      <Rectangle x={x} y={y} width={width} height={height} fill={payload.color} fillOpacity={0.95} radius={2} />
+      <text x={right ? x - 8 : x + width + 8} y={cy + 4} textAnchor={right ? "end" : "start"} fontSize={12.5} fill="var(--text)">
+        {payload.name}
+        <tspan dx={7} fontSize={11} fill="var(--muted)" fontFamily="'Spline Sans Mono',monospace">{fmtK(payload.value)}</tspan>
+      </text>
+    </Layer>
+  );
+}
+
+function SankeyLink(props) {
+  const { sourceX, targetX, sourceY, targetY, sourceControlX, targetControlX, linkWidth, payload } = props;
+  if (!Number.isFinite(sourceX)) return null;
+  /* inflows carry their source color (green/red), outflows their category color */
+  const color = (payload?.target?.name === "Cash" ? payload?.source?.color : payload?.target?.color) || "var(--line2)";
+  return (
+    <path d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
+      fill="none" stroke={color} strokeWidth={Math.max(1, linkWidth)} strokeOpacity={0.3} />
+  );
+}
+
+function CashFlow({ d, tx, income }) {
+  const { nodes, links } = useMemo(() => {
+    /* income side — top sources by merchant, from logged income transactions */
+    const srcTotals = {};
+    tx.filter((t) => t.kind === "in").forEach((t) => {
+      const k = titleCase(normMerchant(t.note)) || "Income";
+      srcTotals[k] = (srcTotals[k] || 0) + (Number(t.amount) || 0);
+    });
+    let sources = Object.entries(srcTotals).sort((a, b) => b[1] - a[1]);
+    if (sources.length > 4) sources = [...sources.slice(0, 4), ["Other income", sources.slice(4).reduce((s, x) => s + x[1], 0)]];
+    if (!sources.length && income > 0) sources = [["Income (Settings)", income]];
+    /* spending side — categories, colored exactly like Budget */
+    const catTotals = {};
+    tx.filter((t) => t.kind === "out").forEach((t) => {
+      const name = d.cats.find((c) => c.id === t.catId)?.name || "Uncategorized";
+      catTotals[name] = (catTotals[name] || 0) + (Number(t.amount) || 0);
+    });
+    let cats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+    if (cats.length > 7) cats = [...cats.slice(0, 6), ["Other", cats.slice(6).reduce((s, x) => s + x[1], 0)]];
+    const inTotal = sources.reduce((s, x) => s + x[1], 0);
+    const outTotal = cats.reduce((s, x) => s + x[1], 0);
+    const kept = inTotal - outTotal;
+    const flowsIn = sources.map(([n, v]) => ({ n, v, color: "var(--s3)" }));
+    if (kept < -0.005) flowsIn.push({ n: "From savings", v: -kept, color: "var(--red)" });
+    const flowsOut = cats.map(([n, v]) => ({
+      n, v,
+      color: n === "Uncategorized" || n === "Other" ? "var(--faint)" : seriesColor(d.cats.findIndex((c) => c.name === n)),
+    }));
+    if (kept > 0.005) flowsOut.push({ n: "Kept", v: kept, color: "var(--up)" });
+    const nodes = [], links = [];
+    flowsIn.forEach((f) => nodes.push({ name: f.n, color: f.color }));
+    const cashIdx = nodes.length;
+    nodes.push({ name: "Cash", color: "var(--acc)" });
+    flowsIn.forEach((f, i) => { if (f.v > 0.005) links.push({ source: i, target: cashIdx, value: Math.round(f.v * 100) / 100 }); });
+    flowsOut.forEach((f) => {
+      if (f.v <= 0.005) return;
+      const idx = nodes.length;
+      nodes.push({ name: f.n, color: f.color });
+      links.push({ source: cashIdx, target: idx, value: Math.round(f.v * 100) / 100 });
+    });
+    return { nodes, links };
+  }, [tx, d.cats, income]);
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+        <h3>Cash flow</h3>
+        <span className="note" style={{ margin: 0 }}>where money came from · where it went</span>
+      </div>
+      {links.length ? (
+        <div style={{ width: "100%", height: 330, marginTop: 8 }}>
+          <ResponsiveContainer>
+            <Sankey data={{ nodes, links }} node={<SankeyNode />} link={<SankeyLink />}
+              nodePadding={22} nodeWidth={10} margin={{ top: 14, right: 120, bottom: 14, left: 120 }}>
+              <Tooltip formatter={(v) => fmt2(v)}
+                contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 10, color: "var(--text)", fontSize: 13 }} />
+            </Sankey>
+          </ResponsiveContainer>
+        </div>
+      ) : <div className="note">Log income and spending (or run a sync) and the flow chart appears here.</div>}
+    </div>
+  );
+}
+
+function Dashboard({ d, setD, config, setTab }) {
   const [range, setRange] = useState("3m");
+  const [drill, setDrill] = useState(null); // "in" | "out" — tile drill-down
   const start = rangeStart(range);
   const tx = d.txns.filter((t) => (t.date || "") >= start);
-  const spend = tx.filter((t) => t.kind !== "in").reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const spend = tx.filter((t) => t.kind === "out").reduce((s, t) => s + (Number(t.amount) || 0), 0);
   const inSum = tx.filter((t) => t.kind === "in").reduce((s, t) => s + (Number(t.amount) || 0), 0);
   const monthsN = range === "m" ? 1 : range === "3m" ? 3 : range === "6m" ? 6 : range === "ytd" ? new Date().getMonth() + 1 : Math.max(1, new Set(d.txns.map((t) => (t.date || "").slice(0, 7))).size);
   const income = inSum > 0 ? inSum : (Number(d.settings.incomeMonthly) || 0) * monthsN;
@@ -2313,23 +2511,9 @@ function Dashboard({ d, setTab }) {
     months.push({
       m: MONTH_NAMES[dt.getMonth()].slice(0, 3),
       Income: Math.round(mIn > 0 ? mIn : Number(d.settings.incomeMonthly) || 0),
-      Spending: Math.round(mt.filter((t) => t.kind !== "in").reduce((s, t) => s + (Number(t.amount) || 0), 0)),
+      Spending: Math.round(mt.filter((t) => t.kind === "out").reduce((s, t) => s + (Number(t.amount) || 0), 0)),
     });
   }
-
-  /* category breakdown — color follows the CATEGORY (stable index in d.cats), never its rank */
-  const byCat = {};
-  tx.filter((t) => t.kind !== "in").forEach((t) => { byCat[t.catId] = (byCat[t.catId] || 0) + (Number(t.amount) || 0); });
-  const catRows = Object.entries(byCat)
-    .map(([id, v]) => ({
-      name: d.cats.find((c) => c.id === id)?.name || (id ? "?" : "Uncategorized"),
-      value: Math.round(v),
-      color: seriesColor(d.cats.findIndex((c) => c.id === id)),
-    }))
-    .sort((a, b) => b.value - a.value);
-  const donutData = catRows.length > 7
-    ? [...catRows.slice(0, 6), { name: "Other", value: catRows.slice(6).reduce((s, x) => s + x.value, 0), color: "var(--faint)" }]
-    : catRows;
 
   /* upcoming bills (30d) */
   const upcoming = d.recurring
@@ -2340,6 +2524,7 @@ function Dashboard({ d, setTab }) {
 
   return (
     <>
+      <TransferCleanup d={d} setD={setD} />
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
@@ -2385,7 +2570,8 @@ function Dashboard({ d, setTab }) {
       </div>
 
       <div className="grid4" style={{ marginTop: 16 }}>
-        <div className="card">
+        <div className="card" style={{ cursor: "pointer" }} role="button" tabIndex={0} title="Click for the full income history in this range"
+          onClick={() => setDrill("in")} onKeyDown={(e) => e.key === "Enter" && setDrill("in")}>
           <div className="note" style={{ margin: 0 }}>Income</div>
           <div className="big mono" style={{ fontSize: 22 }}>{fmt(income)}</div>
           <div style={{ margin: "4px 0 6px" }}><Spark data={months.map((m) => m.Income)} color="var(--s3)" /></div>
@@ -2393,7 +2579,8 @@ function Dashboard({ d, setTab }) {
             ? <Delta2 v={months[months.length - 1].Income - months[months.length - 2].Income} label={"vs " + months[months.length - 2].m} />
             : <span className="chip ghost">{inSum > 0 ? "logged" : "from Settings"}</span>}
         </div>
-        <div className="card">
+        <div className="card" style={{ cursor: "pointer" }} role="button" tabIndex={0} title="Click for the full spending history in this range"
+          onClick={() => setDrill("out")} onKeyDown={(e) => e.key === "Enter" && setDrill("out")}>
           <div className="note" style={{ margin: 0 }}>Spending</div>
           <div className="big mono" style={{ fontSize: 22 }}>{fmt(spend)}</div>
           <div style={{ margin: "4px 0 6px" }}><Spark data={months.map((m) => m.Spending)} color="var(--s8)" /></div>
@@ -2414,35 +2601,7 @@ function Dashboard({ d, setTab }) {
         </div>
       </div>
 
-      <div className="grid2" style={{ marginTop: 14 }}>
-        <div className="card">
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <h3>Income vs spending</h3>
-            <span className="row" style={{ gap: 12, fontSize: 12, color: "var(--muted)" }}>
-              <span className="row" style={{ gap: 5 }}><span className="dot" style={{ background: "var(--s3)" }} />Income</span>
-              <span className="row" style={{ gap: 5 }}><span className="dot" style={{ background: "var(--s8)" }} />Spending</span>
-            </span>
-          </div>
-          <div style={{ width: "100%", height: 210 }}>
-            <ResponsiveContainer>
-              <BarChart data={months} margin={{ top: 6, right: 6, left: -14, bottom: 0 }} barGap={2}>
-                <CartesianGrid stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="m" tick={{ fill: "var(--faint)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: "var(--faint)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <Tooltip cursor={{ fill: "var(--acc-soft)" }} contentStyle={{ background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 10, fontSize: 12 }} />
-                <Bar dataKey="Income" fill="var(--s3)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Spending" fill="var(--s8)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-        <div className="card">
-          <h3>Spending by category</h3>
-          {donutData.length
-            ? <div style={{ marginTop: 10 }}><Donut data={donutData} centerTop={fmt(spend)} centerBottom="spent" /></div>
-            : <div className="note">No spending logged in this range yet.</div>}
-        </div>
-      </div>
+      <CashFlow d={d} tx={tx} income={income} />
 
       <div className="grid2" style={{ marginTop: 16 }}>
         <div className="card">
@@ -2450,7 +2609,7 @@ function Dashboard({ d, setTab }) {
           {recent.length ? recent.map((t) => {
             const ci = d.cats.findIndex((c) => c.id === t.catId);
             const cn = d.cats[ci]?.name;
-            const color = t.kind === "in" ? "var(--s3)" : seriesColor(ci);
+            const color = t.kind === "in" ? "var(--s3)" : t.kind === "xfer" ? "var(--faint)" : seriesColor(ci);
             return (
               <div className="kv" key={t.id}>
                 <span className="row" style={{ gap: 10, flexWrap: "nowrap", overflow: "hidden" }}>
@@ -2459,11 +2618,13 @@ function Dashboard({ d, setTab }) {
                     <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titleCase(t.note) || cn || "—"}</span>
                     {t.kind === "in"
                       ? <span className="cat"><Icon k="dollar" size={12} color="var(--up)" /> Income</span>
+                      : t.kind === "xfer"
+                      ? <span className="cat" title="Between your own accounts — not counted as income or spending">⇄ Transfer</span>
                       : cn ? <CatChip name={cn} color={seriesColor(ci)} /> : <span className="cat">Uncategorized</span>}
                   </span>
                 </span>
                 <span style={{ textAlign: "right", flexShrink: 0 }}>
-                  <span className="mono" style={t.kind === "in" ? { color: "var(--up)" } : {}}>{t.kind === "in" ? "+" : "−"}{fmt(Number(t.amount))}</span>
+                  <span className="mono" style={t.kind === "in" ? { color: "var(--up)" } : t.kind === "xfer" ? { color: "var(--faint)" } : {}}>{t.kind === "in" ? "+" : t.kind === "xfer" ? "" : "−"}{fmt2(Number(t.amount))}</span>
                   <span className="note" style={{ display: "block", margin: 0, fontSize: 11 }}>{t.date}</span>
                 </span>
               </div>
@@ -2476,13 +2637,137 @@ function Dashboard({ d, setTab }) {
             <div className="kv" key={r.id}>
               <span className="k">{(r.name && r.name !== (d.cats.find((c) => c.id === r.catId)?.name) ? r.name : d.cats.find((c) => c.id === r.catId)?.name || "?")}
                 <span style={{ color: "var(--faint)", fontSize: 11.5 }}> · {MONTH_NAMES[when.getMonth()].slice(0, 3)} {when.getDate()}</span></span>
-              <span className="mono">{fmt(r.amount)}</span>
+              <span className="mono">{fmtAmt(r.amount)}</span>
             </div>
           )) : <div className="note">Nothing due — add recurring bills in Budget and they show here.</div>}
         </div>
       </div>
 
+      <AskAtlas d={d} config={config} />
+
+      {drill && (() => {
+        const rows = tx.filter((t) => t.kind === drill).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+        const total = rows.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+        const label = RANGES.find((x) => x[0] === range)[1];
+        return (
+          <Modal title={(drill === "in" ? "Income" : "Spending") + " — " + label.toLowerCase()} onClose={() => setDrill(null)}>
+            <div className="note" style={{ marginTop: 0 }}>
+              {rows.length} transaction{rows.length === 1 ? "" : "s"} · <b className="mono">{fmt2(total)}</b> total
+              {drill === "in" && inSum === 0 ? " — none logged; the tile shows your income from Settings." : ""}
+            </div>
+            <div style={{ maxHeight: 420, overflowY: "auto", marginTop: 8 }}>
+              {rows.map((t) => {
+                const cn = d.cats.find((c) => c.id === t.catId)?.name;
+                return (
+                  <div className="kv" key={t.id}>
+                    <span className="row" style={{ gap: 8, flexWrap: "nowrap", overflow: "hidden" }}>
+                      <span className="mono" style={{ fontSize: 12, color: "var(--faint)", flexShrink: 0 }}>{t.date}</span>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titleCase(t.note) || cn || "—"}</span>
+                      {cn && drill === "out" && <span className="tag" style={{ flexShrink: 0 }}>{cn}</span>}
+                      {t.accountId && <span className="tag" style={{ flexShrink: 0 }}>{(d.accounts.find((a) => a.id === t.accountId)?.name || "").slice(0, 16)}</span>}
+                    </span>
+                    <span className="mono" style={{ flexShrink: 0, color: drill === "in" ? "var(--up)" : "var(--text)" }}>{drill === "in" ? "+" : ""}{fmt2(Number(t.amount))}</span>
+                  </div>
+                );
+              })}
+              {!rows.length && <div className="note">Nothing logged in this range.</div>}
+            </div>
+          </Modal>
+        );
+      })()}
     </>
+  );
+}
+
+/* ---------------- Ask Atlas (dashboard assistant) ---------------- */
+
+/* Compact JSON snapshot of everything the app knows — monthly rollups keep the
+   prompt small even with years of history; recent transactions carry the detail. */
+function buildAskPrompt(d, hist, question) {
+  const catName = (id) => d.cats.find((c) => c.id === id)?.name || "";
+  const acctName = (id) => d.accounts.find((a) => a.id === id)?.name || "";
+  const months = {};
+  d.txns.forEach((t) => {
+    const m = (t.date || "").slice(0, 7);
+    if (!m) return;
+    const e = (months[m] = months[m] || { income: 0, spending: 0, byCat: {} });
+    if (t.kind === "in") e.income += Number(t.amount) || 0;
+    else if (t.kind === "out") {
+      e.spending += Number(t.amount) || 0;
+      const n = catName(t.catId) || "Uncategorized";
+      e.byCat[n] = Math.round((e.byCat[n] || 0) + (Number(t.amount) || 0));
+    }
+  });
+  const rollup = Object.fromEntries(Object.entries(months).sort((a, b) => a[0].localeCompare(b[0])).slice(-12)
+    .map(([m, v]) => [m, { income: Math.round(v.income), spending: Math.round(v.spending), byCat: v.byCat }]));
+  const start = dstr(new Date(Date.now() - 180 * 864e5));
+  const recent = d.txns.filter((t) => (t.date || "") >= start)
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 220)
+    .map((t) => [t.date, t.kind, Number(t.amount), catName(t.catId), (t.note || "").slice(0, 26), acctName(t.accountId).slice(0, 16)]);
+  const data = {
+    today: today(),
+    netWorth: netWorth(d.accounts),
+    accounts: d.accounts.map((a) => ({ name: a.name, type: a.type, balance: Math.round((Number(a.balance) || 0) * 100) / 100 })),
+    budgets: d.cats.map((c) => ({ name: c.name, monthlyLimit: Number(c.limit) || 0 })),
+    goals: d.goals.map((g) => ({ name: g.name, target: g.target, saved: g.accountId ? Number(d.accounts.find((a) => a.id === g.accountId)?.balance || 0) : g.current, monthlyContribution: g.monthly })),
+    recurringBills: d.recurring.map((r) => ({ name: r.name || catName(r.catId), amount: r.amount, freq: (r.freq || "m") === "m" ? "monthly" : "yearly" })),
+    holdings: d.invest.holdings.map((h) => ({ symbol: h.symbol, shares: h.shares })),
+    settings: { statedMonthlyTakeHome: d.settings.incomeMonthly, emergencyFundMonths: d.settings.efMonths, assumedReturnPct: d.settings.expReturn },
+    monthlyTotals: rollup,
+    recentTransactions: { columns: ["date", "kind(in|out|xfer)", "amount", "category", "note", "account"], rows: recent },
+  };
+  const convo = hist.map((h) => "Q: " + h.q + "\nA: " + h.a).join("\n");
+  return "You are Atlas, the built-in assistant of a self-hosted personal finance app. Below is this user's financial data as JSON. " +
+    "Amounts are USD. kind \"xfer\" is a transfer between the user's own accounts — already excluded from all income/spending totals.\n\n" +
+    JSON.stringify(data) +
+    (convo ? "\n\nEarlier in this conversation:\n" + convo : "") +
+    "\n\nQuestion: " + question +
+    "\n\nAnswer in plain text (no markdown), under 180 words, citing specific numbers from the data. Be direct and concrete. " +
+    "General financial education only — never recommend specific securities or products.";
+}
+
+function AskAtlas({ d, config }) {
+  const [q, setQ] = useState("");
+  const [hist, setHist] = useState([]); // [{q, a}] — last few exchanges ride along in the prompt
+  const [busy, setBusy] = useState(false);
+  if (!config?.aiEnabled) return null;
+  const ask = async (preset) => {
+    const question = (preset || q).trim();
+    if (!question || busy) return;
+    setBusy(true); setQ("");
+    try {
+      const a = (await callClaude(buildAskPrompt(d, hist, question))).trim();
+      setHist((p) => [...p.slice(-3), { q: question, a }]);
+    } catch (e) { toast("Ask failed — " + e.message, "err"); }
+    setBusy(false);
+  };
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+        <h3>Ask Atlas</h3>
+        <span className="note" style={{ margin: 0 }}>sends a compact summary of your data to Claude — nothing else</span>
+      </div>
+      {!hist.length && (
+        <div className="row" style={{ marginTop: 8 }}>
+          {["Summarize this month", "Where did my money go last month?", "What subscriptions am I paying for?", "How's my emergency fund?"].map((s) => (
+            <button key={s} className="btn small" disabled={busy} onClick={() => ask(s)}>{s}</button>
+          ))}
+        </div>
+      )}
+      {hist.map((h, i) => (
+        <div key={i} style={{ marginTop: 10 }}>
+          <div style={{ fontWeight: 600, fontSize: 13.5 }}>{h.q}</div>
+          <div className="aiout" style={{ marginTop: 6 }}>{h.a}</div>
+        </div>
+      ))}
+      <div className="row" style={{ marginTop: 10 }}>
+        <input className="in" style={{ flex: 1, minWidth: 200 }} placeholder="Ask anything about your money…"
+          value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask()} />
+        <button className="btn primary" disabled={busy || !q.trim()} onClick={() => ask()}>{busy ? "Thinking…" : "Ask"}</button>
+        {hist.length > 0 && <button className="btn" disabled={busy} onClick={() => setHist([])}>Clear</button>}
+      </div>
+      <div className="note">Answers come from the numbers in this app — educational, not financial advice.</div>
+    </div>
   );
 }
 
