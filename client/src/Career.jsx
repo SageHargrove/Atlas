@@ -48,36 +48,84 @@ const CLEARANCES = ["Not required", "Required", "Preferred", "Unsure"];
 const LOC_TYPES = ["Remote", "Hybrid", "Onsite"];
 const TIERS = ["1", "2", "3"];
 
+/* ---------------- the Habitat half ----------------
+   This tracker started life as "Habitat": it ranked cities by whether a partner
+   could work in zoos / aquariums / conservation, not just by what the security
+   job paid. That reason survived the port only as an accident — San Antonio,
+   Tampa, Omaha, Columbus, Toledo and Fort Wayne are already tier S/A here and
+   all of them are top-tier zoo cities, which is not a coincidence, it's the
+   original list with its reasoning stripped off.
+
+   `partner` puts the reasoning back: 3 = a nationally significant institution
+   or a cluster of them, 2 = a solid accredited zoo/aquarium, 1 = something but
+   thin, 0 = nothing meaningful. `orgs` names them, because "Omaha: 3" is
+   useless and "Omaha: Henry Doorly Zoo & Aquarium" is an actual lead.
+
+   AZA accreditation is the line used for "solid" — it's the credential that
+   industry actually hires against. */
 const DEFAULT_CITIES = [
-  { name: "San Antonio", tier: "S", col: 91 }, { name: "Tampa", tier: "S", col: 97 },
-  { name: "Dallas", tier: "A", col: 99 }, { name: "Fort Worth", tier: "A", col: 96 },
-  { name: "DFW", tier: "A", col: 98 }, { name: "Orlando", tier: "A", col: 99 },
-  { name: "Houston", tier: "A", col: 94 }, { name: "Little Rock", tier: "A", col: 86 },
-  { name: "Washington DC", tier: "B", col: 140 }, { name: "Arlington VA", tier: "B", col: 145 },
-  { name: "Columbus", tier: "B", col: 92 }, { name: "St. Louis", tier: "B", col: 88 },
-  { name: "Jacksonville", tier: "B", col: 93 }, { name: "Atlanta", tier: "C", col: 99 },
-  { name: "Cincinnati", tier: "C", col: 91 }, { name: "Omaha", tier: "C", col: 90 },
-  { name: "Miami", tier: "C", col: 117 }, { name: "Seattle", tier: "C", col: 150 },
-  { name: "Bay Area", tier: "C", col: 180 }, { name: "New York", tier: "C", col: 168 },
-  { name: "San Diego", tier: "A", col: 144 }, { name: "Chicago", tier: "A", col: 107 },
-  { name: "Oklahoma City", tier: "A", col: 86 }, { name: "Wichita", tier: "A", col: 84 },
-  { name: "Indianapolis", tier: "A", col: 92 }, { name: "Minneapolis", tier: "A", col: 100 },
-  { name: "Toledo", tier: "A", col: 84 }, { name: "Colorado Springs", tier: "B", col: 102 },
-  { name: "Denver", tier: "B", col: 111 }, { name: "Phoenix", tier: "B", col: 104 },
-  { name: "Tucson", tier: "B", col: 93 }, { name: "Albuquerque", tier: "B", col: 92 },
-  { name: "Tulsa", tier: "B", col: 85 }, { name: "Kansas City", tier: "B", col: 92 },
-  { name: "Memphis", tier: "B", col: 85 }, { name: "Nashville", tier: "B", col: 100 },
-  { name: "Knoxville", tier: "B", col: 89 }, { name: "Louisville", tier: "B", col: 91 },
-  { name: "Cleveland", tier: "B", col: 89 }, { name: "Detroit", tier: "B", col: 91 },
-  { name: "Pittsburgh", tier: "B", col: 93 }, { name: "Philadelphia", tier: "B", col: 104 },
-  { name: "Baltimore", tier: "B", col: 106 }, { name: "Greensboro", tier: "B", col: 90 },
-  { name: "Columbia SC", tier: "B", col: 89 }, { name: "Salt Lake City", tier: "B", col: 108 },
-  { name: "Portland", tier: "B", col: 116 }, { name: "Milwaukee", tier: "B", col: 95 },
-  { name: "Providence", tier: "B", col: 112 }, { name: "Fort Wayne", tier: "B", col: 84 },
-  { name: "Fresno", tier: "B", col: 100 }, { name: "Boston", tier: "B", col: 148 },
-  { name: "Los Angeles", tier: "B", col: 148 }, { name: "Austin", tier: "A", col: 103 },
-  { name: "Ruston", tier: "A", col: 84 },
+  { name: "San Antonio", tier: "S", col: 91, partner: 3, orgs: "San Antonio Zoo · SeaWorld · Natural Bridge Wildlife Ranch" },
+  { name: "Tampa", tier: "S", col: 97, partner: 3, orgs: "ZooTampa at Lowry Park · Florida Aquarium · Busch Gardens" },
+  { name: "Dallas", tier: "A", col: 99, partner: 3, orgs: "Dallas Zoo · Dallas World Aquarium · Perot Museum" },
+  { name: "Fort Worth", tier: "A", col: 96, partner: 3, orgs: "Fort Worth Zoo (consistently top-5 nationally) · Botanic Garden" },
+  { name: "DFW", tier: "A", col: 98, partner: 3, orgs: "Both Dallas and Fort Worth institutions in commuting range" },
+  { name: "Orlando", tier: "A", col: 99, partner: 3, orgs: "Disney's Animal Kingdom · SeaWorld · Central Florida Zoo" },
+  { name: "Houston", tier: "A", col: 94, partner: 3, orgs: "Houston Zoo · Downtown Aquarium · Moody Gardens (Galveston)" },
+  { name: "Little Rock", tier: "A", col: 86, partner: 2, orgs: "Little Rock Zoo (AZA)" },
+  { name: "Washington DC", tier: "B", col: 140, partner: 3, orgs: "Smithsonian National Zoo & Conservation Biology Institute · WWF · NatGeo" },
+  { name: "Arlington VA", tier: "B", col: 145, partner: 3, orgs: "Same DC institutions · Conservation International · NFWF" },
+  { name: "Columbus", tier: "B", col: 92, partner: 3, orgs: "Columbus Zoo & Aquarium (national profile) · The Wilds" },
+  { name: "St. Louis", tier: "B", col: 88, partner: 3, orgs: "Saint Louis Zoo (free admission, world-class) · Missouri Botanical Garden" },
+  { name: "Jacksonville", tier: "B", col: 93, partner: 2, orgs: "Jacksonville Zoo & Gardens (AZA)" },
+  { name: "Atlanta", tier: "C", col: 99, partner: 3, orgs: "Zoo Atlanta · Georgia Aquarium (largest in the US)" },
+  { name: "Cincinnati", tier: "C", col: 91, partner: 3, orgs: "Cincinnati Zoo & Botanical Garden (CREW research center)" },
+  { name: "Omaha", tier: "C", col: 90, partner: 3, orgs: "Henry Doorly Zoo & Aquarium — often ranked #1 in the US" },
+  { name: "Miami", tier: "C", col: 117, partner: 3, orgs: "Zoo Miami · Frost Science · Everglades restoration work" },
+  { name: "Seattle", tier: "C", col: 150, partner: 3, orgs: "Woodland Park Zoo · Seattle Aquarium · NOAA Fisheries" },
+  { name: "Bay Area", tier: "C", col: 180, partner: 3, orgs: "Monterey Bay Aquarium · SF Zoo · Oakland Zoo · CA Academy of Sciences" },
+  { name: "New York", tier: "C", col: 168, partner: 3, orgs: "Bronx Zoo / WCS HQ · NY Aquarium · AMNH" },
+  { name: "San Diego", tier: "A", col: 144, partner: 3, orgs: "San Diego Zoo Wildlife Alliance · Safari Park · Birch Aquarium" },
+  { name: "Chicago", tier: "A", col: 107, partner: 3, orgs: "Lincoln Park Zoo · Brookfield Zoo · Shedd Aquarium · Field Museum" },
+  { name: "Oklahoma City", tier: "A", col: 86, partner: 2, orgs: "OKC Zoo & Botanical Garden (AZA)" },
+  { name: "Wichita", tier: "A", col: 84, partner: 2, orgs: "Sedgwick County Zoo (AZA, strong for its market size)" },
+  { name: "Indianapolis", tier: "A", col: 92, partner: 3, orgs: "Indianapolis Zoo (only US zoo accredited as zoo + aquarium + garden)" },
+  { name: "Minneapolis", tier: "A", col: 100, partner: 2, orgs: "Minnesota Zoo · Como Park Zoo" },
+  { name: "Toledo", tier: "A", col: 84, partner: 3, orgs: "Toledo Zoo & Aquarium — repeatedly top-ranked, very low cost of living" },
+  { name: "Colorado Springs", tier: "B", col: 102, partner: 2, orgs: "Cheyenne Mountain Zoo (AZA)" },
+  { name: "Denver", tier: "B", col: 111, partner: 3, orgs: "Denver Zoo · Downtown Aquarium · Butterfly Pavilion" },
+  { name: "Phoenix", tier: "B", col: 104, partner: 2, orgs: "Phoenix Zoo · Desert Botanical Garden" },
+  { name: "Tucson", tier: "B", col: 93, partner: 3, orgs: "Arizona-Sonora Desert Museum (nationally regarded) · Reid Park Zoo" },
+  { name: "Albuquerque", tier: "B", col: 92, partner: 2, orgs: "ABQ BioPark — zoo, aquarium and botanic garden in one employer" },
+  { name: "Tulsa", tier: "B", col: 85, partner: 2, orgs: "Tulsa Zoo (AZA)" },
+  { name: "Kansas City", tier: "B", col: 92, partner: 2, orgs: "Kansas City Zoo & Aquarium (AZA)" },
+  { name: "Memphis", tier: "B", col: 85, partner: 3, orgs: "Memphis Zoo (AZA, giant panda program history)" },
+  { name: "Nashville", tier: "B", col: 100, partner: 2, orgs: "Nashville Zoo at Grassmere (AZA)" },
+  { name: "Knoxville", tier: "B", col: 89, partner: 2, orgs: "Zoo Knoxville · Ripley's Aquarium (Gatlinburg)" },
+  { name: "Louisville", tier: "B", col: 91, partner: 2, orgs: "Louisville Zoo (AZA)" },
+  { name: "Cleveland", tier: "B", col: 89, partner: 3, orgs: "Cleveland Metroparks Zoo · Greater Cleveland Aquarium" },
+  { name: "Detroit", tier: "B", col: 91, partner: 3, orgs: "Detroit Zoo (AZA, strong welfare-science reputation) · Belle Isle Aquarium" },
+  { name: "Pittsburgh", tier: "B", col: 93, partner: 3, orgs: "Pittsburgh Zoo & Aquarium · National Aviary" },
+  { name: "Philadelphia", tier: "B", col: 104, partner: 3, orgs: "Philadelphia Zoo (oldest in the US) · Adventure Aquarium · Academy of Natural Sciences" },
+  { name: "Baltimore", tier: "B", col: 106, partner: 3, orgs: "National Aquarium · Maryland Zoo" },
+  { name: "Greensboro", tier: "B", col: 90, partner: 2, orgs: "NC Zoo (Asheboro, ~30 min) — one of the largest natural-habitat zoos" },
+  { name: "Columbia SC", tier: "B", col: 89, partner: 3, orgs: "Riverbanks Zoo & Garden (AZA, consistently well-rated)" },
+  { name: "Salt Lake City", tier: "B", col: 108, partner: 2, orgs: "Hogle Zoo · Loveland Living Planet Aquarium" },
+  { name: "Portland", tier: "B", col: 116, partner: 2, orgs: "Oregon Zoo (AZA)" },
+  { name: "Milwaukee", tier: "B", col: 95, partner: 2, orgs: "Milwaukee County Zoo (AZA)" },
+  { name: "Providence", tier: "B", col: 112, partner: 1, orgs: "Roger Williams Park Zoo · Mystic Aquarium is ~1 hr" },
+  { name: "Fort Wayne", tier: "B", col: 84, partner: 3, orgs: "Fort Wayne Children's Zoo — top-ranked, and the cheapest city on this list" },
+  { name: "Fresno", tier: "B", col: 100, partner: 2, orgs: "Fresno Chaffee Zoo (AZA)" },
+  { name: "Boston", tier: "B", col: 148, partner: 3, orgs: "New England Aquarium · Franklin Park Zoo · NOAA / WHOI nearby" },
+  { name: "Los Angeles", tier: "B", col: 148, partner: 3, orgs: "LA Zoo · Aquarium of the Pacific · Natural History Museum" },
+  { name: "Austin", tier: "A", col: 103, partner: 1, orgs: "Austin Zoo (rescue, small) · Austin Aquarium — thin market" },
+  { name: "Ruston", tier: "A", col: 84, partner: 0, orgs: "Nothing local — nearest is Shreveport or Monroe" },
 ];
+
+/* AZA members hire from a national pool and post to one board, so this is the
+   single most useful link for the other half of the search. */
+const AZA_JOBS = "https://www.aza.org/jobs";
+const partnerLabel = (n) => (n >= 3 ? "Excellent" : n === 2 ? "Solid" : n === 1 ? "Thin" : "None");
+const partnerColor = (n) => (n >= 3 ? "var(--up)" : n === 2 ? "var(--acc)" : n === 1 ? "var(--gold)" : "var(--down)");
 
 /* [company, tier, clearance, expected comp, city, locType?] */
 const SEED = [
@@ -870,6 +918,108 @@ function ResumeCard({ S, setCareer, config, toast, apps }) {
   );
 }
 
+/* The original Habitat question, restored: not "where can I get hired" but
+   "where can we BOTH get hired, and what is left over after rent." A city only
+   counts if it clears both bars, so a $95k offer in a city where the other
+   person has nothing to apply to ranks below a $70k one where they do. */
+function TwoCareerCities({ S, apps, setCareer }) {
+  const [minPartner, setMinPartner] = useState(2);
+  const [open, setOpen] = useState(false);
+
+  const rows = useMemo(() => {
+    /* what you could actually earn there, from your own tracked targets */
+    const byCity = {};
+    for (const a of apps) {
+      if (a.status === "Rejected" || a.status === "Withdrawn") continue;
+      const m = cityMatch(a.city, S.cities);
+      if (!m) continue;
+      const t = totalComp(a);
+      if (t == null) continue;
+      (byCity[m.name] ||= []).push({ comp: t, company: a.company });
+    }
+    return S.cities
+      .filter((c) => (c.partner ?? 0) >= minPartner)
+      .map((c) => {
+        const mine = (byCity[c.name] || []).sort((x, y) => y.comp - x.comp);
+        const best = mine[0] || null;
+        /* adjusted to your home cost of living so the numbers are comparable */
+        const adj = best ? Math.round(best.comp / (c.col / 100)) : null;
+        return { ...c, targets: mine.length, best, adj };
+      })
+      .sort((a, b) => (b.adj || 0) - (a.adj || 0) || (b.partner - a.partner) || (a.col - b.col));
+  }, [S.cities, apps, minPartner]);
+
+  const withTargets = rows.filter((r) => r.targets > 0);
+  const show = open ? rows : rows.slice(0, 8);
+
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3>Where you could both work</h3>
+        <a className="btn small" href={AZA_JOBS} target="_blank" rel="noreferrer noopener">AZA job board</a>
+      </div>
+      <div className="note" style={{ marginTop: 0 }}>
+        Ranked by what your best tracked target there pays after cost of living, but only showing cities
+        where the zoo / aquarium / conservation side is real. A city you can't both work in isn't an option,
+        however good the salary looks.
+      </div>
+
+      <div className="row" style={{ marginTop: 10 }}>
+        <span className="note" style={{ margin: 0 }}>Partner-side market at least</span>
+        <select className="in" style={{ width: 150 }} value={minPartner} onChange={(e) => setMinPartner(Number(e.target.value))}>
+          <option value={3}>Excellent only</option>
+          <option value={2}>Solid or better</option>
+          <option value={1}>Anything at all</option>
+          <option value={0}>Show every city</option>
+        </select>
+        <span className="note" style={{ margin: 0 }}>
+          {rows.length} cities · {withTargets.length} where you already track a target
+        </span>
+      </div>
+
+      <div className="hscroll" style={{ marginTop: 8 }}>
+        <table className="tbl" style={{ minWidth: 620 }}>
+          <thead>
+            <tr>
+              <th>City</th><th>Their side</th><th style={{ textAlign: "right" }}>COL</th>
+              <th style={{ textAlign: "right" }}>Your best target</th><th style={{ textAlign: "right" }}>Adjusted</th>
+            </tr>
+          </thead>
+          <tbody>
+            {show.map((c) => (
+              <tr key={c.name}>
+                <td>
+                  <b>{c.name}</b>
+                  <div className="note" style={{ margin: 0, fontSize: 11, maxWidth: 300 }}>{c.orgs || "—"}</div>
+                </td>
+                <td><span className="tag" style={{ color: partnerColor(c.partner), borderColor: partnerColor(c.partner) }}>{partnerLabel(c.partner)}</span></td>
+                <td className="mono" style={{ textAlign: "right", color: c.col <= 95 ? "var(--up)" : c.col >= 130 ? "var(--down)" : undefined }}>{c.col}</td>
+                <td style={{ textAlign: "right" }}>
+                  {c.best ? <><span className="mono">{money(c.best.comp)}</span>
+                    <div className="note" style={{ margin: 0, fontSize: 11 }}>{c.best.company}{c.targets > 1 ? " +" + (c.targets - 1) : ""}</div></>
+                    : <span className="note" style={{ margin: 0 }}>nothing tracked</span>}
+                </td>
+                <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{c.adj ? money(c.adj) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > 8 && (
+        <button className="btn small" style={{ marginTop: 8 }} onClick={() => setOpen((v) => !v)}>
+          {open ? "Show fewer" : "Show all " + rows.length}
+        </button>
+      )}
+      {!withTargets.length && (
+        <div className="note">
+          None of your tracked targets sit in these cities yet — <b>Load starter targets</b>, or add a company
+          in one of them, and this table starts comparing real money instead of just cost of living.
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* What an offer actually does to your money — the reason this lives in Atlas */
 function OfferImpact({ app, d, S, onClose }) {
   const gross = totalComp(app);
@@ -923,9 +1073,22 @@ function OfferImpact({ app, d, S, onClose }) {
   );
 }
 
+/* A city list saved before the Habitat data existed overrides the default wholesale
+   and would come back with no partner info at all. Fill the new fields in by name
+   without touching anything the user edited (their own col/tier stay theirs). */
+function withPartnerData(cities) {
+  if (!Array.isArray(cities) || !cities.length) return DEFAULT_CITIES;
+  return cities.map((c) => {
+    if (c.partner != null) return c;
+    const d = DEFAULT_CITIES.find((x) => x.name.toLowerCase() === String(c.name || "").toLowerCase());
+    return d ? { ...c, partner: d.partner, orgs: d.orgs } : { ...c, partner: 0, orgs: "" };
+  });
+}
+
 export default function Career({ d, setD, config, toast }) {
   const career = d.career || DEFAULT_CAREER;
-  const S = { ...DEFAULT_CAREER.settings, ...(career.settings || {}) };
+  const S0 = { ...DEFAULT_CAREER.settings, ...(career.settings || {}) };
+  const S = { ...S0, cities: withPartnerData(S0.cities) };
   const apps = career.apps || [];
 
   const [editing, setEditing] = useState(null);
@@ -1077,6 +1240,7 @@ export default function Career({ d, setD, config, toast }) {
         const t = effTier(a, S);
         const adj = adjComp(a, S);
         const dest = findDest(a);
+        const home = cityMatch(a.city, S.cities);
         return (
           <div className="card" key={a.id} style={{ marginTop: 8, padding: "12px 16px" }}>
             <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
@@ -1087,12 +1251,19 @@ export default function Career({ d, setD, config, toast }) {
                   <span className="tag">Tier {t}</span>
                   {a.fitScore != null && <span className="tag" style={{ color: FIT_CLR[a.fitLabel] }}>{a.fitScore}/10</span>}
                 </span>
-                <span className="note" style={{ margin: 0, fontSize: 12 }}>
+                <span className="note" style={{ display: "block", margin: 0, fontSize: 12 }}>
                   {a.role} · {a.locationType === "Remote" ? "Remote" : a.city || "city TBD"}
                   {f.fit ? <span className="good"> · fits{f.cityTier ? " (" + f.cityTier + ")" : ""}</span> : <span className="bad"> · outside your cities</span>}
                   {a.clearance === "Required" && " · clearance"}
                   {a.window && " · " + a.window}
                 </span>
+                {/* an onsite job in a city with nothing for the other half of the
+                    household is a worse offer than its salary suggests */}
+                {home && a.locationType !== "Remote" && (
+                  <span className="note" style={{ display: "block", margin: 0, fontSize: 11.5, color: partnerColor(home.partner) }}>
+                    Their side: {partnerLabel(home.partner)}{home.orgs ? " — " + home.orgs : ""}
+                  </span>
+                )}
               </span>
               <span className="row" style={{ gap: 8, flexShrink: 0 }}>
                 <span style={{ textAlign: "right" }}>
@@ -1124,6 +1295,8 @@ export default function Career({ d, setD, config, toast }) {
           </button>
         </div>
       )}
+
+      <TwoCareerCities S={S} apps={apps} setCareer={setCareer} />
 
       <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps} />
 

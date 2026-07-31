@@ -319,6 +319,11 @@ const CSS = `
 }
 /* wide charts scroll inside their own card on phones — never the whole page */
 .fh .hscroll{ overflow-x:auto; max-width:100%; -webkit-overflow-scrolling:touch; }
+.fh .tbl{ width:100%; border-collapse:collapse; font-size:13px; }
+.fh .tbl th{ text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); font-weight:600; padding:6px 10px 6px 0; border-bottom:1px solid var(--line); white-space:nowrap; }
+.fh .tbl td{ padding:8px 10px 8px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+.fh .tbl tbody tr:last-child td{ border-bottom:none; }
+.fh .tbl tbody tr:hover{ background:var(--panel2); }
 .fh .swipehint{ text-align:right; margin-top:2px; font-size:11.5px; color:var(--faint); animation:nudge 1.6s ease-in-out 3; }
 @keyframes nudge{ 0%,100%{ transform:none; } 50%{ transform:translateX(5px); } }
 /* installed to the home screen: clear the notch / status bar and the home indicator */
@@ -1298,6 +1303,9 @@ function SecurityModal({ onClose }) {
   const [busy, setBusy] = useState(false);
   const [pw, setPw] = useState({ current: "", next: "" });
   const [pwMsg, setPwMsg] = useState("");
+  const [delOpen, setDelOpen] = useState(false);
+  const [del, setDel] = useState({ username: "", password: "" });
+  const [delMsg, setDelMsg] = useState("");
   const changePw = async () => {
     setPwMsg("");
     if (pw.next.length < 8) return setPwMsg("New password must be at least 8 characters.");
@@ -1334,6 +1342,20 @@ function SecurityModal({ onClose }) {
     await fetch("/api/logout-all", { method: "POST" }); setMsg("All other sessions signed out."); load();
   };
   const logout = async () => { await fetch("/api/logout", { method: "POST" }); location.reload(); };
+
+  /* Two independent confirmations — the typed username and the password — because
+     unlike everything else in this app, there is nothing to undo this with. */
+  const deleteAccount = async () => {
+    setDelMsg(""); setBusy(true);
+    try {
+      const r = await fetch("/api/account/delete", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(del),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setDelMsg(j.error || "Could not delete the account."); setBusy(false); return; }
+      location.reload(); // the session cookie is already cleared; this lands on the sign-in screen
+    } catch (e) { setDelMsg("Could not reach the server — nothing was deleted."); setBusy(false); }
+  };
 
   return (
     <Modal title="Security" onClose={onClose}>
@@ -1412,6 +1434,37 @@ function SecurityModal({ onClose }) {
       ) : <div className="note">No sign-ins recorded yet.</div>}
 
       {msg && <div className="note" style={{ color: "var(--acc)" }}>{msg}</div>}
+
+      <label className="f" style={{ marginTop: 18, color: "var(--down)" }}>Delete this account</label>
+      {!delOpen ? (
+        <div className="row">
+          <div className="note" style={{ margin: 0, flex: 1, minWidth: 180 }}>
+            Removes your account, every transaction, and every stored resume PDF. There is no undo —
+            the nightly encrypted backup is the only copy afterwards, and it rotates out within a week.
+          </div>
+          <button className="btn small danger" onClick={() => setDelOpen(true)}>Delete account…</button>
+        </div>
+      ) : (
+        <div className="card" style={{ borderColor: "var(--down)", marginTop: 6 }}>
+          <div className="note" style={{ marginTop: 0 }}>
+            <b>Export your data first if you might want it.</b> Settings → Export gives you transactions as
+            CSV and everything as JSON. Resume PDFs are not in that export — download them from Career first.
+          </div>
+          <label className="f">Type your username to confirm</label>
+          <input className="in" autoComplete="off" value={del.username}
+            onChange={(e) => setDel((p) => ({ ...p, username: e.target.value }))} />
+          <label className="f">Your password</label>
+          <input className="in" type="password" autoComplete="current-password" value={del.password}
+            onChange={(e) => setDel((p) => ({ ...p, password: e.target.value }))} />
+          {delMsg && <div className="note bad">{delMsg}</div>}
+          <div className="mrow">
+            <button className="btn" onClick={() => { setDelOpen(false); setDel({ username: "", password: "" }); setDelMsg(""); }}>Cancel</button>
+            <button className="btn danger" disabled={busy || !del.username.trim() || !del.password}
+              onClick={deleteAccount}>{busy ? "Deleting…" : "Permanently delete"}</button>
+          </div>
+        </div>
+      )}
+
       <div className="mrow" style={{ justifyContent: "space-between", marginTop: 16 }}>
         <button className="btn danger" onClick={logoutAll}>Sign out all other devices</button>
         <div className="row">

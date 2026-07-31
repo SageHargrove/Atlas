@@ -146,6 +146,22 @@ false-matching (`"LA"` matching Dallas, `"York"` matching New York).
   Bank tokens are never included — they never leave the server at all.
 - **Change password** (Security panel): requires the current password and
   signs out every other device.
+- **Delete account** (Security panel): requires your password *and* your username
+  typed back. Removes the user record first — so the data is unreachable the
+  instant that write lands — then the data file and every resume PDF. There is no
+  undo; export from Settings first if you might want it.
+
+## Where you could both work (Career tab)
+This tracker started as **Habitat**: it ranked cities by whether a partner could
+work in zoos, aquariums, or conservation — not just by what the security job paid.
+Every city carries that back now: a partner-market rating and the institutions by
+name (Omaha → Henry Doorly; Toledo → Toledo Zoo & Aquarium; Columbia SC →
+Riverbanks). Cities are ranked by what your best tracked target there pays *after*
+cost of living, filtered to places where the other half of the search is real.
+A $125k Bay Area job ranks below a $72k Toledo one, because $125k at COL 180 is
+$69k adjusted and $72k at COL 84 is $86k — and Toledo has a top-ranked zoo.
+Each application also shows the partner market for its city, since an onsite
+offer somewhere only one of you can work is worse than its salary suggests.
 
 ## Resumes and cover letters (Career tab)
 - Up to **five resumes**, each its own tab with its own stored PDF, its own

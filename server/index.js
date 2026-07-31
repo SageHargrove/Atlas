@@ -318,6 +318,48 @@ app.post("/api/password", auth, authLimiter, async (req, res) => {
   res.json({ ok: true });
 });
 
+/* Delete the account and everything attached to it. Requires the current
+   password AND the username typed back, because this is the one action in the
+   app with no undo — the encrypted nightly backup is the only copy afterwards,
+   and it rotates out in a week.
+
+   The user record goes first on purpose: with no record, no session can ever
+   name those files again, so the data is unreachable the instant that write
+   lands even if the unlinks below fail. Password sign-in being switched off
+   does not remove the hash, so this works for passkey-only accounts too. */
+app.post("/api/account/delete", auth, authLimiter, async (req, res) => {
+  const confirm = String(req.body?.username || "").trim().toLowerCase();
+  if (confirm !== String(req.user.username || "").toLowerCase())
+    return res.status(400).json({ error: "Type your username exactly to confirm." });
+  const h = hashPw(String(req.body?.password || ""), req.user.salt);
+  try { if (!crypto.timingSafeEqual(Buffer.from(h), Buffer.from(req.user.hash))) return res.status(401).json({ error: "Password is wrong" }); }
+  catch { return res.status(401).json({ error: "Password is wrong" }); }
+
+  const uid = req.user.id;
+  try {
+    await updateUsers((all) => {
+      const i = all.findIndex((x) => x.id === uid);
+      if (i !== -1) all.splice(i, 1);
+    });
+  } catch (e) {
+    console.error("account delete failed:", e.message);
+    return res.status(500).json({ error: "Could not delete the account — nothing was removed." });
+  }
+
+  /* Best effort from here: the account is already gone. Anything left behind is
+     unreachable, but it is still your name and your balances sitting on a disk,
+     so a failure gets logged loudly rather than swallowed. */
+  const leftovers = [];
+  const tryRm = (p) => { try { fs.rmSync(p, { force: true }); } catch (e) { leftovers.push(path.basename(p) + " (" + e.code + ")"); } };
+  tryRm(dataPath(uid));
+  tryRm(dataPath(uid) + ".tmp");
+  for (let s = 1; s <= MAX_RESUME_SLOTS; s++) { tryRm(resumePath(uid, s)); tryRm(resumePath(uid, s) + ".tmp"); }
+  if (leftovers.length) console.error("account " + uid + " deleted but files remain:", leftovers.join(", "));
+
+  res.clearCookie("cache_session", { httpOnly: true, sameSite: "lax", secure: !!process.env.FORCE_SECURE_COOKIE, path: "/" });
+  res.json({ ok: true, filesRemaining: leftovers.length });
+});
+
 /* ---------------- passkeys (WebAuthn) ---------------- */
 const challenges = new Map(); // short-lived ceremony challenges: key -> { challenge, exp }
 const putChallenge = (k, ch) => challenges.set(k, { challenge: ch, exp: Date.now() + 5 * 60 * 1000 });
