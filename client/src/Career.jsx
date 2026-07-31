@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, parseWindow, absMonth } from "./careerData.js";
+import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, parseWindow, absMonth,
+  offerValue, baseToMatch, PENSION_DEFAULT_PCT, MARKET_PREMIUM } from "./careerData.js";
 import JobFinder, { guessMyLevel, yearsFromResume, LEVELS } from "./JobFinder.jsx";
 import Projects, { projectsBrief } from "./Projects.jsx";
 import Timeline, { compoundGap } from "./Timeline.jsx";
@@ -1022,6 +1023,101 @@ function TwoCareerCities({ S, apps, setCareer }) {
   );
 }
 
+/* The offer you already have, priced properly.
+
+   A base salary is not an offer. A utility's $67k with a company-paid pension,
+   a 4.75% match and insurance at a third of market is not beaten by a $75k
+   consultancy — but the opposite error is just as easy, and worse: counting a
+   pension you'll never vest in. So the vest horizon is an input, and the number
+   changes when you change your mind about how long you'd stay. */
+function FloorOffer({ S, setCareer }) {
+  const f = S.floorOffer || {};
+  const set = (k, v) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), [k]: v } } }));
+  const num = (k) => (e) => set(k, e.target.value === "" ? null : Number(e.target.value));
+  const col = cityMatch(f.city, S.cities)?.col || (f.remote ? (S.remoteCol || 90) : 100);
+  const v = offerValue({ ...f, col });
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <label className="f" style={{ marginTop: 0 }}>Your floor — the offer you're confident of</label>
+        {v && <button className="btn small" onClick={() => setOpen((x) => !x)}>{open ? "Hide the maths" : "Show the maths"}</button>}
+      </div>
+      <div className="row">
+        <input className="in" style={{ width: 150 }} placeholder="Company" value={f.company || ""}
+          onChange={(e) => set("company", e.target.value.slice(0, 40))} />
+        <input className="in mono" type="number" style={{ width: 104 }} placeholder="Base $" value={f.base ?? ""} onChange={num("base")} />
+        <input className="in" style={{ width: 128 }} placeholder="City" value={f.city || ""}
+          onChange={(e) => set("city", e.target.value.slice(0, 40))} />
+        <label className="row" style={{ gap: 5, margin: 0 }}>
+          <input type="checkbox" checked={!!f.remote} onChange={(e) => set("remote", e.target.checked)} /> <span className="note" style={{ margin: 0 }}>remote</span>
+        </label>
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <span className="note" style={{ margin: 0, width: 92 }}>Bonus %</span>
+        <input className="in mono" type="number" style={{ width: 72 }} placeholder="10" value={f.bonusPct ?? ""} onChange={num("bonusPct")} />
+        <span className="note" style={{ margin: 0 }}>401k match %</span>
+        <input className="in mono" type="number" step="0.25" style={{ width: 72 }} placeholder="4.75" value={f.matchPct ?? ""} onChange={num("matchPct")}
+          title="What the EMPLOYER puts in, as a % of your salary — not what you contribute" />
+        <span className="note" style={{ margin: 0 }}>PTO days</span>
+        <input className="in mono" type="number" style={{ width: 62 }} placeholder="15" value={f.ptoDays ?? ""} onChange={num("ptoDays")} />
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <span className="note" style={{ margin: 0, width: 92 }}>Pension %</span>
+        <input className="in mono" type="number" step="0.5" style={{ width: 72 }} placeholder={String(PENSION_DEFAULT_PCT)} value={f.pensionPct ?? ""} onChange={num("pensionPct")}
+          title="The employer's own contribution as a % of pay. 7% is typical for a utility DB plan — check the plan document." />
+        <span className="note" style={{ margin: 0 }}>vests after</span>
+        <input className="in mono" type="number" style={{ width: 58 }} placeholder="5" value={f.vestYears ?? ""} onChange={num("vestYears")} />
+        <span className="note" style={{ margin: 0 }}>you'd stay</span>
+        <input className="in mono" type="number" style={{ width: 58 }} placeholder="3" value={f.stayYears ?? ""} onChange={num("stayYears")} />
+        <span className="note" style={{ margin: 0 }}>you pay for insurance $/yr</span>
+        <input className="in mono" type="number" style={{ width: 84 }} placeholder="1200" value={f.premiumPaid ?? ""} onChange={num("premiumPaid")} />
+      </div>
+
+      {v ? (
+        <>
+          <div className="note" style={{ marginTop: 8 }}>
+            <b>Worth {dollars(v.total)}/yr</b> — {dollars(v.adjusted)} once {f.city || "that market"}'s cost of living is
+            taken out{f.remote ? " (remote)" : ""}.{" "}
+            {v.pensionForfeited > 0 && (
+              <span style={{ color: "var(--gold)" }}>
+                The pension is excluded: it vests at {f.vestYears || 5} years and you've said you'd stay {f.stayYears || 0}, so
+                you'd walk away from {dollars(v.pensionForfeited)}/yr of it. Change "you'd stay" to see it counted.
+              </span>
+            )}
+            {v.vests && v.pension > 0 && <span> The pension counts here because you'd stay long enough to vest.</span>}
+          </div>
+          <div className="note" style={{ marginTop: 4 }}>
+            A <b>remote</b> offer needs a base near <b>{dollars(baseToMatch(v.adjusted, { bonusPct: 5, matchPct: 4, col: S.remoteCol || 90, insurance: 2000 }))}</b> to
+            match it, and one in a 100-index city near <b>{dollars(baseToMatch(v.adjusted, { bonusPct: 5, matchPct: 4, col: 100, insurance: 2000 }))}</b>.
+            Below that you'd be taking a pay cut in exchange for the title.
+          </div>
+          {open && (
+            <div style={{ marginTop: 6 }}>
+              {v.parts.map(([label, amt]) => (
+                <div className="kv" key={label} style={{ padding: "3px 0" }}>
+                  <span className="k">{label}</span><span className="mono">{dollars(amt)}</span>
+                </div>
+              ))}
+              <div className="note" style={{ fontSize: 11.5 }}>
+                Insurance is valued against {dollars(MARKET_PREMIUM)}/yr for employee-only cover; PTO against a 10-day norm.
+                The pension rate is an estimate of the employer's contribution — check the plan document, it's the one
+                number here that can move the answer by thousands.
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="note">
+          Put your base in and every posting reads <b>+$18k vs floor</b> instead of a bare number — the question isn't
+          whether you can get a job, it's whether anything beats the one you already have.
+        </div>
+      )}
+    </>
+  );
+}
+
 /* What an offer actually does to your money — the reason this lives in Atlas */
 function OfferImpact({ app, d, S, onClose }) {
   const gross = totalComp(app);
@@ -1454,29 +1550,7 @@ export default function Career({ d, setD, config, toast }) {
 
       <div className="card">
         <h3>Assumptions</h3>
-        {/* The decision isn't "can I get a job" — it's "is anything better than
-            the one I'm already nearly certain of". Everything in the finder gets
-            compared to this. */}
-        <label className="f">Your floor — the offer you're confident of</label>
-        <div className="row">
-          <input className="in" style={{ width: 150 }} placeholder="Company" value={S.floorOffer?.company || ""}
-            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), company: e.target.value.slice(0, 40) } } }))} />
-          <input className="in mono" type="number" style={{ width: 110 }} placeholder="Base $"
-            value={S.floorOffer?.comp ?? ""}
-            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), comp: e.target.value === "" ? null : Number(e.target.value) } } }))} />
-          <input className="in mono" type="number" style={{ width: 92 }} placeholder="Extras %"
-            title="Bonus, 401k match, pension, insurance — what the benefits are worth as a % of base"
-            value={S.floorOffer?.extrasPct ?? ""}
-            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), extrasPct: e.target.value === "" ? null : Number(e.target.value) } } }))} />
-          <input className="in" style={{ width: 130 }} placeholder="City"
-            value={S.floorOffer?.city || ""}
-            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), city: e.target.value.slice(0, 40) } } }))} />
-        </div>
-        <div className="note">
-          Every posting then reads <b>+$18k vs floor</b> instead of a bare number. A utility's benefits are worth real
-          money, so put them in extras — a $70k base with a pension, a match and cheap insurance is closer to $84k, and
-          comparing it to a $78k consultancy without that adjustment would be lying to yourself in the wrong direction.
-        </div>
+        <FloorOffer S={S} setCareer={setCareer} />
 
         <div className="grid3" style={{ marginTop: 14 }}>
           <div><label className="f">Take-home % of gross</label>

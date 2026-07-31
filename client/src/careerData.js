@@ -200,3 +200,65 @@ export function yearsFromResume(text) {
   return Math.round((months / 12) * 10) / 10;
 }
 
+
+/* ---------------- what an offer is actually worth ----------------
+   A base salary is not an offer. A utility's $67k with a company-paid pension,
+   a 4.75% match and insurance that costs a third of market is not beaten by a
+   $75k consultancy, and comparing the two on base alone points you the wrong
+   way. But the opposite error is just as easy: counting a pension you will
+   never vest in, which is worth exactly zero if you leave at year three.
+
+   Every figure below is annual and in today's dollars. Nothing here is a
+   promise — the pension rate especially should be checked against the actual
+   plan document, which is why it is an input rather than a constant. */
+
+/* Employer normal cost for a defined-benefit plan, as a share of pay. Utility
+   and public plans commonly land in this band; it is the employer's own
+   contribution, not the benefit you eventually draw. */
+export const PENSION_DEFAULT_PCT = 7;
+/* Employee-only medical is roughly this per year at market; a plan that costs
+   you less than that is worth the difference. */
+export const MARKET_PREMIUM = 6600;
+
+export function offerValue(o = {}) {
+  const base = Number(o.base) || 0;
+  if (!base) return null;
+  const bonus = base * ((Number(o.bonusPct) || 0) / 100);
+  const match = base * ((Number(o.matchPct) || 0) / 100);
+  /* A pension that vests at five years is worth nothing at all if you plan to
+     leave at three. Counting it anyway is the single easiest way to talk
+     yourself into staying somewhere too long. */
+  const vests = o.pensionPct > 0 && (Number(o.stayYears) || 0) >= (Number(o.vestYears) || 0);
+  const pension = vests ? base * ((Number(o.pensionPct) || 0) / 100) : 0;
+  const pensionForfeited = !vests && o.pensionPct > 0 ? base * (Number(o.pensionPct) / 100) : 0;
+  const insurance = Math.max(0, (Number(o.marketPremium) || MARKET_PREMIUM) - (Number(o.premiumPaid) || 0));
+  /* PTO above the two-week norm is real compensation: days you are paid for
+     and not working. Below it, real cost. */
+  const ptoDelta = ((Number(o.ptoDays) || 10) - 10) * (base / 260);
+  const other = Number(o.otherValue) || 0;
+
+  const total = base + bonus + match + pension + insurance + ptoDelta + other;
+  const col = Number(o.col) || 100;
+  return {
+    base, bonus, match, pension, pensionForfeited, insurance, ptoDelta, other,
+    total: Math.round(total),
+    adjusted: Math.round(total / (col / 100)),
+    vests,
+    /* what a competing offer needs to beat this, in ITS own market */
+    parts: [
+      ["Base", base], ["Bonus target", bonus], ["401k match", match],
+      ["Pension", pension], ["Insurance vs market", insurance],
+      ["PTO vs 10 days", ptoDelta], ["Other", other],
+    ].filter(([, v]) => Math.abs(v) >= 1),
+  };
+}
+
+/* What a competing offer's BASE must be to match, given that offer's own
+   benefits and cost of living. The number worth walking around with. */
+export function baseToMatch(floorAdjusted, target = {}) {
+  const extras = ((Number(target.bonusPct) || 0) + (Number(target.matchPct) || 0)) / 100;
+  const col = Number(target.col) || 100;
+  const fixed = (Number(target.insurance) || 0) + (Number(target.otherValue) || 0);
+  const needTotal = floorAdjusted * (col / 100);
+  return Math.max(0, Math.round((needTotal - fixed) / (1 + extras)));
+}

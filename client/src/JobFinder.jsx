@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money, yearsFromResume } from "./careerData.js";
+import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money, yearsFromResume, offerValue } from "./careerData.js";
 import { scoreOdds, oddsParts, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
 export { yearsFromResume };
 
@@ -149,12 +149,12 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
      comparison is like for like: a $70k utility job in Little Rock is not
      beaten by an $80k one in Boston. */
   const floor = S.floorOffer || null;
-  const floorAdj = useMemo(() => {
-    if (!floor?.comp) return 0;
-    const base = Number(floor.comp) * (1 + (Number(floor.extrasPct) || 0) / 100);
-    const col = floor.remote ? (S.remoteCol || 90) : (cityMatch(floor.city, S.cities)?.col || 100);
-    return Math.round(base / (col / 100));
+  const floorVal = useMemo(() => {
+    if (!floor?.base) return null;
+    const col = cityMatch(floor.city, S.cities)?.col || (floor.remote ? (S.remoteCol || 90) : 100);
+    return offerValue({ ...floor, col });
   }, [floor, S.cities, S.remoteCol]);
+  const floorAdj = floorVal?.adjusted || 0;
 
   const load = async () => {
     try {
@@ -392,8 +392,8 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
 
       {floorAdj > 0 && (
         <div className="note" style={{ marginTop: 8 }}>
-          <b>Your floor: {floor.company || "current offer"} at {money(Number(floor.comp))}{floor.extrasPct ? " +" + floor.extrasPct + "%" : ""}
-          {" "}= {money(floorAdj)} adjusted.</b>{" "}
+          <b>Your floor: {floor.company || "current offer"} — {money(Number(floor.base))} base, worth {money(floorVal.total)} all in,
+          {" "}{money(floorAdj)} adjusted.</b>{" "}
           {(() => {
             const beat = rows.filter((r) => r.adj > floorAdj).length;
             const good = rows.filter((r) => r.adj > floorAdj && r.odds >= 45).length;

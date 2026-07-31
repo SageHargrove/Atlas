@@ -26,6 +26,35 @@ createRoot(document.getElementById("root")).render(
   <Boundary><App /></Boundary>
 );
 
+/* A tab left open across a deploy still points at the old hashed chunk names.
+   The first lazy import after that — the PDF builder, the PDF viewer — fails
+   with "Failed to fetch dynamically imported module", which is a dead end: the
+   user sees an error about a filename and has no reason to guess that a refresh
+   fixes it. Vite fires this event for exactly that case, so heal instead.
+
+   Reloading once and remembering it prevents a boot loop if the chunk is
+   genuinely missing rather than merely stale. */
+const RELOAD_KEY = "atlas-stale-reload";
+function healStaleBuild(why) {
+  const last = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
+  if (Date.now() - last < 60000) {
+    console.error("stale-build reload already tried; not looping:", why);
+    return;
+  }
+  sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+  /* drop the cached shell too, or the reload serves the same stale index.html */
+  const done = () => location.reload();
+  if (window.caches) caches.keys().then((ks) => Promise.all(ks.map((k) => caches.delete(k)))).then(done, done);
+  else done();
+}
+window.addEventListener("vite:preloadError", (e) => { e.preventDefault(); healStaleBuild(e.payload?.message); });
+window.addEventListener("unhandledrejection", (e) => {
+  if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(String(e.reason?.message || e.reason || ""))) {
+    e.preventDefault();
+    healStaleBuild(String(e.reason?.message || e.reason));
+  }
+});
+
 /* Installable app + instant reopen. The worker caches only the public shell —
    never /api — so financial data is never written to browser storage.
    Requires HTTPS (or localhost); it's a no-op elsewhere. */
