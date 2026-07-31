@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money, yearsFromResume } from "./careerData.js";
+import { scoreOdds, oddsParts, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
 export { yearsFromResume };
 
 /* ------------------------------------------------------------------
@@ -51,24 +52,6 @@ const BASE_COMP = {
 };
 const estComp = (cat, level) => (BASE_COMP[cat] || BASE_COMP.enterprise)[Math.max(0, LEVEL_ORDER.indexOf(level))] || null;
 
-/* Vocabulary, not raw word overlap — "the" and "team" appear in every posting
-   and would drown the signal. Only terms that mean something in this field. */
-const SKILLS = [
-  "iam", "identity", "iga", "pam", "privileged", "sso", "saml", "oidc", "oauth", "scim", "mfa", "rbac", "abac",
-  "okta", "sailpoint", "saviynt", "cyberark", "ping", "entra", "azure ad", "active directory", "ldap", "kerberos",
-  "splunk", "sentinel", "qradar", "siem", "soar", "edr", "crowdstrike", "defender", "wazuh", "elastic",
-  "nist", "800-53", "800-171", "cmmc", "iso 27001", "soc 2", "pci", "hipaa", "fedramp", "nerc", "cip", "gdpr",
-  "python", "powershell", "bash", "terraform", "ansible", "kubernetes", "docker", "aws", "azure", "gcp",
-  "sql", "rest", "api", "git", "linux", "windows server", "vmware", "networking", "tcp/ip", "firewall", "vpn",
-  "zero trust", "threat", "incident response", "forensics", "malware", "vulnerability", "pentest", "red team",
-  "risk", "audit", "compliance", "grc", "governance", "access review", "provisioning", "deprovisioning",
-  "security+", "cissp", "cisa", "cism", "gsec", "gcih", "gcia", "ceh", "oscp", "az-500", "sc-200",
-];
-const tokensOf = (text) => {
-  const lc = " " + String(text || "").toLowerCase().replace(/[^a-z0-9+\-./ ]/g, " ").replace(/\s+/g, " ") + " ";
-  return new Set(SKILLS.filter((s) => lc.includes(" " + s + " ") || lc.includes(" " + s + ",") || lc.includes(" " + s + ".")));
-};
-
 /* Where you sit on the ladder today, read off your own resume. Cheap and always
    on; the AI estimate (Career tab) overrides it when you've run one. */
 export function guessMyLevel(resume) {
@@ -85,16 +68,6 @@ export function guessMyLevel(resume) {
   if (intern && grad) return "entry";
   return maxYears >= 1 ? "entry" : "entry";
 }
-
-/* How hard the front door is, independent of you. A new grad's odds at Jane
-   Street are not "stretch" — quant shops take low single-digit percentages of
-   applicants and screen on competitive-programming ability, and telling someone
-   otherwise is the kind of flattery that wastes a recruiting season. Utilities
-   and consultancies hire volume from campus; the trading firms do not. */
-const SELECTIVITY = {
-  quant: 0.22, bigtech: 0.45, financial: 0.72, cleared: 0.82,
-  enterprise: 0.85, consulting: 0.92, utility: 0.95,
-};
 
 function scoreJob(j, ctx) {
   const { S, myLevel, resumeTokens, hasClearance, hasResume, myYears } = ctx;
@@ -117,34 +90,14 @@ function scoreJob(j, ctx) {
   const focus = j.iam ? 15 : 8;
   const fit = Math.max(0, Math.min(100, money_ + place + growth + focus));
 
-  /* --- Odds: could you actually land it --- */
-  const rawGap = LEVEL_ORDER.indexOf(j.level) - LEVEL_ORDER.indexOf(myLevel || "entry");
-  /* An unstated level defaulted to mid. Scoring that as a hard rung gap punishes
-     the posting for the employer's vagueness rather than for anything true about
-     you, so uncertainty is capped at one rung instead of counted in full. */
-  const gap = j.levelSure === false && !j.levelBasis ? Math.min(rawGap, 1) : rawGap;
-  const levelPts = gap <= -2 ? 38 : gap === -1 ? 46 : gap === 0 ? 50 : gap === 1 ? 26 : gap === 2 ? 9 : 2;
-  const jt = tokensOf(j.title + " " + (j.desc || ""));
-  const shared = [...jt].filter((t) => resumeTokens.has(t));
-  /* With no resume there is nothing to overlap, so a neutral 12 was being handed
-     out and then read as a real signal. Without one, odds are not computed at
-     all — the UI says to upload instead of showing a number built on nothing. */
-  const overlapPts = jt.size ? Math.round(Math.min(1, shared.length / Math.min(8, Math.max(3, jt.size))) * 35) : 12;
-  const clearPts = j.clearance ? (hasClearance ? 10 : -22) : 10;
-  const raw = levelPts + overlapPts + clearPts;
+  /* --- Odds: could you actually land it. Lives in odds.js so it can be tested
+     without a browser — it is the number most likely to be quietly wrong. --- */
+  const me = { myLevel, myYears, resume: S.resume, hasResume, hasClearance };
+  const odds = scoreOdds(j, me);
+  const { shared, shortfall, build } = oddsParts(j, me);
+  const gap = ODDS_ORDER.indexOf(j.level) - ODDS_ORDER.indexOf(myLevel || "entry");
 
-  /* A stated years requirement is a gate, not a gradient. Adding a few points
-     of penalty let strong keyword overlap cancel it out, so a posting asking
-     "3+ years IAM implementation, 4+ years security consulting" came back as
-     reachable for someone whose experience is two internships. Recruiters do
-     not average those two things — they filter on the years and never see the
-     keywords. It multiplies now, so the shortfall can't be argued away. */
-  const shortfall = j.yearsReq == null ? 0 : Math.max(0, j.yearsReq - myYears);
-  const yearsMult = [1, 0.82, 0.55, 0.36, 0.24][Math.min(shortfall, 4)] ?? 0.18;
-  const sel = SELECTIVITY[j.cat] ?? 0.85;
-  const odds = hasResume ? Math.max(1, Math.min(100, Math.round(raw * sel * yearsMult))) : null;
-
-  return { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, sel, gap, shortfall, shared, place, growth, money_ };
+  return { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, gap, shortfall, build, shared, place, growth, money_ };
 }
 
 const oddsWord = (n) => (n >= 70 ? "Strong" : n >= 52 ? "Realistic" : n >= 34 ? "Stretch" : "Long shot");
@@ -622,6 +575,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                   {j.gap > 0 ? " · " + j.gap + " rung" + (j.gap > 1 ? "s" : "") + " above you" : j.gap < 0 ? " · below your level" : ""}
                   {/* the single biggest reason a strong-looking match isn't one */}
                   {j.shortfall > 0 && <b style={{ color: "var(--down)" }}> · wants {j.yearsReq}y, you have {myYears}</b>}
+                  {j.build < 0.7 && <b style={{ color: "var(--down)" }}> · software engineering role</b>}
                 </span>
               </div>
             </div>

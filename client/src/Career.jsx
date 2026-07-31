@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityMatch } from "./careerData.js";
+import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, parseWindow, absMonth } from "./careerData.js";
 import JobFinder, { guessMyLevel, yearsFromResume, LEVELS } from "./JobFinder.jsx";
 import Projects, { projectsBrief } from "./Projects.jsx";
 import Timeline, { compoundGap } from "./Timeline.jsx";
@@ -1131,7 +1131,12 @@ export default function Career({ d, setD, config, toast }) {
   const [status, setStatus] = useState("All");
   const [fitOnly, setFitOnly] = useState(false);
   const [sort, setSort] = useState("adj");
-  const [limit, setLimit] = useState(20);
+  /* 20 rows of 102 was a wall. Ten is a screenful. */
+  const [limit, setLimit] = useState(10);
+  const [tiers, setTiers] = useState(() => new Set());
+  const [remoteOnly, setRemoteOnly] = useState(false);
+  const [noClear, setNoClear] = useState(false);
+  const [openNow, setOpenNow] = useState(false);
   const [tailorFor, setTailorFor] = useState(null);
   const [tailorOut, setTailorOut] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1153,10 +1158,23 @@ export default function Career({ d, setD, config, toast }) {
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
-    let list = apps.filter((a) =>
-      (status === "All" || a.status === status) &&
-      (!fitOnly || computeFit(a, S.cities).fit) &&
-      (!ql || (a.company + " " + a.role + " " + (a.city || "")).toLowerCase().includes(ql)));
+    const now = absMonth(new Date());
+    let list = apps.filter((a) => {
+      if (status !== "All" && a.status !== status) return false;
+      if (fitOnly && !computeFit(a, S.cities).fit) return false;
+      if (tiers.size && !tiers.has(effTier(a, S))) return false;
+      if (remoteOnly && a.locationType !== "Remote") return false;
+      if (noClear && a.clearance === "Required") return false;
+      /* "open now" is the filter that actually changes behaviour — everything
+         else is browsing, this is a deadline */
+      if (openNow) {
+        const w = parseWindow(a.window);
+        if (!w) return false;
+        if (w.from != null && !(now >= w.from && (now <= w.to || w.rolling))) return false;
+      }
+      if (ql && !(a.company + " " + a.role + " " + (a.city || "")).toLowerCase().includes(ql)) return false;
+      return true;
+    });
     const cmp = {
       adj: (a, b) => (adjComp(b, S) || 0) - (adjComp(a, S) || 0),
       comp: (a, b) => (totalComp(b) || 0) - (totalComp(a) || 0),
@@ -1164,7 +1182,7 @@ export default function Career({ d, setD, config, toast }) {
       next: (a, b) => (a.nextDate || "9999").localeCompare(b.nextDate || "9999"),
     };
     return list.sort(cmp[sort]);
-  }, [apps, q, status, fitOnly, sort, S]);
+  }, [apps, q, status, fitOnly, tiers, remoteOnly, noClear, openNow, sort, S]);
 
   const counts = STATUSES.reduce((m, s) => ({ ...m, [s]: apps.filter((a) => a.status === s).length }), {});
   /* "in flight" means still live — a rejection is not in flight */
@@ -1299,6 +1317,26 @@ export default function Career({ d, setD, config, toast }) {
               </select>
               <button className={"btn small" + (fitOnly ? " primary" : "")} onClick={() => setFitOnly((v) => !v)}>Fits my cities</button>
             </div>
+            {/* the same filtering the finder has, because 102 rows sorted by pay
+                is still 102 rows */}
+            <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
+              {["1", "2", "3"].map((t) => {
+                const n = apps.filter((a) => effTier(a, S) === t && a.status !== "Rejected" && a.status !== "Withdrawn").length;
+                if (!n && !tiers.has(t)) return null;
+                return (
+                  <button key={t} className={"btn small" + (tiers.has(t) ? " primary" : "")}
+                    onClick={() => setTiers((p) => { const s = new Set(p); s.has(t) ? s.delete(t) : s.add(t); return s; })}>
+                    Tier {t} {n}
+                  </button>
+                );
+              })}
+              {!!tiers.size && <button className="btn small" onClick={() => setTiers(new Set())}>All tiers</button>}
+              <button className={"btn small" + (openNow ? " primary" : "")} onClick={() => setOpenNow((v) => !v)}
+                title="Only targets whose hiring window is open today">Open now</button>
+              <button className={"btn small" + (remoteOnly ? " primary" : "")} onClick={() => setRemoteOnly((v) => !v)}>Remote only</button>
+              <button className={"btn small" + (noClear ? " primary" : "")} onClick={() => setNoClear((v) => !v)}>No clearance</button>
+              <span className="note" style={{ margin: 0 }}>{rows.length} of {apps.length}</span>
+            </div>
             <div className="note">
               Tier is computed from comp adjusted for cost of living — Tier 1 above {money(S.tierT1)} adjusted, Tier 2 above {money(S.tierT2)}.
               A $66k job in Little Rock can outrank a $95k job in the Bay Area.
@@ -1373,8 +1411,8 @@ export default function Career({ d, setD, config, toast }) {
 
       {rows.length > limit && (
         <div className="mrow" style={{ justifyContent: "center", marginTop: 10 }}>
-          <button className="btn small" onClick={() => setLimit((n) => n + 40)}>
-            Show more — {rows.length - limit} of {rows.length} hidden
+          <button className="btn small" onClick={() => setLimit((n) => n + 10)}>
+            Show 10 more — {rows.length - limit} of {rows.length} hidden
           </button>
         </div>
       )}

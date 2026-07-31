@@ -46,6 +46,7 @@ const BUCKETS = {
 
 export default function Timeline({ S, apps, setCareer, setEditing }) {
   const [open, setOpen] = useState(true);
+  const [shown, setShown] = useState({});   // per-bucket row cap
   const now = absNow(new Date());
   const grad = S.gradMonth || "2027-05";
   const gradAbs = Number(grad.slice(0, 4)) * 12 + (Number(grad.slice(5, 7)) - 1);
@@ -128,7 +129,7 @@ export default function Timeline({ S, apps, setCareer, setEditing }) {
               <span className="tag">{rows.length}</span>
             </div>
             {b.note && <div className="note" style={{ margin: "2px 0 6px" }}>{b.note}</div>}
-            {rows.slice(0, k === "done" || k === "later" ? 6 : 30).map((a) => (
+            {rows.slice(0, shown[k] || 10).map((a) => (
               <div key={a.id} className="kv" style={{ padding: "5px 0" }}>
                 <span className="k" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {a.company}
@@ -144,8 +145,13 @@ export default function Timeline({ S, apps, setCareer, setEditing }) {
                 </span>
               </div>
             ))}
-            {rows.length > (k === "done" || k === "later" ? 6 : 30) && (
-              <div className="note" style={{ margin: 0 }}>+{rows.length - (k === "done" || k === "later" ? 6 : 30)} more</div>
+            {/* every bucket gets the same ten-then-more treatment; 63 rows under
+                "opens within 2 months" is not a plan, it's a wall */}
+            {rows.length > (shown[k] || 10) && (
+              <button className="btn small" style={{ marginTop: 6 }}
+                onClick={() => setShown((s) => ({ ...s, [k]: (s[k] || 10) + 10 }))}>
+                Show 10 more — {rows.length - (shown[k] || 10)} hidden
+              </button>
             )}
           </div>
         );
