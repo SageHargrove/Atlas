@@ -1515,7 +1515,11 @@ export default function Career({ d, setD, config, toast }) {
 
       <Timeline S={S} apps={apps} setCareer={setCareer} setEditing={setEditing} />
 
-      <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel} />
+      {/* the finder can now reach the same three actions the tracker has, so
+          "tailor my resume to this" works from the posting you're looking at
+          instead of requiring you to track it, scroll, and find it again */}
+      <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel}
+        onTailor={tailor} onCoverLetter={coverLetter} onImpact={setImpact} />
 
       <TwoCareerCities S={S} apps={apps} setCareer={setCareer} />
 

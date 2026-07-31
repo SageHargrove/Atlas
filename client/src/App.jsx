@@ -351,6 +351,33 @@ const CSS = `
 }
 /* wide charts scroll inside their own card on phones — never the whole page */
 .fh .hscroll{ overflow-x:auto; max-width:100%; -webkit-overflow-scrolling:touch; }
+/* Job results as cards, not rows. A row forces every posting to the full width
+   of the page, which is why ten of them still read as a wall — the eye has to
+   traverse the whole line to find the next title. Two or three columns of
+   self-contained boxes scan in a fraction of the time. */
+.fh .jgrid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); gap:12px; margin-top:12px; }
+.fh .jcard{ border:1px solid var(--line2); border-radius:13px; padding:13px 15px; background:var(--panel2); display:flex; flex-direction:column; gap:7px; }
+.fh .jcard:hover{ border-color:var(--acc); }
+.fh .jcard .jtop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+.fh .jcard .jfoot{ display:flex; gap:6px; align-items:center; margin-top:auto; padding-top:4px; }
+/* the overflow menu — everything that isn't the one obvious action */
+.fh .menuwrap{ position:relative; margin-left:auto; }
+.fh .menu{ position:absolute; right:0; top:calc(100% + 4px); z-index:20; min-width:186px; background:var(--panel);
+  border:1px solid var(--line2); border-radius:11px; box-shadow:var(--shadow); padding:5px; }
+.fh .menu button{ display:block; width:100%; text-align:left; background:none; border:none; color:var(--text);
+  font:inherit; font-size:12.5px; padding:7px 10px; border-radius:7px; cursor:pointer; }
+.fh .menu button:hover{ background:var(--panel2); }
+.fh .menu button.danger{ color:var(--down); }
+.fh .menu hr{ border:none; border-top:1px solid var(--line); margin:4px 2px; }
+/* the filter drawer: shut by default, because thirty controls on screen is not
+   a filter bar, it's a cockpit */
+.fh .fbar{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.fh .fdrawer{ border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-top:8px; background:var(--panel2); }
+.fh .fdrawer .f{ margin-top:12px; }
+.fh .fdrawer .f:first-child{ margin-top:0; }
+.fh .achip{ display:inline-flex; align-items:center; gap:5px; font-size:11.5px; padding:2px 5px 2px 9px;
+  border-radius:999px; border:1px solid var(--acc); color:var(--acc); }
+.fh .achip button{ background:none; border:none; color:inherit; cursor:pointer; font-size:13px; line-height:1; padding:0 3px; }
 .fh .tbl{ width:100%; border-collapse:collapse; font-size:13px; }
 .fh .tbl th{ text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); font-weight:600; padding:6px 10px 6px 0; border-bottom:1px solid var(--line); white-space:nowrap; }
 .fh .tbl td{ padding:8px 10px 8px 0; border-bottom:1px solid var(--line); vertical-align:top; }

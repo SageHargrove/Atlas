@@ -145,7 +145,7 @@ const ago = (d) => {
   return days <= 0 ? "today" : days === 1 ? "1 day ago" : days < 30 ? days + " days ago" : Math.round(days / 30) + " mo ago";
 };
 
-export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
+export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -172,6 +172,8 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const [onlyNew, setOnlyNew] = useState(false);
   const [found, setFound] = useState(null);   // discovered boards awaiting your yes
   const [whyId, setWhy] = useState(null);     // which row's city detail is expanded
+  const [menuId, setMenuId] = useState(null); // which card's overflow menu is open
+  const [filtersOpen, setFiltersOpen] = useState(false);
   /* The offer you're near-certain of, adjusted the same way every row is, so the
      comparison is like for like: a $70k utility job in Little Rock is not
      beaten by an $80k one in Boston. */
@@ -261,6 +263,13 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const unlabelled = useMemo(() => scored.filter((j) => j.levelSure === false && !j.levelBasis && (!usOnly || j.us)).length, [scored, usOnly]);
 
   const toggleLevel = (k) => setLevels((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  /* one helper for the two remembered chip groups, so adding a third later
+     doesn't mean a third copy of the same set-toggle-and-persist dance */
+  const toggleSet = (setter, current, k, settingKey) => setter(() => {
+    const s = new Set(current); s.has(k) ? s.delete(k) : s.add(k);
+    setCareer((c) => ({ ...c, settings: { ...c.settings, [settingKey]: [...s] } }));
+    return s;
+  });
 
   const refresh = async () => {
     setBusy("refresh");
@@ -294,8 +303,13 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
 
   /* Tracking a posting carries everything already known across, so the row
      lands in the tracker complete instead of as a bare company name. */
-  const track = (j) => {
-    setCareer((c) => ({ ...c, apps: [...c.apps, {
+  /* Returns the application it created, so the overflow menu can track a posting
+     and immediately act on it — tailoring a resume "for this job" needs the job
+     to exist as a tracked row first, and making the user do that in two steps
+     is a step they'd skip. `quiet` suppresses the toast when something else is
+     about to open on top of it. */
+  const track = (j, quiet) => {
+    const app = {
       id: Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4),
       company: j.company, role: j.title.slice(0, 90), status: "Target", dateApplied: "",
       comp: j.comp || null, compEst: !!j.estimated, extrasPct: 0,
@@ -309,8 +323,14 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
       family: j.iam ? "IAM" : "Cyber — general", source: "Job board", referralName: "", nextDate: "",
       window: j.posted ? "Posted " + ago(j.posted) : "", sponsor: "Unknown",
       link: j.url, notes: "Found by Atlas on " + new Date().toISOString().slice(0, 10), created: Date.now(),
-    }] }));
-    toast("Tracking " + j.company + " — it's in your list with comp, city and level filled in.");
+    };
+    /* already tracked? reuse it rather than creating a duplicate every time the
+       menu is used on the same posting */
+    const existing = apps.find((a) => (a.company + "|" + a.role).toLowerCase() === (app.company + "|" + app.role).toLowerCase());
+    if (existing) return existing;
+    setCareer((c) => ({ ...c, apps: [...c.apps, app] }));
+    if (!quiet) toast("Tracking " + j.company + " — it's in your list with comp, city and level filled in.");
+    return app;
   };
 
   /* A chip that says "Internship 2" and then shows nothing when you press it is
@@ -345,6 +365,33 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const newCount = useMemo(() =>
     lastSeen ? scored.filter((j) => (j.firstSeen || "") > lastSeen && (!usOnly || j.us) && !dismissed.has(j.id)).length : 0,
     [scored, lastSeen, usOnly, dismissed]);
+
+  /* The plain on/off filters, defined once so the drawer and the active-chip
+     summary can't drift apart. */
+  const TOGGLES = [
+    { key: "remote", label: "Remote only", on: remoteOnly, toggle: () => setRemoteOnly((v) => !v), off: () => setRemoteOnly(false) },
+    { key: "us", label: "US only", on: usOnly, toggle: () => setUsOnly((v) => !v), off: () => setUsOnly(false) },
+    { key: "iam", label: "IAM / identity only", on: iamOnly, toggle: () => setIamOnly((v) => !v), off: () => setIamOnly(false) },
+    { key: "cities", label: "My cities or remote", on: fitCities, toggle: () => setFitCities((v) => !v), off: () => setFitCities(false) },
+    { key: "clear", label: "Hide clearance", on: hideCleared, toggle: () => setHideCleared((v) => !v), off: () => setHideCleared(false),
+      title: "Best effort — Workday employers publish too little text to detect this reliably" },
+    { key: "stale", label: "Hide stale", on: hideStale, toggle: () => setHideStale((v) => !v), off: () => setHideStale(false),
+      title: "Reqs open 60+ days are often filled, frozen, or evergreen pipeline postings" },
+    ...(newCount > 0 ? [{ key: "new", label: "New since last visit " + newCount, on: onlyNew, toggle: () => setOnlyNew((v) => !v), off: () => setOnlyNew(false) }] : []),
+  ];
+  const activeCount = fams.size + cats.size + levels.size + TOGGLES.filter((t) => t.on).length + (minPay ? 1 : 0);
+  const clearAll = () => {
+    setFams(new Set()); setCats(new Set()); setLevels(new Set()); setMinPay(0);
+    TOGGLES.forEach((t) => t.off());
+    setCareer((c) => ({ ...c, settings: { ...c.settings, jobFamilies: [], jobCats: [] } }));
+  };
+  /* a menu left open behind a click elsewhere is a stuck menu */
+  useEffect(() => {
+    if (menuId == null) return;
+    const close = () => setMenuId(null);
+    window.addEventListener("click", close, { capture: true });
+    return () => window.removeEventListener("click", close, { capture: true });
+  }, [menuId]);
 
   /* Coverage is the ceiling on the whole feature — 40 boards against 100+
      tracked companies. Every candidate is fetched and proven server-side before
@@ -461,239 +508,207 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
         </div>
       )}
 
-      {/* the ladder — the whole point is that it grows with you, so nothing is dropped */}
-      <div className="row" style={{ marginTop: 10, gap: 5, flexWrap: "wrap" }}>
-        {LEVELS.map(([k, label]) => {
-          const n = counts[k] || 0;
-          return (
-            <button key={k} className={"btn small" + (levels.has(k) ? " primary" : "")} onClick={() => toggleLevel(k)}
-              disabled={!n && !levels.has(k)} style={!n && !levels.has(k) ? { opacity: 0.35 } : undefined}
-              title={myLevel === k ? "Where your resume reads today" : !n ? "Nothing at this level matches your other filters" : undefined}>
-              {label} {n}{myLevel === k ? " ●" : ""}
-            </button>
-          );
-        })}
-        {!!levels.size && <button className="btn small" onClick={() => setLevels(new Set())}>All levels</button>}
-        {!!levels.size && !levels.has("mid") && (
-          <button className={"btn small" + (showUnlabelled ? " primary" : "")} onClick={() => setShowUnlabelled((v) => !v)}
-            title="Most postings never state a band. Hiding them makes the market look far smaller than it is.">
-            + {unlabelled} unlabelled
-          </button>
-        )}
-      </div>
-
-      <div className="row" style={{ marginTop: 8 }}>
-        <input className="in" style={{ flex: 1, minWidth: 150 }} placeholder="Search company, title, city…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select className="in" style={{ width: 165 }} value={sort} onChange={(e) => setSort(e.target.value)}>
+      {/* Search, sort, and a count. Everything else lives behind the drawer:
+          thirty controls on screen is not a filter bar, it's a cockpit. */}
+      <div className="fbar" style={{ marginTop: 10 }}>
+        <input className="in" style={{ flex: 1, minWidth: 150 }} placeholder="Search company, title, city…"
+          value={q} onChange={(e) => setQ(e.target.value)} />
+        <select className="in" style={{ width: 160 }} value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="fit">Sort: best for me</option>
           <option value="odds">Sort: most gettable</option>
           <option value="comp">Sort: adjusted pay</option>
           <option value="new">Sort: newest</option>
         </select>
-      </div>
-      {/* "Security" covers a dozen jobs that share almost nothing day to day.
-          This is the filter that turns 500 rows into something readable. */}
-      <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
-        {FAMILY_LABELS.map(([k, label]) => {
-          const n = famCounts[k] || 0;
-          if (!n && !fams.has(k)) return null;
-          return (
-            <button key={k} className={"btn small" + (fams.has(k) ? " primary" : "")}
-              onClick={() => setFams((p) => {
-                const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k);
-                /* remembered, so the next visit opens the way you left it */
-                setCareer((c) => ({ ...c, settings: { ...c.settings, jobFamilies: [...s] } }));
-                return s;
-              })}>
-              {label} {n}
-            </button>
-          );
-        })}
-        {!!fams.size && <button className="btn small" onClick={() => {
-          setFams(new Set());
-          setCareer((c) => ({ ...c, settings: { ...c.settings, jobFamilies: [] } }));
-        }}>All areas</button>}
-      </div>
-
-      {/* who is hiring, not what the role is */}
-      <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
-        {CAT_LABELS.map(([k, label]) => {
-          const n = catCounts[k] || 0;
-          if (!n && !cats.has(k)) return null;
-          return (
-            <button key={k} className={"btn small" + (cats.has(k) ? " primary" : "")}
-              onClick={() => setCats((p) => {
-                const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k);
-                setCareer((c) => ({ ...c, settings: { ...c.settings, jobCats: [...s] } }));
-                return s;
-              })}>
-              {label} {n}
-            </button>
-          );
-        })}
-        {!!cats.size && <button className="btn small" onClick={() => {
-          setCats(new Set());
-          setCareer((c) => ({ ...c, settings: { ...c.settings, jobCats: [] } }));
-        }}>All employers</button>}
-      </div>
-
-      <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
-        <button className={"btn small" + (remoteOnly ? " primary" : "")} onClick={() => setRemoteOnly((v) => !v)}>Remote only</button>
-        <button className={"btn small" + (usOnly ? " primary" : "")} onClick={() => setUsOnly((v) => !v)}>US only</button>
-        <button className={"btn small" + (iamOnly ? " primary" : "")} onClick={() => setIamOnly((v) => !v)}>IAM / identity only</button>
-        <button className={"btn small" + (fitCities ? " primary" : "")} onClick={() => setFitCities((v) => !v)}>My cities or remote</button>
-        <button className={"btn small" + (hideCleared ? " primary" : "")} onClick={() => setHideCleared((v) => !v)}>Hide clearance-required</button>
-        <button className={"btn small" + (hideStale ? " primary" : "")} onClick={() => setHideStale((v) => !v)}
-          title="Reqs open 60+ days are often filled, frozen, or evergreen pipeline postings">Hide stale</button>
-        {newCount > 0 && (
-          <button className={"btn small" + (onlyNew ? " primary" : "")} onClick={() => setOnlyNew((v) => !v)}>New since last visit {newCount}</button>
-        )}
-        <select className="in" style={{ width: 130 }} value={minPay} onChange={(e) => setMinPay(Number(e.target.value))}>
-          <option value={0}>Any pay</option>
-          <option value={70000}>$70k+ adjusted</option>
-          <option value={90000}>$90k+ adjusted</option>
-          <option value={110000}>$110k+ adjusted</option>
-          <option value={140000}>$140k+ adjusted</option>
-        </select>
+        <button className={"btn small" + (activeCount ? " primary" : "")} onClick={() => setFiltersOpen((v) => !v)}>
+          Filters{activeCount ? " · " + activeCount : ""} {filtersOpen ? "▴" : "▾"}
+        </button>
         <span className="note" style={{ margin: 0 }}>
           {rows.length} match{dismissed.size ? " · " + dismissed.size + " hidden" : ""}
         </span>
-        {!!dismissed.size && (
-          <a href="#" className="note" style={{ margin: 0, color: "var(--acc)" }}
-            onClick={(e) => { e.preventDefault(); setCareer((c) => ({ ...c, settings: { ...c.settings, dismissed: [] } })); }}>bring back</a>
-        )}
       </div>
+
+      {/* what's on, at a glance, without opening anything */}
+      {!filtersOpen && activeCount > 0 && (
+        <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
+          {[...fams].map((k) => (
+            <span className="achip" key={"f" + k}>{(FAMILY_LABELS.find(([x]) => x === k) || [, k])[1]}
+              <button onClick={() => toggleSet(setFams, fams, k, "jobFamilies")} title="Remove">×</button></span>
+          ))}
+          {[...cats].map((k) => (
+            <span className="achip" key={"c" + k}>{(CAT_LABELS.find(([x]) => x === k) || [, k])[1]}
+              <button onClick={() => toggleSet(setCats, cats, k, "jobCats")} title="Remove">×</button></span>
+          ))}
+          {[...levels].map((k) => (
+            <span className="achip" key={"l" + k}>{(LEVELS.find(([x]) => x === k) || [, k])[1]}
+              <button onClick={() => toggleLevel(k)} title="Remove">×</button></span>
+          ))}
+          {TOGGLES.filter((t) => t.on).map((t) => (
+            <span className="achip" key={t.key}>{t.label}<button onClick={t.off} title="Remove">×</button></span>
+          ))}
+          {minPay > 0 && <span className="achip">{money(minPay)}+<button onClick={() => setMinPay(0)}>×</button></span>}
+          <button className="btn small" onClick={clearAll}>Clear all</button>
+        </div>
+      )}
+
+      {filtersOpen && (
+        <div className="fdrawer">
+          <label className="f">Level {levels.size ? "· " + levels.size + " selected" : ""}</label>
+          <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
+            {LEVELS.map(([k, label]) => {
+              const n = counts[k] || 0;
+              return (
+                <button key={k} className={"btn small" + (levels.has(k) ? " primary" : "")} onClick={() => toggleLevel(k)}
+                  disabled={!n && !levels.has(k)} style={!n && !levels.has(k) ? { opacity: 0.35 } : undefined}
+                  title={myLevel === k ? "Where your resume reads today" : undefined}>
+                  {label} {n}{myLevel === k ? " ●" : ""}
+                </button>
+              );
+            })}
+            {!!levels.size && !levels.has("mid") && (
+              <button className={"btn small" + (showUnlabelled ? " primary" : "")} onClick={() => setShowUnlabelled((v) => !v)}
+                title="Most postings never state a band. Hiding them makes the market look far smaller than it is.">
+                + {unlabelled} unlabelled
+              </button>
+            )}
+          </div>
+
+          <label className="f">Area of work</label>
+          <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
+            {FAMILY_LABELS.map(([k, label]) => {
+              const n = famCounts[k] || 0;
+              if (!n && !fams.has(k)) return null;
+              return (
+                <button key={k} className={"btn small" + (fams.has(k) ? " primary" : "")}
+                  onClick={() => toggleSet(setFams, fams, k, "jobFamilies")}>{label} {n}</button>
+              );
+            })}
+          </div>
+
+          <label className="f">Employer</label>
+          <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
+            {CAT_LABELS.map(([k, label]) => {
+              const n = catCounts[k] || 0;
+              if (!n && !cats.has(k)) return null;
+              return (
+                <button key={k} className={"btn small" + (cats.has(k) ? " primary" : "")}
+                  onClick={() => toggleSet(setCats, cats, k, "jobCats")}>{label} {n}</button>
+              );
+            })}
+          </div>
+
+          <label className="f">Narrow it down</label>
+          <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
+            {TOGGLES.map((t) => (
+              <button key={t.key} className={"btn small" + (t.on ? " primary" : "")} onClick={t.toggle} title={t.title}>{t.label}</button>
+            ))}
+            <select className="in" style={{ width: 140 }} value={minPay} onChange={(e) => setMinPay(Number(e.target.value))}>
+              <option value={0}>Any pay</option>
+              <option value={70000}>$70k+ adjusted</option>
+              <option value={90000}>$90k+ adjusted</option>
+              <option value={110000}>$110k+ adjusted</option>
+              <option value={140000}>$140k+ adjusted</option>
+            </select>
+          </div>
+
+          <div className="row" style={{ marginTop: 12 }}>
+            <button className="btn small" onClick={clearAll}>Clear all</button>
+            {!!dismissed.size && (
+              <button className="btn small" onClick={() => setCareer((c) => ({ ...c, settings: { ...c.settings, dismissed: [] } }))}>
+                Bring back {dismissed.size} dismissed
+              </button>
+            )}
+            <button className="btn small primary" onClick={() => setFiltersOpen(false)}>Done</button>
+          </div>
+        </div>
+      )}
 
       {!rows.length && data && (
         <div className="note" style={{ marginTop: 10 }}>
-          Nothing matches those filters. Widen the ladder above — the boards skew senior, and most new-grad
+          Nothing matches those filters. Widen the ladder — the boards skew senior, and most new-grad
           security roles post between August and October for the following year.
         </div>
       )}
 
-      <div style={{ marginTop: 10 }}>
+      <div className="jgrid">
         {rows.slice(0, limit).map((j) => {
           const already = tracked.has((j.company + "|" + j.title.slice(0, 90)).toLowerCase());
           return (
-            <div key={j.id} style={{ padding: "10px 0", borderTop: "1px solid var(--line)" }}>
-              <div className="row" style={{ justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  {/* the employer is what you actually scan for, so it leads */}
-                  <span className="row" style={{ gap: 7, flexWrap: "wrap", alignItems: "baseline" }}>
-                    <b style={{ fontSize: 15 }}>{j.company}</b>
-                    {/* every row gets a location chip — a blank where the others
-                        have a tier reads as a bug, not as "no data" */}
-                    {j.remote ? (
-                      <span className="tag" style={{ color: "var(--up)", borderColor: "var(--up)" }}
-                        title="Remote is the best location outcome here: the city question disappears and she picks where you live">
-                        Remote · S-tier
-                      </span>
-                    ) : j.city ? (
-                      <button className="tag" title="Click for what's there for a partner"
-                        style={{ cursor: "pointer", color: partnerColor(j.city.partner), borderColor: partnerColor(j.city.partner), background: "none" }}
-                        onClick={() => setWhy(whyId === j.id ? null : j.id)}>
-                        {j.city.name} · {j.city.tier}-tier ▾
-                      </button>
-                    ) : (
-                      <span className="tag" style={{ color: "var(--faint)" }}
-                        title="Not on your city list — add it in Assumptions if you'd move there">Unranked city</span>
-                    )}
-                    {lastSeen && (j.firstSeen || "") > lastSeen && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>New</span>}
-                    {j.iam && <span className="tag" style={{ color: "var(--acc)", borderColor: "var(--acc)" }}>IAM</span>}
-                    {j.remote && <span className="tag" style={{ color: "var(--up)", borderColor: "var(--up)" }}>Remote</span>}
-                    {j.clearance && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>Clearance</span>}
-                    <span className="tag" style={j.levelBasis && j.levelBasis !== "stated" ? { borderStyle: "dashed" } : undefined}
-                      title={j.levelBasis === "pay" ? "The posting doesn't say — estimated from the salary it lists"
-                        : j.levelBasis === "scope" ? "The posting doesn't say — estimated from what it asks you to do"
-                        : j.levelSure === false ? "The posting states no level at all — worth reading whatever rung you're on" : undefined}>
-                      {(LEVELS.find(([k]) => k === j.level) || [, j.level])[1]}
-                      {j.levelBasis === "pay" ? " · est from pay" : j.levelBasis === "scope" ? " · est from scope" : j.levelSure === false ? " · not stated" : ""}
-                    </span>
-                    {j.ageDays > 60 && (
-                      <span className="tag" style={{ color: "var(--faint)" }} title="Reqs open this long are often filled, frozen, or evergreen pipeline postings">
-                        {j.ageDays > 120 ? "open 4+ months" : "open 2+ months"}
-                      </span>
-                    )}
-                  </span>
-                  <span style={{ display: "block", fontSize: 13.5, marginTop: 1 }}>{j.title}</span>
-                  <span className="note" style={{ display: "block", margin: 0, fontSize: 12 }}>
-                    {j.location || "location not stated"}{j.posted ? " · posted " + ago(j.posted) : ""}
-                  </span>
-                  {whyId === j.id && j.city && (
-                    <span className="note" style={{ display: "block", margin: "3px 0 0", fontSize: 11.5, color: partnerColor(j.city.partner) }}>
-                      {j.city.name} is {j.city.tier}-tier for you · cost of living {j.city.col} ·{" "}
-                      {partnerLabel(j.city.partner)} for a partner{j.city.orgs ? " — " + j.city.orgs : ""}
-                    </span>
-                  )}
-                  {/* the three bars, then one sentence saying why they read that
-                      way — a number you can't interrogate is a number you argue with */}
-                  <div className="row" style={{ gap: 14, marginTop: 7, maxWidth: 420 }}>
-                    <Meter label="LIKELIHOOD" value={j.odds} color={meterColor(j.odds)}
-                      title={j.odds == null ? "Upload a resume and this turns on" : "How likely you are to actually get it: your rung, resume overlap, years, clearance, and how selective this employer is"} />
-                    <Meter label="FIT" value={j.fit} color={meterColor(j.fit)}
-                      title="How good it is for you: pay after cost of living, place, growth, and whether it's the work you want" />
-                    <Meter label="MOVE UP" value={j.moveUp} color={meterColor(j.moveUp)}
-                      title={CAT_GROWTH[j.cat]?.[1] || "How fast this kind of employer promotes"} />
-                  </div>
-                  {j.why && (
-                    <span className="note" style={{ display: "block", margin: "6px 0 0", fontSize: 12 }}>{j.why}</span>
-                  )}
-                  {!!j.shared.length && (
-                    <span className="note" style={{ display: "block", margin: 0, fontSize: 11 }}>
-                      Matches your resume on: {j.shared.slice(0, 7).join(", ")}
-                    </span>
-                  )}
+            <div className="jcard" key={j.id}>
+              <div className="jtop">
+                <span style={{ minWidth: 0 }}>
+                  <b style={{ fontSize: 14.5, display: "block", lineHeight: 1.25 }}>{j.company}</b>
+                  <span style={{ display: "block", fontSize: 12.5, marginTop: 1 }}>{j.title}</span>
                 </span>
                 <span style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{money(j.adj)}</div>
-                  {/* The question isn't "can I get a job" — SPP is nearly
-                      certain. It's "is this better than the one I already
-                      have", so that comparison belongs on every row. */}
+                  <div className="mono" style={{ fontSize: 14.5, fontWeight: 600 }}>{money(j.adj)}</div>
                   {floorAdj > 0 && j.adj > 0 && (() => {
                     const d = j.adj - floorAdj;
-                    /* rounding to the nearest $1k turned a $104 difference into
-                       "+$0k vs floor", which reads as broken rather than as
-                       "these are the same offer" */
-                    if (Math.abs(d) < 2500) return <div className="note" style={{ margin: 0, fontSize: 11.5 }}>same as your floor</div>;
-                    return (
-                      <div className="mono" style={{ fontSize: 11.5, fontWeight: 600, color: d > 0 ? "var(--up)" : "var(--down)" }}>
-                        {d > 0 ? "+" : "−"}{money(Math.abs(d))} vs floor
-                      </div>
-                    );
+                    if (Math.abs(d) < 2500) return <div className="note" style={{ margin: 0, fontSize: 10.5 }}>same as floor</div>;
+                    return <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: d > 0 ? "var(--up)" : "var(--down)" }}>
+                      {d > 0 ? "+" : "−"}{money(Math.abs(d))} vs floor</div>;
                   })()}
-                  {/* where the number came from, on every row — an estimate that
-                      looks identical to a published figure is a number you can't use */}
-                  <div className="note" style={{ margin: 0, fontSize: 11 }}
-                    title={j.compLow
-                      ? "The posting states " + money(j.compLow) + "–" + money(j.compHigh) + ". Shown is the midpoint, adjusted for cost of living."
-                      : j.compRough ? "No pay stated. Estimated from postings at this level across all employer types, rescaled toward this one's market."
-                      : j.compEst ? "No pay stated. Estimated from the median of comparable " + j.cat + " postings at this level that DO publish pay."
-                      : "Adjusted for cost of living."}>
-                    {!j.adj ? "no pay data"
-                      : j.compLow ? "posted " + money(j.compLow) + "–" + money(j.compHigh)
-                      : j.compRough ? "rough est ⓘ"
-                      : j.compEst ? "est from similar ⓘ"
-                      : "posted"}
-                  </div>
-                  {j.odds != null ? (
-                    <div className="note" style={{ margin: 0, fontSize: 11.5, color: oddsColor(j.odds) }}>
-                      {oddsWord(j.odds)} · {j.odds}/100
-                    </div>
-                  ) : (
-                    <div className="note" style={{ margin: 0, fontSize: 11 }}>odds need a resume</div>
-                  )}
                 </span>
               </div>
-              <div className="row" style={{ gap: 6, marginTop: 6 }}>
-                <a className="btn small primary" href={j.url} target="_blank" rel="noreferrer noopener">Open posting</a>
-                <button className="btn small" disabled={already} onClick={() => track(j)}>{already ? "Tracked ✓" : "Track this"}</button>
-                <button className="x" title="Not interested — hide this one" onClick={() => dismiss(j.id)}>✕</button>
-                <span className="note" style={{ margin: 0, fontSize: 11 }}>
-                  fit {j.fit}/100
-                  {j.gap > 0 ? " · " + j.gap + " rung" + (j.gap > 1 ? "s" : "") + " above you" : j.gap < 0 ? " · below your level" : ""}
-                  {/* the single biggest reason a strong-looking match isn't one */}
-                  {j.shortfall > 0 && <b style={{ color: "var(--down)" }}> · wants {j.yearsReq}y, you have {myYears}</b>}
-                  {j.build < 0.7 && <b style={{ color: "var(--down)" }}> · software engineering role</b>}
+
+              <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
+                {lastSeen && (j.firstSeen || "") > lastSeen && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>New</span>}
+                {j.remote ? (
+                  <span className="tag" style={{ color: "var(--up)", borderColor: "var(--up)" }}
+                    title="Remote is the best location outcome here: the city question disappears">Remote · S</span>
+                ) : j.city ? (
+                  <button className="tag" style={{ cursor: "pointer", background: "none", color: partnerColor(j.city.partner), borderColor: partnerColor(j.city.partner) }}
+                    onClick={() => setWhy(whyId === j.id ? null : j.id)} title="What's there for a partner">
+                    {j.city.name} · {j.city.tier} ▾
+                  </button>
+                ) : <span className="tag" style={{ color: "var(--faint)" }}>Unranked city</span>}
+                {j.iam && <span className="tag" style={{ color: "var(--acc)", borderColor: "var(--acc)" }}>IAM</span>}
+                {j.clearance && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>Clearance</span>}
+                <span className="tag" style={j.levelBasis && j.levelBasis !== "stated" ? { borderStyle: "dashed" } : undefined}
+                  title={j.levelBasis === "pay" ? "Estimated from the salary the posting lists"
+                    : j.levelBasis === "scope" ? "Estimated from what the posting asks you to do"
+                    : j.levelSure === false ? "The posting states no level" : undefined}>
+                  {(LEVELS.find(([k]) => k === j.level) || [, j.level])[1]}{j.levelSure === false && !j.levelBasis ? " ?" : ""}
+                </span>
+              </div>
+
+              {whyId === j.id && j.city && (
+                <span className="note" style={{ margin: 0, fontSize: 11.5, color: partnerColor(j.city.partner) }}>
+                  Cost of living {j.city.col} · {partnerLabel(j.city.partner)} for a partner{j.city.orgs ? " — " + j.city.orgs : ""}
+                </span>
+              )}
+
+              <div className="row" style={{ gap: 12 }}>
+                <Meter label="LIKELIHOOD" value={j.odds} color={meterColor(j.odds)}
+                  title={j.odds == null ? "Upload a resume and this turns on" : "Your rung, resume overlap, years, clearance, and how selective this employer is"} />
+                <Meter label="FIT" value={j.fit} color={meterColor(j.fit)}
+                  title="Pay after cost of living, place, growth, and whether it's the work you want" />
+                <Meter label="MOVE UP" value={j.moveUp} color={meterColor(j.moveUp)}
+                  title={CAT_GROWTH[j.cat]?.[1] || "How fast this kind of employer promotes"} />
+              </div>
+
+              {j.why && <span className="note" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.45 }}>{j.why}</span>}
+
+              <span className="note" style={{ margin: 0, fontSize: 10.5 }}>
+                {j.location || "location not stated"}{j.posted ? " · " + ago(j.posted) : ""}
+                {j.compLow ? " · posted " + money(j.compLow) + "–" + money(j.compHigh) : j.compEst ? " · pay estimated" : ""}
+                {j.ageDays > 120 ? " · open 4+ months" : ""}
+              </span>
+
+              <div className="jfoot">
+                <a className="btn small primary" href={j.url} target="_blank" rel="noreferrer noopener">Open</a>
+                <button className="btn small" disabled={already} onClick={() => track(j)}>{already ? "Tracked ✓" : "Track"}</button>
+                <span className="menuwrap">
+                  <button className="btn small" onClick={() => setMenuId(menuId === j.id ? null : j.id)} title="More">···</button>
+                  {menuId === j.id && (
+                    <div className="menu">
+                      <button onClick={() => { setMenuId(null); onTailor(track(j, true)); }}>✦ Tailor my resume to this</button>
+                      <button onClick={() => { setMenuId(null); onCoverLetter(track(j, true)); }}>✦ Draft a cover letter</button>
+                      <button onClick={() => { setMenuId(null); onImpact(track(j, true)); }}>What it pays me</button>
+                      <hr />
+                      <button onClick={() => { setMenuId(null); setWhy(whyId === j.id ? null : j.id); }}>Why this city</button>
+                      <button className="danger" onClick={() => { setMenuId(null); dismiss(j.id); }}>Not interested</button>
+                    </div>
+                  )}
                 </span>
               </div>
             </div>
