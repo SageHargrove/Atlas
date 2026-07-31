@@ -564,7 +564,7 @@ const ChartBox = ({ data, dataKey, xKey, height = 180, color = "var(--up)", glow
 
 /* ---------------- bank sync (SimpleFIN) ---------------- */
 
-function BankSync({ d, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBank, onReload }) {
+function BankSync({ d, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -669,7 +669,7 @@ function BankSync({ d, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBan
 
 /* ---------------- Overview tab ---------------- */
 
-function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRemoveBank, onReload }) {
+function Overview({ d, setD, config, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
   const assets = sumAssets(d.accounts), debts = sumDebts(d.accounts), nw = assets - debts;
   const [adding, setAdding] = useState(false);
   const [na, setNa] = useState({ name: "", type: "Checking", balance: "" });
@@ -695,8 +695,8 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onConnect, onSync, onRem
 
   return (
     <>
-      <BankSync d={d} config={config} syncBusy={syncBusy} syncMsg={syncMsg}
-        onConnect={onConnect} onSync={onSync} onRemoveBank={onRemoveBank} onReload={onReload} />
+      <BankSync d={d} syncBusy={syncBusy} syncMsg={syncMsg}
+        onSync={onSync} onRemoveBank={onRemoveBank} onReload={onReload} />
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
@@ -1476,27 +1476,11 @@ function FinanceHQ({ config }) {
     setTimeout(() => setSyncMsg(""), 6000);
   };
 
-  const connectBank = () => {
-    const boot = () => {
-      const tc = window.TellerConnect.setup({
-        applicationId: config.tellerAppId,
-        environment: config.tellerEnv,
-        onSuccess: async (enrollment) => {
-          await fetch("/api/teller/enroll", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ accessToken: enrollment.accessToken, institution: enrollment.enrollment?.institution?.name || "Bank" }),
-          });
-          await syncNow();
-        },
-      });
-      tc.open();
-    };
-    if (window.TellerConnect) return boot();
-    const s = document.createElement("script");
-    s.src = "https://cdn.teller.io/connect/connect.js";
-    s.onload = boot;
-    document.body.appendChild(s);
-  };
+  /* The Teller Connect launcher used to live here. It injected a <script> from
+     cdn.teller.io into this page, and no button has called it since bank sync
+     moved to SimpleFIN. Dead code that grants a discontinued vendor script
+     execution in a finance app is worth deleting, not commenting out — the CSP
+     no longer allows it either. */
 
   const removeBank = async (id) => {
     await fetch("/api/teller/" + id, { method: "DELETE" });
@@ -1690,7 +1674,7 @@ function FinanceHQ({ config }) {
         )}
         {syncNotice && <div className="banner">{syncNotice}</div>}
         {tab === "dash" && <Dashboard d={d} setD={setD} config={config} setTab={setTab} />}
-        {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onConnect={connectBank} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
+        {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
         {tab === "budget" && <Budget d={d} setD={setD} config={config} />}
         {tab === "merchants" && <Merchants d={d} setD={setD} />}
         {tab === "assistant" && <AskAtlas d={d} setD={setD} config={config} />}

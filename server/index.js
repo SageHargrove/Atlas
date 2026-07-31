@@ -24,19 +24,28 @@ app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
+      /* Teller withdrew its API in July 2026 and bank sync moved to SimpleFIN,
+         which is server-to-server — no vendor JavaScript runs in this page at
+         all now. cdn.teller.io / *.teller.io are gone from every directive:
+         trusting a discontinued vendor's domain to execute script in a finance
+         app is exactly the grant you want to drop the moment it stops earning
+         its keep. Nothing here loads third-party code any more. */
       "default-src": ["'self'"],
-      "script-src": ["'self'", "https://cdn.teller.io"],
+      "script-src": ["'self'"],
       "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       "font-src": ["'self'", "https://fonts.gstatic.com"],
       "img-src": ["'self'", "data:", "https:"],
-      "connect-src": ["'self'", "https://*.teller.io"],
-      "frame-src": ["https://teller.io", "https://*.teller.io"],
+      "connect-src": ["'self'"],
+      "frame-src": ["'none'"],
       "frame-ancestors": ["'none'"], // this app must never be embedded in an iframe (clickjacking)
       "object-src": ["'none'"],
       "base-uri": ["'self'"],
     },
   },
-  crossOriginEmbedderPolicy: false, // Teller Connect opens a cross-origin popup/iframe
+  /* COEP stays off because the stylesheet and fonts come from Google's CDN and
+     are served without Cross-Origin-Resource-Policy; require-corp would block
+     them and the app would render in the fallback system font. */
+  crossOriginEmbedderPolicy: false,
 }));
 /* Body limits are per-route so that an UNAUTHENTICATED request to /api/login can't
    make us JSON.parse megabytes on the event loop. Only the two endpoints that
@@ -455,8 +464,6 @@ app.get("/api/me", (req, res) => {
 });
 
 app.get("/api/config", auth, (req, res) => res.json({
-  tellerAppId: process.env.TELLER_APP_ID || "",
-  tellerEnv: process.env.TELLER_ENV || "sandbox",
   aiEnabled: !!process.env.ANTHROPIC_API_KEY,
 }));
 
@@ -782,23 +789,10 @@ function autoCategorize(note, cats, memory, amount) {
   return "";
 }
 
-app.post("/api/teller/enroll", auth, async (req, res) => {
-  const token = String(req.body?.accessToken || "").trim();
-  if (!token) return res.status(400).json({ error: "Missing bank access token" });
-  try {
-    await withLock("data:" + req.userId, () => {
-      const d = readData(req.userId);
-      d.teller = d.teller || [];
-      d.teller.push({
-        id: crypto.randomUUID(), accessToken: encSecret(token), // encrypted at rest
-        institution: String(req.body.institution || "Bank").slice(0, 60), added: new Date().toISOString().slice(0, 10),
-      });
-      d._rev = (d._rev || 0) + 1; // server-side writes advance the revision too
-      writeData(req.userId, d);
-    });
-    res.json({ ok: true });
-  } catch (e) { console.error("enroll failed:", e.message); res.status(500).json({ error: "Could not save the bank connection" }); }
-});
+/* The enroll endpoint is gone: Teller stopped issuing enrollments in July 2026,
+   so it could only ever store a token that will never authenticate. Sync and
+   disconnect stay so anyone still holding a connection keeps their data and can
+   remove it on their own terms. */
 
 app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
   let enrollments;
