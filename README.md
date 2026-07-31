@@ -151,6 +151,22 @@ false-matching (`"LA"` matching Dallas, `"York"` matching New York).
   instant that write lands — then the data file and every resume PDF. There is no
   undo; export from Settings first if you might want it.
 
+## Application timeline (Career tab)
+Knowing *where* to apply is half of it; the other half is **when**. The seed list
+always knew the IAM consultancies open Aug–Oct and the tier-3 enterprises open
+Jan–Apr, but that lived in a free-text string nothing could act on. It's parsed
+now and anchored to your graduation month, sorting every tracked target into
+**window closed / closing this month / open now / opens within 2 months / later**.
+
+Campus recruiting is why this matters: full-time pipelines for a May graduate
+open the *previous* August and mostly close by Thanksgiving. Miss that quarter
+and the good programmes aren't hiring off-cycle in April, however good the
+resume is. The timeline says which quarter you're in and how much of it is left.
+
+There's a nudge when targets are open and you haven't applied to anything — and
+it goes quiet as soon as something is in flight, because a counter that always
+shouts gets ignored.
+
 ## Job finder (Career tab)
 The server polls ~40 employers' **own public job board APIs** — the same
 endpoints their careers pages call — a few times a day, and caches the result.
@@ -178,10 +194,18 @@ It defaults to your rung and the one above; your rung is read off your resume by
 keywords, or by the AI on request (**Re-check my level**), stored with a date so
 a shift is visible rather than guessed at.
 
+**Most postings never state a level.** Of 261 US postings in a live run, 174
+state a band and 87 don't. Filing those 87 under "mid" made an entry filter show
+4 results and imply the entry market was empty. They're tagged **"Level not
+stated"** and included by default whenever the ladder filter excludes mid, behind
+a visible `+87 unlabelled` toggle — which takes an entry search from 4 postings
+to 92. Odds scoring caps the rung gap at 1 for these, since penalising a posting
+for the employer's vagueness says nothing true about the candidate.
+
 Known limits, so you don't over-trust it: Workday's list endpoint returns a very
 short description, so **clearance detection is unreliable for Workday employers**
 (Leidos, CACI) — check the posting. Pay is an estimate unless the posting states
-it, and is labelled `est` when it is. Entry-level roles are genuinely scarce
+it, and is labelled `est` when it is. Genuinely entry-labelled roles are scarce
 outside the August–October new-grad window; that's the market, not a bug.
 
 ## Projects (Career tab)
