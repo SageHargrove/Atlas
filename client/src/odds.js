@@ -105,3 +105,46 @@ export function oddsParts(job, me) {
     build: buildGap(job, resume),
   };
 }
+
+/* ---------------- saying why, in one line ----------------
+   A number without a reason is a number you argue with. These are generated
+   from the same components the score used — no model call, so it can't drift
+   from the maths it is explaining, and it costs nothing to render on 500 rows.
+
+   Order matters: lead with what makes this worth wanting, then name the single
+   biggest thing standing in the way. Listing every factor reads as a spec
+   sheet; naming the one that decides it reads as advice. */
+export function explainRow(j, me = {}) {
+  const { myYears = 0, floorAdj = 0, growth = 0 } = me;
+  const good = [], bad = [];
+
+  if (j.remote) good.push("remote, so the city question goes away");
+  else if (j.city) good.push(j.city.name + " is " + j.city.tier + "-tier for you");
+
+  if (floorAdj && j.adj) {
+    const d = j.adj - floorAdj;
+    if (d >= 8000) good.push(money(Math.abs(d)) + " over your floor");
+    else if (d <= -8000) bad.push(money(Math.abs(d)) + " under your floor");
+  }
+  if (j.iam) good.push("identity work specifically");
+  if (growth >= 4) good.push("fast promotion track");
+  if (j.shared?.length >= 4) good.push("hits " + j.shared.length + " things on your resume");
+
+  /* the blockers, worst first — only the top one is shown */
+  if (j.shortfall >= 2) bad.push("wants " + j.yearsReq + " years and you have " + myYears);
+  else if (j.shortfall > 0) bad.push("asks for " + j.yearsReq + " years, just past you");
+  if (j.build < 0.7) bad.push("it's a software engineering role, not an identity one");
+  if (j.clearance) bad.push("needs a clearance you don't have");
+  if ((j.sel ?? 1) <= 0.45) bad.push("this tier hires almost entirely from its own interns");
+  if (j.gap >= 2) bad.push("it's " + j.gap + " rungs above where you read");
+  if (j.ageDays > 120) bad.push("open four months, so it may be filled or evergreen");
+
+  const lead = good.slice(0, 2).join(", ");
+  const block = bad[0];
+  if (!lead && !block) return "";
+  if (!block) return cap(lead) + ".";
+  if (!lead) return cap(block) + ".";
+  return cap(lead) + " — but " + block + ".";
+}
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const money = (n) => "$" + Math.round(Number(n) / 1000) + "k";

@@ -221,9 +221,14 @@ export const PENSION_DEFAULT_PCT = 7;
 export const MARKET_PREMIUM = 6600;
 
 export function offerValue(o = {}) {
-  const base = Number(o.base) || 0;
+  /* The first version of this took `comp` plus a single lump `extrasPct`. Anyone
+     who saved one before the itemised fields existed would otherwise have their
+     floor silently disappear — and a floor that vanishes takes every "+$18k vs
+     floor" on the board with it, with no error to explain why. */
+  const base = Number(o.base ?? o.comp) || 0;
   if (!base) return null;
-  const bonus = base * ((Number(o.bonusPct) || 0) / 100);
+  const legacyExtras = o.base == null && o.extrasPct ? base * (Number(o.extrasPct) / 100) : 0;
+  const bonus = base * ((Number(o.bonusPct) || 0) / 100) + legacyExtras;
   const match = base * ((Number(o.matchPct) || 0) / 100);
   /* A pension that vests at five years is worth nothing at all if you plan to
      leave at three. Counting it anyway is the single easiest way to talk
@@ -231,7 +236,9 @@ export function offerValue(o = {}) {
   const vests = o.pensionPct > 0 && (Number(o.stayYears) || 0) >= (Number(o.vestYears) || 0);
   const pension = vests ? base * ((Number(o.pensionPct) || 0) / 100) : 0;
   const pensionForfeited = !vests && o.pensionPct > 0 ? base * (Number(o.pensionPct) / 100) : 0;
-  const insurance = Math.max(0, (Number(o.marketPremium) || MARKET_PREMIUM) - (Number(o.premiumPaid) || 0));
+  /* a legacy lump already covered benefits; don't credit insurance twice */
+  const insurance = legacyExtras ? 0
+    : Math.max(0, (Number(o.marketPremium) || MARKET_PREMIUM) - (Number(o.premiumPaid) || 0));
   /* PTO above the two-week norm is real compensation: days you are paid for
      and not working. Below it, real cost. */
   const ptoDelta = ((Number(o.ptoDays) || 10) - 10) * (base / 260);

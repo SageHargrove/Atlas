@@ -48,6 +48,15 @@ console.log("       ($75k -> " + consultancy.adjusted + " adjusted vs SPP " + le
 const eightyFive = offerValue({ base: 85000, bonusPct: 5, matchPct: 4, premiumPaid: 3600, ptoDays: 15, col: 90 });
 eq("but $85k does", eightyFive.adjusted > leave3.adjusted, true);
 
+/* the first version took `comp` plus one lump `extrasPct`; a saved floor from
+   then must not silently vanish, because it takes every "+$18k vs floor" with it */
+console.log("\nthe older saved shape still works:");
+const legacy = offerValue({ comp: 70000, extrasPct: 20, col: 86 });
+eq("a legacy floor still values", legacy !== null, true);
+near("...at base plus the lump", legacy.total, 84000, 400);
+eq("...and it doesn't also credit insurance on top", legacy.insurance, 0);
+eq("the new shape wins when both are present", offerValue({ base: 90000, comp: 1, col: 100 }).base, 90000);
+
 console.log("\nedges:");
 eq("no base, no number", offerValue({}), null);
 eq("insurance better than market is worth the gap",

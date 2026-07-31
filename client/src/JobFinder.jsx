@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money, yearsFromResume, offerValue } from "./careerData.js";
-import { scoreOdds, oddsParts, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
+import { scoreOdds, oddsParts, explainRow, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
 export { yearsFromResume };
 
 /* ------------------------------------------------------------------
@@ -107,8 +107,35 @@ function scoreJob(j, ctx) {
   const { shared, shortfall, build } = oddsParts(j, me);
   const gap = ODDS_ORDER.indexOf(j.level) - ODDS_ORDER.indexOf(myLevel || "entry");
 
-  return { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, gap, shortfall, build, shared, place, growth, money_ };
+  /* growth as its own visible number, not buried inside fit — "does this go
+     anywhere" is a different question from "is it good now", and a utility job
+     that pays well today with a 2/5 ladder is exactly the row where the two
+     answers disagree */
+  const moveUp = Math.round(((CAT_GROWTH[j.cat]?.[0] ?? 3) / 5) * 100);
+  const row = { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, moveUp, gap, shortfall, build, shared, place, growth, money_ };
+  row.why = explainRow(row, { myYears, floorAdj: ctx.floorAdj, growth: CAT_GROWTH[j.cat]?.[0] ?? 3 });
+  return row;
 }
+
+/* Three numbers side by side beat one number and a paragraph: you can scan a
+   list and see the shape of each row without reading any of it. They answer
+   different questions on purpose — can I get it, do I want it, does it go
+   anywhere — and a row that is strong on two and weak on one is the
+   interesting case, which an average would erase. */
+function Meter({ label, value, color, title }) {
+  return (
+    <div style={{ flex: 1, minWidth: 84 }} title={title}>
+      <div className="row" style={{ justifyContent: "space-between", gap: 4 }}>
+        <span className="note" style={{ margin: 0, fontSize: 9.5, letterSpacing: ".06em" }}>{label}</span>
+        <span className="mono" style={{ fontSize: 11, fontWeight: 600, color }}>{value == null ? "—" : value}</span>
+      </div>
+      <div className="bar" style={{ height: 4, marginTop: 2 }}>
+        <i style={{ width: (value == null ? 0 : Math.max(2, value)) + "%", background: color }} />
+      </div>
+    </div>
+  );
+}
+const meterColor = (n) => (n == null ? "var(--faint)" : n >= 70 ? "var(--up)" : n >= 50 ? "var(--acc)" : n >= 32 ? "var(--gold)" : "var(--down)");
 
 const oddsWord = (n) => (n >= 70 ? "Strong" : n >= 52 ? "Realistic" : n >= 34 ? "Stretch" : "Long shot");
 const oddsColor = (n) => (n >= 70 ? "var(--up)" : n >= 52 ? "var(--acc)" : n >= 34 ? "var(--gold)" : "var(--down)");
@@ -193,9 +220,9 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const myYears = S.myYears != null ? Number(S.myYears) : yearsFromResume(S.resume);
   const scored = useMemo(() => {
     if (!data?.jobs) return [];
-    const ctx = { S, myLevel, resumeTokens, hasClearance, hasResume, myYears };
+    const ctx = { S, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj };
     return data.jobs.map((j) => scoreJob(j, ctx));
-  }, [data, S, myLevel, resumeTokens, hasClearance, hasResume, myYears]);
+  }, [data, S, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj]);
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -598,8 +625,21 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                       {partnerLabel(j.city.partner)} for a partner{j.city.orgs ? " — " + j.city.orgs : ""}
                     </span>
                   )}
+                  {/* the three bars, then one sentence saying why they read that
+                      way — a number you can't interrogate is a number you argue with */}
+                  <div className="row" style={{ gap: 14, marginTop: 7, maxWidth: 420 }}>
+                    <Meter label="LIKELIHOOD" value={j.odds} color={meterColor(j.odds)}
+                      title={j.odds == null ? "Upload a resume and this turns on" : "How likely you are to actually get it: your rung, resume overlap, years, clearance, and how selective this employer is"} />
+                    <Meter label="FIT" value={j.fit} color={meterColor(j.fit)}
+                      title="How good it is for you: pay after cost of living, place, growth, and whether it's the work you want" />
+                    <Meter label="MOVE UP" value={j.moveUp} color={meterColor(j.moveUp)}
+                      title={CAT_GROWTH[j.cat]?.[1] || "How fast this kind of employer promotes"} />
+                  </div>
+                  {j.why && (
+                    <span className="note" style={{ display: "block", margin: "6px 0 0", fontSize: 12 }}>{j.why}</span>
+                  )}
                   {!!j.shared.length && (
-                    <span className="note" style={{ display: "block", margin: 0, fontSize: 11.5 }}>
+                    <span className="note" style={{ display: "block", margin: 0, fontSize: 11 }}>
                       Matches your resume on: {j.shared.slice(0, 7).join(", ")}
                     </span>
                   )}
