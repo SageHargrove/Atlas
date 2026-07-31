@@ -186,6 +186,11 @@ const CSS = `
   --acc:#3987e5; --acc-soft:rgba(57,135,229,.14); --acc-ink:#ffffff;
   --up:#3ddba0; --up-soft:rgba(61,219,160,.11);
   --red:#ef7d7d; --red-soft:rgba(239,125,125,.11);
+  /* --down is an alias, not a new colour. It was being used across the career
+     UI without ever being defined, so every "bad news" element silently
+     rendered with no colour at all — a 7/100 likelihood bar drew as nothing,
+     which reads as missing data rather than as a long shot. */
+  --down:#ef7d7d;
   --gold:#e0b154; --gold-soft:rgba(224,177,84,.12);
   --blue:#3987e5; --blue-soft:rgba(57,135,229,.14);
   --glow1:rgba(42,120,214,.09); --glow2:rgba(52,211,153,.05);
@@ -196,7 +201,7 @@ const CSS = `
   --text:#101827; --muted:#526176; --faint:#8794a8;
   --acc:#2a78d6; --acc-soft:rgba(42,120,214,.1); --acc-ink:#ffffff;
   --up:#0f8a5f; --up-soft:rgba(15,138,95,.09);
-  --red:#c94747; --red-soft:rgba(201,71,71,.08);
+  --red:#c94747; --red-soft:rgba(201,71,71,.08); --down:#c94747;
   --gold:#8a6a12; --gold-soft:rgba(138,106,18,.1);
   --blue:#2a78d6; --blue-soft:rgba(42,120,214,.1);
   --glow1:rgba(42,120,214,.06); --glow2:rgba(15,138,95,.04);

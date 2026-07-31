@@ -932,11 +932,10 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
 const CITY_TIERS = ["S", "A", "B", "C", "D", "F"];
 const TIER_CLR = { S: "var(--up)", A: "var(--acc)", B: "var(--gold)", C: "var(--faint)", D: "var(--faint)", F: "var(--down)" };
 
-function TwoCareerCities({ S, apps, setCareer }) {
+function TwoCareerCities({ S, apps, setCareer, onShow }) {
   const [minPartner, setMinPartner] = useState(2);
   const [sort, setSort] = useState("adj");
   const [shown, setShown] = useState(8);
-  const [editing, setEditing] = useState(false);
   const [openCity, setOpenCity] = useState(null);
 
   const setTier = (name, tier) => setCareer((c) => ({ ...c, settings: { ...c.settings,
@@ -992,9 +991,6 @@ function TwoCareerCities({ S, apps, setCareer }) {
           <option value="col">Sort: cheapest</option>
           <option value="name">Sort: A–Z</option>
         </select>
-        <button className={"btn small" + (editing ? " primary" : "")} onClick={() => setEditing((v) => !v)}>
-          {editing ? "Done ranking" : "Edit tiers"}
-        </button>
         <span className="note" style={{ margin: 0 }}>{rows.length} cities · {withTargets.length} with a target</span>
         <a className="btn small" href={AZA_JOBS} target="_blank" rel="noreferrer noopener">AZA jobs</a>
       </div>
@@ -1003,7 +999,11 @@ function TwoCareerCities({ S, apps, setCareer }) {
         <table className="tbl" style={{ minWidth: 620 }}>
           <thead>
             <tr>
-              <th style={{ width: 62 }}>My tier</th><th>City</th><th>For her</th>
+              {/* no separate "for her" column: a C-tier city showing "Excellent
+                  for her" is a contradiction on its face. The tier IS the
+                  combined verdict — your work and hers — and the org list under
+                  the city name is the evidence behind it. */}
+              <th style={{ width: 74 }}>Tier</th><th>City</th>
               <th style={{ textAlign: "right" }}>COL</th>
               <th>What you could do there</th>
               <th style={{ textAlign: "right" }}>Adjusted</th>
@@ -1012,33 +1012,42 @@ function TwoCareerCities({ S, apps, setCareer }) {
           <tbody>
             {rows.slice(0, shown).map((c) => (
               <tr key={c.name}>
+                {/* always a select, never behind an edit mode — a ranking you
+                    have to unlock before changing is a ranking you won't keep
+                    current */}
                 <td>
-                  {editing ? (
-                    <select className="in" style={{ width: 56, padding: "2px 4px", fontSize: 12 }} value={c.tier}
-                      onChange={(e) => setTier(c.name, e.target.value)}>
-                      {CITY_TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  ) : (
-                    <b style={{ color: TIER_CLR[c.tier], fontSize: 15 }}>{c.tier}</b>
-                  )}
+                  <select className="in mono" style={{ width: 58, padding: "2px 5px", fontSize: 13, fontWeight: 600, color: TIER_CLR[c.tier] }}
+                    value={c.tier} onChange={(e) => setTier(c.name, e.target.value)} title="Your ranking of this city">
+                    {CITY_TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </td>
                 <td>
                   <b>{c.name}</b>
-                  <div className="note" style={{ margin: 0, fontSize: 11, maxWidth: 290 }}>{c.orgs || "—"}</div>
+                  <div className="note" style={{ margin: 0, fontSize: 11, maxWidth: 320, color: partnerColor(c.partner) }}>
+                    {c.orgs || "nothing local for her"}
+                  </div>
                 </td>
-                <td><span className="tag" style={{ color: partnerColor(c.partner), borderColor: partnerColor(c.partner) }}>{partnerLabel(c.partner)}</span></td>
                 <td className="mono" style={{ textAlign: "right", color: c.col <= 95 ? "var(--up)" : c.col >= 130 ? "var(--down)" : undefined }}>{c.col}</td>
+                {/* clicking a company takes you to it in the finder, where the
+                    pay, odds and reasoning already live — a list of names with
+                    nowhere to go was just a second, worse copy of that card */}
                 <td>
-                  {c.targets.length === 0 ? <span className="note" style={{ margin: 0 }}>nothing tracked</span>
-                    : c.targets.length === 1 ? <span>{c.best.company} <span className="note" style={{ margin: 0, fontSize: 11 }}>· {money(c.best.comp)}</span></span>
-                    : (
-                      <select className="in" style={{ width: 210, padding: "3px 6px", fontSize: 12 }}
-                        value={openCity === c.name ? "" : ""} onChange={() => {}}
-                        title="Every target you track in this city">
-                        <option>{c.targets.length} targets — best {c.best.company}</option>
-                        {c.targets.map((t) => <option key={t.id}>{t.company} · {money(t.comp)} · {t.status}</option>)}
-                      </select>
-                    )}
+                  {c.targets.length === 0 ? <span className="note" style={{ margin: 0 }}>nothing tracked</span> : (
+                    <div className="row" style={{ gap: 4, flexWrap: "wrap", maxWidth: 320 }}>
+                      {(openCity === c.name ? c.targets : c.targets.slice(0, 2)).map((t) => (
+                        <button key={t.id} className="tag" style={{ cursor: "pointer", background: "none", borderColor: "var(--line2)" }}
+                          title={"Open " + t.company + " in the finder"} onClick={() => onShow(t.company)}>
+                          {t.company} · {money(t.comp)}
+                        </button>
+                      ))}
+                      {c.targets.length > 2 && (
+                        <button className="tag" style={{ cursor: "pointer", background: "none", color: "var(--acc)", borderColor: "var(--acc)" }}
+                          onClick={() => setOpenCity(openCity === c.name ? null : c.name)}>
+                          {openCity === c.name ? "fewer" : "+" + (c.targets.length - 2) + " more"}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </td>
                 <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{c.adj ? money(c.adj) : "—"}</td>
               </tr>
@@ -1048,8 +1057,8 @@ function TwoCareerCities({ S, apps, setCareer }) {
       </div>
 
       {rows.length > shown && (
-        <button className="btn small" style={{ marginTop: 8 }} onClick={() => setShown((n) => n + 8)}>
-          Show 8 more — {rows.length - shown} hidden
+        <button className="btn small" style={{ marginTop: 8 }} onClick={() => setShown((n) => n + 5)}>
+          Show 5 more — {rows.length - shown} hidden
         </button>
       )}
       {!withTargets.length && (
@@ -1298,12 +1307,16 @@ function OfferImpact({ app, d, S, onClose }) {
 /* A city list saved before the Habitat data existed overrides the default wholesale
    and would come back with no partner info at all. Fill the new fields in by name
    without touching anything the user edited (their own col/tier stay theirs). */
+/* `orgs` and `partner` are Atlas's data, not yours, so they refresh from the
+   shipped list every load. The first version only filled them in when missing,
+   which meant the aquariums stayed on screen forever after they were removed —
+   a saved copy of a list you don't own silently outranked the corrected one.
+   `tier` and `col` are yours and are never overwritten. */
 function withPartnerData(cities) {
   if (!Array.isArray(cities) || !cities.length) return DEFAULT_CITIES;
   return cities.map((c) => {
-    if (c.partner != null) return c;
     const d = DEFAULT_CITIES.find((x) => x.name.toLowerCase() === String(c.name || "").toLowerCase());
-    return d ? { ...c, partner: d.partner, orgs: d.orgs } : { ...c, partner: 0, orgs: "" };
+    return d ? { ...c, partner: d.partner, orgs: d.orgs } : { ...c, partner: c.partner ?? 0, orgs: c.orgs || "" };
   });
 }
 
@@ -1336,6 +1349,9 @@ export default function Career({ d, setD, config, toast }) {
   const [letterBusy, setLetterBusy] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileTab, setProfileTab] = useState("resume");
+  /* clicking a company anywhere on the page takes you to it in the finder,
+     rather than repeating its details in a second, worse place */
+  const [focusCompany, setFocusCompany] = useState(null);
   const [prepFor, setPrepFor] = useState(null);
   const [prepOut, setPrepOut] = useState("");
   const [prepBusy, setPrepBusy] = useState(false);
@@ -1481,6 +1497,7 @@ export default function Career({ d, setD, config, toast }) {
           finder already shows — it's a source filter inside the finder now. */}
       <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel}
         onTailor={tailor} onCoverLetter={coverLetter} onImpact={setImpact} onEdit={setEditing}
+        focusCompany={focusCompany} onFocused={() => setFocusCompany(null)}
         header={
           <span className="row" style={{ gap: 6 }}>
             <button className={"btn small" + (S.resume ? "" : " primary")} onClick={() => setProfileOpen(true)}>
@@ -1500,7 +1517,7 @@ export default function Career({ d, setD, config, toast }) {
       </Fold>
 
       <Fold title="Where you could both work" sub="cities that work for both of you">
-        <TwoCareerCities S={S} apps={apps} setCareer={setCareer} />
+        <TwoCareerCities S={S} apps={apps} setCareer={setCareer} onShow={setFocusCompany} />
       </Fold>
 
       {profileOpen && (

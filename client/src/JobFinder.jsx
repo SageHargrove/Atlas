@@ -129,8 +129,10 @@ function Meter({ label, value, color, title }) {
         <span className="note" style={{ margin: 0, fontSize: 9.5, letterSpacing: ".06em" }}>{label}</span>
         <span className="mono" style={{ fontSize: 11, fontWeight: 600, color }}>{value == null ? "—" : value}</span>
       </div>
+      {/* a 7/100 bar at 2% is invisible, so a long shot read as "no data" rather
+          than as bad news. Minimum 6% and a red that actually looks red. */}
       <div className="bar" style={{ height: 4, marginTop: 2 }}>
-        <i style={{ width: (value == null ? 0 : Math.max(2, value)) + "%", background: color }} />
+        <i style={{ width: (value == null ? 0 : Math.max(6, value)) + "%", background: color }} />
       </div>
     </div>
   );
@@ -170,7 +172,7 @@ function appAsRow(a, S) {
   };
 }
 
-export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header }) {
+export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header, focusCompany, onFocused }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -186,7 +188,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("fit");
   /* 25 rows made the page endless. Ten is a screenful you can actually read. */
-  const [limit, setLimit] = useState(10);
+  const [limit, setLimit] = useState(9);
   const [boardUrl, setBoardUrl] = useState("");
   const [boardCo, setBoardCo] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -219,6 +221,19 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     } catch (e) { setErr(e.message); }
   };
   useEffect(() => { load(); }, []);
+  /* Asked to show a company from elsewhere on the page: search for it, clear
+     whatever filters would hide it, and scroll it into view. Filtering to a
+     company and getting nothing because a level chip excluded it is the kind of
+     dead end that makes people stop trusting a link. */
+  const boxRef = React.useRef(null);
+  useEffect(() => {
+    if (!focusCompany) return;
+    setQ(focusCompany);
+    setSource("all"); setLevels(new Set()); setFams(new Set()); setCats(new Set());
+    setMinPay(0); setOnlyNew(false); setRemoteOnly(false); setIamOnly(false); setHideStale(false); setFitCities(false);
+    boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    onFocused?.();
+  }, [focusCompany]);
   /* Stamp the visit AFTER the first render, so this session still sees its own
      "New" badges and only the next visit resets them. */
   useEffect(() => { if (data) { const t = setTimeout(markSeen, 2500); return () => clearTimeout(t); } }, [data]);
@@ -452,7 +467,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   if (err) return <div className="card"><h3>Job finder</h3><div className="note bad">Couldn't load postings — {err}</div></div>;
 
   return (
-    <div className="card">
+    <div className="card" ref={boxRef}>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h3>Find jobs</h3>
         <span className="row" style={{ gap: 6 }}>
@@ -766,7 +781,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
 
       {rows.length > limit && (
         <div className="mrow" style={{ justifyContent: "center", marginTop: 10 }}>
-          <button className="btn small" onClick={() => setLimit((n) => n + 50)}>Show more — {rows.length - limit} hidden</button>
+          <button className="btn small" onClick={() => setLimit((n) => n + 9)}>Show 9 more — {rows.length - limit} hidden</button>
         </div>
       )}
     </div>
