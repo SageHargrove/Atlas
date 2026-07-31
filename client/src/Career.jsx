@@ -1081,6 +1081,9 @@ export default function Career({ d, setD, config, toast }) {
   const [letterFor, setLetterFor] = useState(null);
   const [letterOut, setLetterOut] = useState("");
   const [letterBusy, setLetterBusy] = useState(false);
+  const [prepFor, setPrepFor] = useState(null);
+  const [prepOut, setPrepOut] = useState("");
+  const [prepBusy, setPrepBusy] = useState(false);
 
   const setCareer = (fn) => setD((p) => {
     const cur = p.career || DEFAULT_CAREER;
@@ -1167,6 +1170,40 @@ export default function Career({ d, setD, config, toast }) {
       toast("Couldn't draft that letter — " + e.message, "err"); setLetterFor(null);
     }
     if (req === letterReq.current) setLetterBusy(false);
+  };
+
+  /* Glassdoor and Levels have real reported questions but block programmatic
+     access, so this asks the model to SEARCH for what candidates actually report
+     for this company and role, and to say plainly when it found nothing rather
+     than dressing up generic advice as inside knowledge. */
+  const prepReq = useRef(0);
+  const prep = async (a) => {
+    if (prepBusy) return;
+    const req = ++prepReq.current;
+    setPrepFor(a); setPrepOut(a.prep || ""); setPrepBusy(true);
+    try {
+      const base = readResumes(S)[0]?.text || "";
+      const out = (await callClaude(
+        "Search for interview questions candidates report being asked at " + a.company +
+        " for " + (a.role || "a security role") + " or similar security/IAM roles there.\n\n" +
+        (base ? "Their resume:\n" + base.slice(0, 4000) + "\n\n" : "") +
+        projectsBrief(S, a.company + " " + a.role) +
+        "\n\nWrite a prep sheet in plain text with these exact sections:\n" +
+        "REPORTED AT THIS COMPANY — questions candidates actually report for this employer. If you found none, write " +
+        "'Nothing specific found for this company' and say so plainly; do NOT invent reported questions.\n" +
+        "LIKELY TECHNICAL — 6 questions for this role type, each with a one-line note on what a good answer covers.\n" +
+        "THEY WILL ASK ABOUT — 3 things on this resume an interviewer will probe, quoting the resume.\n" +
+        "YOUR WEAK SPOT — the gap most likely to be exposed, and the honest way to answer it.\n" +
+        "ASK THEM — 4 questions worth asking, specific to this employer rather than generic.\n" +
+        "No markdown, no preamble.", true)).trim();
+      if (req !== prepReq.current) return;
+      if (!out) throw new Error("the model returned nothing");
+      setPrepOut(out);
+    } catch (e) {
+      if (req !== prepReq.current) return;
+      toast("Couldn't build a prep sheet — " + e.message, "err"); setPrepFor(null);
+    }
+    if (req === prepReq.current) setPrepBusy(false);
   };
 
   return (
@@ -1260,6 +1297,11 @@ export default function Career({ d, setD, config, toast }) {
                   {a.cover ? "Cover letter ✓" : "Cover letter"}
                 </button>
               )}
+              {config?.aiEnabled && (a.status === "Interviewing" || a.status === "Applied") && (
+                <button className="btn small" disabled={prepBusy} onClick={() => prep(a)}>
+                  {a.prep ? "Interview prep ✓" : "Interview prep"}
+                </button>
+              )}
               {a.comp != null && <button className="btn small" onClick={() => setImpact(a)}>What it pays me</button>}
               {a.growthNote && <span className="note" style={{ margin: 0, fontSize: 11.5 }}>growth {a.growth}/5 · {a.growthNote}</span>}
             </div>
@@ -1314,6 +1356,23 @@ export default function Career({ d, setD, config, toast }) {
           <div className="mrow">
             <button className="btn" onClick={() => { navigator.clipboard?.writeText(tailorOut); toast("Copied."); }}>Copy</button>
             <button className="btn primary" onClick={() => setTailorFor(null)}>Done</button>
+          </div>
+        </Sheet>
+      )}
+      {prepFor && (
+        <Sheet title={"Interview prep — " + prepFor.company} onClose={() => setPrepFor(null)}>
+          <div className="note" style={{ marginTop: 0 }}>
+            Glassdoor and Levels hold real reported questions but block automated access, so this searched the open web
+            for what candidates report. If a section says nothing was found for this employer, believe it — that's more
+            useful than generic advice wearing a company name.
+          </div>
+          {prepBusy ? <div className="note">Searching for what people report being asked…</div>
+            : <div className="aiout" style={{ whiteSpace: "pre-wrap" }}>{prepOut}</div>}
+          <div className="mrow">
+            <button className="btn" disabled={prepBusy} onClick={() => { navigator.clipboard?.writeText(prepOut); toast("Copied."); }}>Copy</button>
+            <button className="btn primary" disabled={prepBusy} onClick={() => {
+              saveApp({ ...prepFor, prep: prepOut }); setPrepFor(null); toast("Saved to " + prepFor.company + ".");
+            }}>Save to this application</button>
           </div>
         </Sheet>
       )}

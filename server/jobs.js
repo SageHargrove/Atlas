@@ -475,12 +475,22 @@ function buildPayStats(jobs) {
     (buckets["*|" + j.level] ||= []).push(j.comp);
   }
   const out = {};
+  const scaleSum = {};
+  for (const j of jobs) {
+    if (!(j.comp > 0) || j.compEst) continue;
+    (scaleSum[j.level] ||= []).push(CAT_PAY_SCALE[j.cat] || 1);
+  }
   for (const [k, vals] of Object.entries(buckets)) {
     if (vals.length < MIN_SAMPLES) continue;
     vals.sort((a, b) => a - b);
     const mid = Math.floor(vals.length / 2);
     out[k] = Math.round((vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2) / 500) * 500;
     out[k + "|n"] = vals.length;
+  }
+  /* What the average category behind each all-category median actually was, so a
+     cross-category estimate can be corrected toward the target's own market. */
+  for (const [lvl, arr] of Object.entries(scaleSum)) {
+    if (out["*|" + lvl] != null) out["*|" + lvl + "|scale"] = arr.reduce((a, b) => a + b, 0) / arr.length;
   }
   return out;
 }
@@ -533,8 +543,18 @@ export async function pollAll(extraSources = []) {
      beats most rows having a dash, because a dash can't be sorted or filtered. */
   for (const j of jobs) {
     if (j.comp > 0) continue;
-    const est = payStats[j.cat + "|" + j.level] ?? payStats["*|" + j.level];
-    if (est) { j.comp = est; j.compEst = true; }
+    const own = payStats[j.cat + "|" + j.level];
+    if (own) { j.comp = own; j.compEst = true; continue; }
+    /* The all-category median is badly skewed for thin bands: the only three
+       entry postings that publish pay are at Stripe, Jane Street and Coalfire,
+       so a raw "*|entry" of $150k would tell him a utility analyst job pays
+       Bay Area money. Rescale by how the two categories actually differ. */
+    const any = payStats["*|" + j.level];
+    if (!any) continue;
+    const scale = (CAT_PAY_SCALE[j.cat] || 1) / (payStats["*|" + j.level + "|scale"] || 1);
+    j.comp = Math.round((any * scale) / 500) * 500;
+    j.compEst = true;
+    j.compRough = true;   // derived across categories, not within one — a weaker claim
   }
   const seen = new Set(jobs.map((j) => j.id));
   const added = jobs.filter((j) => !prevById.has(j.id)).length;
