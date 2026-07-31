@@ -220,7 +220,7 @@ const TITLE_HITS = /\b(iam|identity|access manag|iga|pam|privileged access|sso|i
    single biggest source of noise in the first run. */
 /* Note the \w* on recruit: \brecruit\b never matches "Recruiter", so recruiting
    roles at security companies were sailing straight through. */
-const TITLE_BLOCK = /\b(sales|account executive|account manager|business development|marketing|recruit\w*|talent acquisition|customer success|customer support|solutions?\s+(engineer|architect|consultant)|sales engineer|pre-?sales|technical account manager|partner manager|channel|revenue|renewals|legal counsel|accountant|payroll|procurement|facilities|executive assistant)\b/i;
+const TITLE_BLOCK = /\b(sales|account executive|account manager|business development|marketing|recruit\w*|talent acquisition|customer success|customer support|solutions?\s+(engineer\w*|architect\w*|consultant\w*)|sales engineer\w*|pre-?sales|technical account manager|partner manager|channel|revenue|renewals|legal counsel|accountant|payroll|procurement|facilities|executive assistant)\b/i;
 /* A ladder rather than junior/senior, so the same tool still works in ten years:
    filter to intern today, to lead later, without the finder having thrown the
    other rungs away. Checked top-down — "Senior Director" is a director, and

@@ -22,7 +22,12 @@ for (const t of ["Security Engineer", "IAM Analyst", "Cybersecurity Specialist, 
 for (const t of ["Enterprise Sales Executive, Security", "Solutions Engineer, Okta (Enterprise)",
                  "Technical Account Manager, Security", "Security Sales Engineer",
                  "Account Executive - Cyber", "Customer Success Manager, Security",
-                 "Recruiter, Security Engineering", "Security Marketing Manager"])
+                 "Recruiter, Security Engineering", "Security Marketing Manager",
+                 /* both leaked from a real production poll: \brecruit\b does not
+                    match "Recruiter", and "Solutions Engineer" does not match
+                    "Solutions Engineering" */
+                 "Senior Manager, Solutions Engineering, Okta", "Solutions Architecture Lead, Security",
+                 "Talent Acquisition Partner, Security"])
   eq("dropped: " + t, c(t), null);
 
 /* not security at all */
