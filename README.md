@@ -194,6 +194,31 @@ It defaults to your rung and the one above; your rung is read off your resume by
 keywords, or by the AI on request (**Re-check my level**), stored with a date so
 a shift is visible rather than guessed at.
 
+**Filters, because 500 postings is a wall, not a feed.** Every posting carries a
+role family — IAM/identity, SOC/detection, GRC, AppSec, offensive, cloud, security
+engineering — as counted chips, alongside the level ladder, min adjusted pay,
+remote, US-only, clearance, stale (60+ days open), and *new since last visit*.
+Dismiss anything you don't want to see again.
+
+**Pay for (nearly) everything.** Postings that publish a range are parsed from the
+full description. The poll then takes the *median* real pay per category and rung
+and fills in the postings that don't publish — an estimate learned from this
+corpus, this year, sharpening every poll as more states force disclosure. Where a
+band is too thin it falls back across categories, rescaled toward the target's own
+market and flagged as rougher: the only three entry postings that publish pay are
+at Stripe, Jane Street and Coalfire, so an unscaled median would claim a utility
+analyst job pays Bay Area money. 259 of 261 US postings carry a number, from 0.
+
+**Find boards** looks up public job boards for the companies you track: cheap slug
+guesses against Greenhouse/Lever/Ashby first, a model call only for the leftovers,
+and every candidate fetched and *proven* to return postings before it's offered —
+nothing enters the registry on a model's say-so.
+
+**Interview prep** on any applied or interviewing row: reported questions for that
+employer where they exist, likely technical questions for the role, the parts of
+*your* resume an interviewer will probe, your weakest spot with an honest answer,
+and what to ask back.
+
 **Most postings never state a level.** Of 261 US postings in a live run, 174
 state a band and 87 don't. Filing those 87 under "mid" made an entry filter show
 4 results and imply the entry market was empty. They're tagged **"Level not
