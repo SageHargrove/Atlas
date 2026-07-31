@@ -925,94 +925,120 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
    "where can we BOTH get hired, and what is left over after rent." A city only
    counts if it clears both bars, so a $95k offer in a city where the other
    person has nothing to apply to ranks below a $70k one where they do. */
+/* Your ranking of a city, not Atlas's. The old column was "their side", which
+   answered a question you can already see in the org list — what you actually
+   want at a glance is how much YOU want to live there, and that is a judgement
+   only you can make. S through F, editable, defaulting to the shipped tiers. */
+const CITY_TIERS = ["S", "A", "B", "C", "D", "F"];
+const TIER_CLR = { S: "var(--up)", A: "var(--acc)", B: "var(--gold)", C: "var(--faint)", D: "var(--faint)", F: "var(--down)" };
+
 function TwoCareerCities({ S, apps, setCareer }) {
   const [minPartner, setMinPartner] = useState(2);
-  const [open, setOpen] = useState(false);
   const [sort, setSort] = useState("adj");
+  const [shown, setShown] = useState(8);
+  const [editing, setEditing] = useState(false);
+  const [openCity, setOpenCity] = useState(null);
+
+  const setTier = (name, tier) => setCareer((c) => ({ ...c, settings: { ...c.settings,
+    cities: withPartnerData(c.settings.cities).map((x) => (x.name === name ? { ...x, tier } : x)) } }));
 
   const rows = useMemo(() => {
-    /* what you could actually earn there, from your own tracked targets */
+    /* every tracked target in each city, not just the best one — "what could I
+       do in Tampa" is the question, and one company name doesn't answer it */
     const byCity = {};
     for (const a of apps) {
       if (a.status === "Rejected" || a.status === "Withdrawn") continue;
       const m = cityMatch(a.city, S.cities);
       if (!m) continue;
-      const t = totalComp(a);
-      if (t == null) continue;
-      (byCity[m.name] ||= []).push({ comp: t, company: a.company });
+      (byCity[m.name] ||= []).push({ id: a.id, company: a.company, role: a.role, comp: totalComp(a), status: a.status });
     }
     return S.cities
       .filter((c) => (c.partner ?? 0) >= minPartner)
       .map((c) => {
-        const mine = (byCity[c.name] || []).sort((x, y) => y.comp - x.comp);
+        const mine = (byCity[c.name] || []).sort((x, y) => (y.comp || 0) - (x.comp || 0));
         const best = mine[0] || null;
-        /* adjusted to your home cost of living so the numbers are comparable */
-        const adj = best ? Math.round(best.comp / (c.col / 100)) : null;
-        return { ...c, targets: mine.length, best, adj };
+        return { ...c, targets: mine, best, adj: best?.comp ? Math.round(best.comp / (c.col / 100)) : null };
       })
       .sort({
         adj: (a, b) => (b.adj || 0) - (a.adj || 0) || (b.partner - a.partner) || (a.col - b.col),
+        tier: (a, b) => CITY_TIERS.indexOf(a.tier) - CITY_TIERS.indexOf(b.tier) || (b.adj || 0) - (a.adj || 0),
         partner: (a, b) => (b.partner - a.partner) || (b.adj || 0) - (a.adj || 0),
         col: (a, b) => a.col - b.col || (b.partner - a.partner),
         name: (a, b) => a.name.localeCompare(b.name),
       }[sort]);
   }, [S.cities, apps, minPartner, sort]);
 
-  const withTargets = rows.filter((r) => r.targets > 0);
-  const show = open ? rows : rows.slice(0, 8);
+  const withTargets = rows.filter((r) => r.targets.length > 0);
 
   return (
-    <div className="card">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h3>Where you could both work</h3>
-        <a className="btn small" href={AZA_JOBS} target="_blank" rel="noreferrer noopener">AZA job board</a>
-      </div>
+    <>
       <div className="note" style={{ marginTop: 0 }}>
-        Ranked by what your best tracked target there pays after cost of living, but only showing cities
-        where the zoo, wildlife and conservation side is real. A city you can't both work in isn't an option,
-        however good the salary looks.
+        Cities you'd both be able to work in. Tier is <b>your</b> ranking of the place; the org list is what's there for
+        her. A city you can't both work in isn't an option, however good the salary looks.
       </div>
 
       <div className="row" style={{ marginTop: 10 }}>
-        <span className="note" style={{ margin: 0 }}>Partner-side market at least</span>
-        <select className="in" style={{ width: 150 }} value={minPartner} onChange={(e) => setMinPartner(Number(e.target.value))}>
+        <span className="note" style={{ margin: 0 }}>Her side at least</span>
+        <select className="in" style={{ width: 148 }} value={minPartner} onChange={(e) => setMinPartner(Number(e.target.value))}>
           <option value={3}>Excellent only</option>
           <option value={2}>Solid or better</option>
           <option value={1}>Anything at all</option>
-          <option value={0}>Show every city</option>
+          <option value={0}>Every city</option>
         </select>
-        <select className="in" style={{ width: 190 }} value={sort} onChange={(e) => setSort(e.target.value)}>
+        <select className="in" style={{ width: 176 }} value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="adj">Sort: adjusted pay</option>
+          <option value="tier">Sort: my tier</option>
           <option value="partner">Sort: best for her</option>
           <option value="col">Sort: cheapest</option>
           <option value="name">Sort: A–Z</option>
         </select>
-        <span className="note" style={{ margin: 0 }}>
-          {rows.length} cities · {withTargets.length} where you already track a target
-        </span>
+        <button className={"btn small" + (editing ? " primary" : "")} onClick={() => setEditing((v) => !v)}>
+          {editing ? "Done ranking" : "Edit tiers"}
+        </button>
+        <span className="note" style={{ margin: 0 }}>{rows.length} cities · {withTargets.length} with a target</span>
+        <a className="btn small" href={AZA_JOBS} target="_blank" rel="noreferrer noopener">AZA jobs</a>
       </div>
 
       <div className="hscroll" style={{ marginTop: 8 }}>
         <table className="tbl" style={{ minWidth: 620 }}>
           <thead>
             <tr>
-              <th>City</th><th>Their side</th><th style={{ textAlign: "right" }}>COL</th>
-              <th style={{ textAlign: "right" }}>Your best target</th><th style={{ textAlign: "right" }}>Adjusted</th>
+              <th style={{ width: 62 }}>My tier</th><th>City</th><th>For her</th>
+              <th style={{ textAlign: "right" }}>COL</th>
+              <th>What you could do there</th>
+              <th style={{ textAlign: "right" }}>Adjusted</th>
             </tr>
           </thead>
           <tbody>
-            {show.map((c) => (
+            {rows.slice(0, shown).map((c) => (
               <tr key={c.name}>
                 <td>
+                  {editing ? (
+                    <select className="in" style={{ width: 56, padding: "2px 4px", fontSize: 12 }} value={c.tier}
+                      onChange={(e) => setTier(c.name, e.target.value)}>
+                      {CITY_TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  ) : (
+                    <b style={{ color: TIER_CLR[c.tier], fontSize: 15 }}>{c.tier}</b>
+                  )}
+                </td>
+                <td>
                   <b>{c.name}</b>
-                  <div className="note" style={{ margin: 0, fontSize: 11, maxWidth: 300 }}>{c.orgs || "—"}</div>
+                  <div className="note" style={{ margin: 0, fontSize: 11, maxWidth: 290 }}>{c.orgs || "—"}</div>
                 </td>
                 <td><span className="tag" style={{ color: partnerColor(c.partner), borderColor: partnerColor(c.partner) }}>{partnerLabel(c.partner)}</span></td>
                 <td className="mono" style={{ textAlign: "right", color: c.col <= 95 ? "var(--up)" : c.col >= 130 ? "var(--down)" : undefined }}>{c.col}</td>
-                <td style={{ textAlign: "right" }}>
-                  {c.best ? <><span className="mono">{money(c.best.comp)}</span>
-                    <div className="note" style={{ margin: 0, fontSize: 11 }}>{c.best.company}{c.targets > 1 ? " +" + (c.targets - 1) : ""}</div></>
-                    : <span className="note" style={{ margin: 0 }}>nothing tracked</span>}
+                <td>
+                  {c.targets.length === 0 ? <span className="note" style={{ margin: 0 }}>nothing tracked</span>
+                    : c.targets.length === 1 ? <span>{c.best.company} <span className="note" style={{ margin: 0, fontSize: 11 }}>· {money(c.best.comp)}</span></span>
+                    : (
+                      <select className="in" style={{ width: 210, padding: "3px 6px", fontSize: 12 }}
+                        value={openCity === c.name ? "" : ""} onChange={() => {}}
+                        title="Every target you track in this city">
+                        <option>{c.targets.length} targets — best {c.best.company}</option>
+                        {c.targets.map((t) => <option key={t.id}>{t.company} · {money(t.comp)} · {t.status}</option>)}
+                      </select>
+                    )}
                 </td>
                 <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{c.adj ? money(c.adj) : "—"}</td>
               </tr>
@@ -1020,18 +1046,19 @@ function TwoCareerCities({ S, apps, setCareer }) {
           </tbody>
         </table>
       </div>
-      {rows.length > 8 && (
-        <button className="btn small" style={{ marginTop: 8 }} onClick={() => setOpen((v) => !v)}>
-          {open ? "Show fewer" : "Show all " + rows.length}
+
+      {rows.length > shown && (
+        <button className="btn small" style={{ marginTop: 8 }} onClick={() => setShown((n) => n + 8)}>
+          Show 8 more — {rows.length - shown} hidden
         </button>
       )}
       {!withTargets.length && (
         <div className="note">
-          None of your tracked targets sit in these cities yet — <b>Load starter targets</b>, or add a company
-          in one of them, and this table starts comparing real money instead of just cost of living.
+          None of your tracked targets sit in these cities yet — track a few from the finder and this starts comparing
+          real money instead of just cost of living.
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1062,6 +1089,20 @@ function Fold({ title, sub, defaultOpen, children }) {
    consultancy — but the opposite error is just as easy, and worse: counting a
    pension you'll never vest in. So the vest horizon is an input, and the number
    changes when you change your mind about how long you'd stay. */
+/* One field per row-cell with its label above it, rather than a run of inputs
+   with labels wedged between them. The old layout put "401k match %" beside a
+   72px box and the number itself got clipped — a form that hides the value you
+   just typed is worse than one that takes more vertical space. */
+function Field({ label, hint, children }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <label className="f" style={{ marginTop: 0 }}>{label}</label>
+      {children}
+      {hint && <div className="note" style={{ margin: "3px 0 0", fontSize: 11 }}>{hint}</div>}
+    </div>
+  );
+}
+
 function FloorOffer({ S, setCareer }) {
   const f = S.floorOffer || {};
   const set = (k, v) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), [k]: v } } }));
@@ -1069,82 +1110,104 @@ function FloorOffer({ S, setCareer }) {
   const col = cityMatch(f.city, S.cities)?.col || (f.remote ? (S.remoteCol || 90) : 100);
   const v = offerValue({ ...f, col });
   const [open, setOpen] = useState(false);
+  const wide = { width: "100%" };
 
   return (
     <>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <label className="f" style={{ marginTop: 0 }}>Your floor — the offer you're confident of</label>
-        {v && <button className="btn small" onClick={() => setOpen((x) => !x)}>{open ? "Hide the maths" : "Show the maths"}</button>}
-      </div>
-      <div className="row">
-        <input className="in" style={{ width: 150 }} placeholder="Company" value={f.company || ""}
-          onChange={(e) => set("company", e.target.value.slice(0, 40))} />
-        <input className="in mono" type="number" style={{ width: 104 }} placeholder="Base $" value={f.base ?? ""} onChange={num("base")} />
-        <input className="in" style={{ width: 128 }} placeholder="City" value={f.city || ""}
-          onChange={(e) => set("city", e.target.value.slice(0, 40))} />
-        <label className="row" style={{ gap: 5, margin: 0 }}>
-          <input type="checkbox" checked={!!f.remote} onChange={(e) => set("remote", e.target.checked)} /> <span className="note" style={{ margin: 0 }}>remote</span>
-        </label>
-      </div>
-      <div className="row" style={{ marginTop: 6 }}>
-        <span className="note" style={{ margin: 0, width: 92 }}>Bonus %</span>
-        <input className="in mono" type="number" style={{ width: 72 }} placeholder="10" value={f.bonusPct ?? ""} onChange={num("bonusPct")} />
-        <span className="note" style={{ margin: 0 }}>401k match %</span>
-        <input className="in mono" type="number" step="0.25" style={{ width: 72 }} placeholder="4.75" value={f.matchPct ?? ""} onChange={num("matchPct")}
-          title="What the EMPLOYER puts in, as a % of your salary — not what you contribute" />
-        <span className="note" style={{ margin: 0 }}>PTO days</span>
-        <input className="in mono" type="number" style={{ width: 62 }} placeholder="15" value={f.ptoDays ?? ""} onChange={num("ptoDays")} />
-      </div>
-      <div className="row" style={{ marginTop: 6 }}>
-        <span className="note" style={{ margin: 0, width: 92 }}>Pension %</span>
-        <input className="in mono" type="number" step="0.5" style={{ width: 72 }} placeholder={String(PENSION_DEFAULT_PCT)} value={f.pensionPct ?? ""} onChange={num("pensionPct")}
-          title="The employer's own contribution as a % of pay. 7% is typical for a utility DB plan — check the plan document." />
-        <span className="note" style={{ margin: 0 }}>vests after</span>
-        <input className="in mono" type="number" style={{ width: 58 }} placeholder="5" value={f.vestYears ?? ""} onChange={num("vestYears")} />
-        <span className="note" style={{ margin: 0 }}>you'd stay</span>
-        <input className="in mono" type="number" style={{ width: 58 }} placeholder="3" value={f.stayYears ?? ""} onChange={num("stayYears")} />
-        <span className="note" style={{ margin: 0 }}>you pay for insurance $/yr</span>
-        <input className="in mono" type="number" style={{ width: 84 }} placeholder="1200" value={f.premiumPaid ?? ""} onChange={num("premiumPaid")} />
+      <div className="note" style={{ marginTop: 0 }}>
+        The offer you're confident of. Everything in the finder is measured against it, so a posting reads
+        <b> +$18k vs floor</b> rather than a bare number — the question isn't whether you can get a job, it's whether
+        anything beats the one you already have.
       </div>
 
-      {v ? (
+      <div className="grid4" style={{ marginTop: 12 }}>
+        <Field label="Company">
+          <input className="in" style={wide} placeholder="e.g. SPP" value={f.company || ""}
+            onChange={(e) => set("company", e.target.value.slice(0, 40))} />
+        </Field>
+        <Field label="Base salary">
+          <input className="in mono" style={wide} type="number" placeholder="67000" value={f.base ?? ""} onChange={num("base")} />
+        </Field>
+        <Field label="City" hint="leave blank if remote">
+          <input className="in" style={wide} placeholder="Little Rock" value={f.city || ""}
+            onChange={(e) => set("city", e.target.value.slice(0, 40))} />
+        </Field>
+        <Field label="Remote">
+          <label className="row" style={{ gap: 7, margin: "6px 0 0" }}>
+            <input type="checkbox" checked={!!f.remote} onChange={(e) => set("remote", e.target.checked)} />
+            <span className="note" style={{ margin: 0 }}>works from anywhere</span>
+          </label>
+        </Field>
+      </div>
+
+      <label className="f">What the benefits are worth</label>
+      <div className="grid4">
+        <Field label="Bonus target %" hint="on-target annual bonus">
+          <input className="in mono" style={wide} type="number" placeholder="10" value={f.bonusPct ?? ""} onChange={num("bonusPct")} />
+        </Field>
+        <Field label="Employer 401k %" hint="what THEY put in, as a % of your pay">
+          <input className="in mono" style={wide} type="number" step="0.25" placeholder="4.75" value={f.matchPct ?? ""} onChange={num("matchPct")} />
+        </Field>
+        {/* the part a single "match %" cannot express */}
+        <Field label="…if you contribute %" hint={f.matchNeedsPct ? "costs you " + dollars((Number(f.base) || 0) * (Number(f.matchNeedsPct) / 100)) + "/yr to unlock" : "leave 0 if they match regardless"}>
+          <input className="in mono" style={wide} type="number" step="0.5" placeholder="6" value={f.matchNeedsPct ?? ""} onChange={num("matchNeedsPct")} />
+        </Field>
+        <Field label="PTO days" hint="valued against a 10-day norm">
+          <input className="in mono" style={wide} type="number" placeholder="15" value={f.ptoDays ?? ""} onChange={num("ptoDays")} />
+        </Field>
+      </div>
+
+      <div className="grid4" style={{ marginTop: 12 }}>
+        <Field label="Pension %" hint="employer's contribution; ~7% is typical for a utility">
+          <input className="in mono" style={wide} type="number" step="0.5" placeholder={String(PENSION_DEFAULT_PCT)} value={f.pensionPct ?? ""} onChange={num("pensionPct")} />
+        </Field>
+        <Field label="Vests after (years)">
+          <input className="in mono" style={wide} type="number" placeholder="5" value={f.vestYears ?? ""} onChange={num("vestYears")} />
+        </Field>
+        <Field label="You'd stay (years)" hint="a pension you won't vest in is worth nothing">
+          <input className="in mono" style={wide} type="number" placeholder="3" value={f.stayYears ?? ""} onChange={num("stayYears")} />
+        </Field>
+        <Field label="You pay for insurance $/yr" hint={"valued against " + dollars(MARKET_PREMIUM) + " at market"}>
+          <input className="in mono" style={wide} type="number" placeholder="1200" value={f.premiumPaid ?? ""} onChange={num("premiumPaid")} />
+        </Field>
+      </div>
+
+      {v && (
         <>
-          <div className="note" style={{ marginTop: 8 }}>
+          <div className="note" style={{ marginTop: 14 }}>
             <b>Worth {dollars(v.total)}/yr</b> — {dollars(v.adjusted)} once {f.city || "that market"}'s cost of living is
-            taken out{f.remote ? " (remote)" : ""}.{" "}
+            taken out{f.remote ? " (remote)" : ""}.
+            {v.matchNeeds > 0 && <> The match needs {v.matchNeeds}% of your own pay ({dollars(v.matchCost)}/yr) to unlock.</>}
             {v.pensionForfeited > 0 && (
               <span style={{ color: "var(--gold)" }}>
-                The pension is excluded: it vests at {f.vestYears || 5} years and you've said you'd stay {f.stayYears || 0}, so
-                you'd walk away from {dollars(v.pensionForfeited)}/yr of it. Change "you'd stay" to see it counted.
+                {" "}The pension is excluded: it vests at {f.vestYears || 5} years and you'd stay {f.stayYears || 0}, so
+                you'd walk away from {dollars(v.pensionForfeited)}/yr of it.
               </span>
             )}
-            {v.vests && v.pension > 0 && <span> The pension counts here because you'd stay long enough to vest.</span>}
+            {v.vests && v.pension > 0 && <> The pension counts because you'd stay long enough to vest.</>}
           </div>
-          <div className="note" style={{ marginTop: 4 }}>
+          <div className="note" style={{ marginTop: 6 }}>
             A <b>remote</b> offer needs a base near <b>{dollars(baseToMatch(v.adjusted, { bonusPct: 5, matchPct: 4, col: S.remoteCol || 90, insurance: 2000 }))}</b> to
-            match it, and one in a 100-index city near <b>{dollars(baseToMatch(v.adjusted, { bonusPct: 5, matchPct: 4, col: 100, insurance: 2000 }))}</b>.
-            Below that you'd be taking a pay cut in exchange for the title.
+            match it; in a 100-index city, near <b>{dollars(baseToMatch(v.adjusted, { bonusPct: 5, matchPct: 4, col: 100, insurance: 2000 }))}</b>.
+            Below that you'd be taking a pay cut for the title.
           </div>
+          <button className="btn small" style={{ marginTop: 8 }} onClick={() => setOpen((x) => !x)}>
+            {open ? "Hide the maths" : "Show the maths"}
+          </button>
           {open && (
-            <div style={{ marginTop: 6 }}>
+            <div style={{ marginTop: 8 }}>
               {v.parts.map(([label, amt]) => (
                 <div className="kv" key={label} style={{ padding: "3px 0" }}>
                   <span className="k">{label}</span><span className="mono">{dollars(amt)}</span>
                 </div>
               ))}
               <div className="note" style={{ fontSize: 11.5 }}>
-                Insurance is valued against {dollars(MARKET_PREMIUM)}/yr for employee-only cover; PTO against a 10-day norm.
                 The pension rate is an estimate of the employer's contribution — check the plan document, it's the one
                 number here that can move the answer by thousands.
               </div>
             </div>
           )}
         </>
-      ) : (
-        <div className="note">
-          Put your base in and every posting reads <b>+$18k vs floor</b> instead of a bare number — the question isn't
-          whether you can get a job, it's whether anything beats the one you already have.
-        </div>
       )}
     </>
   );

@@ -229,7 +229,13 @@ export function offerValue(o = {}) {
   if (!base) return null;
   const legacyExtras = o.base == null && o.extrasPct ? base * (Number(o.extrasPct) / 100) : 0;
   const bonus = base * ((Number(o.bonusPct) || 0) / 100) + legacyExtras;
+  /* A match is rarely dollar-for-dollar. SPP puts in 4.75% but only if you put
+     in 6% — so the employer money is real, and it costs you 6% of your own pay
+     to unlock it. Counting the employer half without noting the condition makes
+     a plan look better than it is; ignoring the match entirely makes it look
+     worse. Both halves are inputs. */
   const match = base * ((Number(o.matchPct) || 0) / 100);
+  const matchNeeds = Number(o.matchNeedsPct) || 0;
   /* A pension that vests at five years is worth nothing at all if you plan to
      leave at three. Counting it anyway is the single easiest way to talk
      yourself into staying somewhere too long. */
@@ -247,7 +253,8 @@ export function offerValue(o = {}) {
   const total = base + bonus + match + pension + insurance + ptoDelta + other;
   const col = Number(o.col) || 100;
   return {
-    base, bonus, match, pension, pensionForfeited, insurance, ptoDelta, other,
+    base, bonus, match, matchNeeds, pension, pensionForfeited, insurance, ptoDelta, other,
+    matchCost: base * (matchNeeds / 100),
     total: Math.round(total),
     adjusted: Math.round(total / (col / 100)),
     vests,
