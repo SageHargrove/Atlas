@@ -59,7 +59,15 @@ const ADAPTERS = {
   },
   async lever(src) {
     const j = await jget("https://api.lever.co/v0/postings/" + src.token + "?mode=json");
-    return (Array.isArray(j) ? j : []).map((x) => withPay(x.descriptionPlain || x.description, {
+    /* Lever splits a posting: `description` is the intro blurb, and everything
+       that matters — Requirements, Qualifications, the years of experience —
+       lives in `lists`. Reading only the description meant IDMWORKS asking for
+       "3+ years IAM implementation, 4+ years security consulting" looked like a
+       posting with no stated requirement at all. */
+    const body = (x) => [x.descriptionPlain || x.description,
+      ...(Array.isArray(x.lists) ? x.lists.map((l) => (l.text || "") + " " + (l.content || "")) : []),
+      x.additionalPlain || x.additional || ""].filter(Boolean).join(" \n");
+    return (Array.isArray(j) ? j : []).map((x) => withPay(body(x), {
       id: "lv:" + src.token + ":" + x.id,
       title: txt(x.text),
       location: txt(x.categories?.location),
