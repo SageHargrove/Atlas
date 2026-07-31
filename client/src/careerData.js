@@ -155,3 +155,48 @@ export function compoundGap(startA, startB, years = 10, internal = 0.035, hopEve
   };
   return { a: run(startA), b: run(startB) };
 }
+
+/* Professional years, counted from the resume's own date ranges. Internships
+   count — they are real experience — but three summers is not three years, so
+   overlapping and part-year stints are summed by month, not by row. */
+export function yearsFromResume(text) {
+  const t = String(text || "");
+  /* NON-capturing inside, then wrapped in one optional capture. Written as
+     `(jan|feb|…)[a-z]*?` the trailing ? made the [a-z]* lazy instead of making
+     the month optional, so every "May 2026 – Aug. 2026" matched nothing at all
+     and the whole count silently came back zero. */
+  const MON = "(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*";
+  const re = new RegExp(
+    "(" + MON + ")?\\.?\\s*(20\\d{2})\\s*(?:[–—−-]|\\bto\\b)\\s*(?:(" + MON + ")?\\.?\\s*(20\\d{2})|present|current|now)", "gi");
+  const mi = (s) => ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(String(s || "").slice(0, 3).toLowerCase());
+  const now = new Date();
+  const spans = [];
+  let m;
+  while ((m = re.exec(t))) {
+    /* A degree's four years is not work experience, and a length cap can't tell
+       them apart — a 44-month degree looks exactly like a 44-month job. The
+       line it sits on can. */
+    const lineStart = t.lastIndexOf("\n", m.index) + 1;
+    let lineEnd = t.indexOf("\n", m.index);
+    if (lineEnd === -1) lineEnd = t.length;
+    const line = t.slice(lineStart, lineEnd);
+    if (/\b(universit|college|b\.?s\.?\b|b\.?a\.?\b|m\.?s\.?\b|bachelor|master|ph\.?d|degree|gpa|coursework|graduat|school|academy|minor in|honors)\b/i.test(line)) continue;
+
+    const y1 = Number(m[2]), m1 = Math.max(0, mi(m[1]));
+    const ongoing = !m[4];
+    const y2 = ongoing ? now.getFullYear() : Number(m[4]);
+    const m2 = ongoing ? now.getMonth() : Math.max(0, mi(m[3]));
+    const a = y1 * 12 + m1, b = y2 * 12 + m2;
+    if (b > a && b - a <= 60) spans.push([a, b]);
+  }
+  if (!spans.length) return 0;
+  spans.sort((x, y) => x[0] - y[0]);
+  let months = 0, cur = spans[0].slice();
+  for (const s of spans.slice(1)) {
+    if (s[0] <= cur[1]) cur[1] = Math.max(cur[1], s[1]);   // overlapping stints aren't additive
+    else { months += cur[1] - cur[0]; cur = s.slice(); }
+  }
+  months += cur[1] - cur[0];
+  return Math.round((months / 12) * 10) / 10;
+}
+

@@ -202,6 +202,16 @@ eq("the title beats the body", fam("GRC Analyst", "You will use Splunk and hunt 
 eq("the body is the fallback", fam("Cyber Specialist", "Own our SailPoint IGA platform and access reviews"), "iam");
 eq("nothing matches", fam("Cyber Specialist"), "other");
 
+/* A posting reading "3+ years of IAM implementation" and then "4+ years in
+   security consulting" gates on FOUR. Taking the first match understated every
+   multi-requirement posting, which is most of the senior ones. */
+console.log("\nyears takes the highest bar:");
+eq("two requirements, higher wins",
+  yr("3+ year of experience with IAM implementation/architecture. 4+ years of experience in security consulting."), 4);
+eq("order doesn't matter",
+  yr("8+ years of experience required. Also 2 years of experience with LDAP."), 8);
+eq("one requirement is unchanged", yr("5+ years of experience in security"), 5);
+
 console.log("\nboard URLs:");
 eq("greenhouse", parseBoardUrl("https://boards.greenhouse.io/guidepointsecurity"), { kind: "greenhouse", token: "guidepointsecurity" });
 eq("greenhouse job-boards host", parseBoardUrl("https://job-boards.greenhouse.io/okta/jobs/123"), { kind: "greenhouse", token: "okta" });

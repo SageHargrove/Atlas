@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityMatch } from "./careerData.js";
-import JobFinder, { guessMyLevel, LEVELS } from "./JobFinder.jsx";
+import JobFinder, { guessMyLevel, yearsFromResume, LEVELS } from "./JobFinder.jsx";
 import Projects, { projectsBrief } from "./Projects.jsx";
 import Timeline, { compoundGap } from "./Timeline.jsx";
 
@@ -620,6 +620,7 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
   const [nonce, setNonce] = useState(0);    // bump to re-render the preview
   const [tailorTarget, setTailorTarget] = useState("");
   const [view, setView] = useState("pdf");  // the document pane: rendered PDF or editable text
+  const autoYears = useMemo(() => yearsFromResume(S.resume), [S.resume]);
 
   /* every write goes through here so the legacy single-resume shape is migrated
      exactly once, and the old keys stop being the source of truth */
@@ -864,6 +865,22 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
                   <button className="btn small" style={{ marginTop: 6 }} disabled={!!busy} onClick={estimateLevel}>
                     {busy === "level" ? "Reading…" : "Re-check my level"}
                   </button>
+
+                  {/* the number that decides whether a "3+ years" posting is a
+                      real option — counted off the resume's own dates, editable
+                      because dates can't see freelance work or a gap */}
+                  <label className="f">Years of experience</label>
+                  <div className="row">
+                    <input className="in mono" type="number" step="0.5" min="0" max="40" style={{ width: 84 }}
+                      value={S.myYears ?? autoYears} onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, myYears: e.target.value === "" ? null : Number(e.target.value) } }))} />
+                    {S.myYears != null && (
+                      <button className="btn small" onClick={() => setCareer((c) => ({ ...c, settings: { ...c.settings, myYears: null } }))}>Use {autoYears}</button>
+                    )}
+                  </div>
+                  <div className="note" style={{ fontSize: 11.5 }}>
+                    {S.myYears == null ? "Counted from the dates on your resume — overlapping stints aren't double-counted." : "Yours, overriding the " + autoYears + " counted from your resume."}
+                    {" "}A posting asking for more than this drops its odds sharply, because recruiters filter on years before they ever read the skills.
+                  </div>
                 </>
               )}
 

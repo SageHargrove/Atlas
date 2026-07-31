@@ -19,6 +19,7 @@ const POLL_EVERY_MS = 6 * 60 * 60 * 1000;   // 4x/day is plenty; postings don't 
 const BETWEEN_MS = 250;                      // be a polite guest on someone else's API
 const MAX_KEEP = 1200;                       // hard ceiling on the cache
 const DESC_CHARS = 700;                      // enough to keyword-match; not enough to bloat
+const WORKDAY_DETAIL_CAP = 90;               // bounded extra requests per Workday board per poll
 
 /* ---------------- adapters ----------------
    Each returns a normalized posting or null. Anything that throws is caught
@@ -94,10 +95,6 @@ const ADAPTERS = {
       });
       const rows = j.jobPostings || [];
       for (const x of rows) {
-        /* Workday's list endpoint returns only a one-line subtitle, so there is
-           no pay and no clearance text to read here — noted rather than papered
-           over, because it is why those two fields are unreliable for Workday
-           employers and the UI says so. */
         out.push({
           id: "wd:" + src.tenant + ":" + (x.bulletFields?.[0] || x.externalPath),
           title: txt(x.title),
@@ -105,11 +102,36 @@ const ADAPTERS = {
           url: base + "/en-US/" + src.site + (x.externalPath || ""),
           posted: postedFromWorkday(x.postedOn),
           desc: txt(x.subtitle),
-          thin: true,
+          _path: x.externalPath,
         });
       }
       if (rows.length < 20 || out.length >= (j.total || 0)) break;
       await sleep(BETWEEN_MS);
+    }
+
+    /* Workday's LIST endpoint returns a one-line subtitle and nothing else, so
+       pay, clearance and years-required were all invisible for these employers.
+       The detail endpoint has the full posting. One extra request per row is
+       the price of a CACI job showing its real $58,400–$116,900 instead of an
+       estimate — but only for rows that survive the security filter, so we
+       aren't fetching 300 program-manager pages to throw them away. */
+    const keep = out.filter((p) => classifyPosting({ ...p }, src.cat));
+    let spent = 0;
+    for (const p of out) {
+      if (!keep.some((k) => k.id === p.id) || spent >= WORKDAY_DETAIL_CAP) { delete p._path; continue; }
+      try {
+        const dj = await jget(base + "/wday/cxs/" + src.tenant + "/" + src.site + p._path);
+        const full = txt(dj?.jobPostingInfo?.jobDescription);
+        if (full) {
+          p.desc = full.slice(0, DESC_CHARS);
+          p._full = full;
+          const pay = payFromText(full);
+          if (pay) Object.assign(p, pay);
+        }
+        spent++;
+      } catch { /* one unreachable detail page must not lose the posting */ }
+      delete p._path;
+      await sleep(120);
     }
     return out;
   },
@@ -363,12 +385,20 @@ const REMOTE = /\b(remote|work from home|wfh|distributed|anywhere)\b/i;
    matched prose like "in the last 2 years" and filed a $199k Stripe role as
    entry level on the strength of it. */
 const YEARS = /(\d+)\s*\+?\s*(?:(?:-|–|to)\s*\d+\s*)?years?[’']?s?\s+(?:of\s+)?(?:[\w-]+\s+){0,3}?experience|(?:experience|background)\s*(?:of|:)?\s*(\d+)\s*\+?\s*years?|minimum\s+(?:of\s+)?(\d+)\s*\+?\s*years?/i;
+/* The HIGHEST bar, not the first one mentioned. A posting reading "3+ years of
+   IAM implementation" and then "4+ years in security consulting" gates on four;
+   taking the first match understated every multi-requirement posting, which are
+   most of the senior ones. */
 const yearsFrom = (text) => {
-  const m = YEARS.exec(String(text || ""));
-  if (!m) return null;
-  const n = Number(m[1] ?? m[2] ?? m[3]);
-  /* 30 years of experience is a typo or a company anniversary, not a requirement */
-  return Number.isFinite(n) && n >= 0 && n <= 25 ? n : null;
+  const t = String(text || "");
+  const re = new RegExp(YEARS.source, "gi");
+  let m, best = null;
+  while ((m = re.exec(t))) {
+    const n = Number(m[1] ?? m[2] ?? m[3]);
+    /* 30 years of experience is a typo or a company anniversary, not a requirement */
+    if (Number.isFinite(n) && n >= 0 && n <= 25 && (best == null || n > best)) best = n;
+  }
+  return best;
 };
 
 /* He can't take a role in Bengaluru or Dublin, and those were a third of the

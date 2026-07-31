@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money } from "./careerData.js";
+import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money, yearsFromResume } from "./careerData.js";
+export { yearsFromResume };
 
 /* ------------------------------------------------------------------
    Job finder — the half that actually finds things.
@@ -96,7 +97,7 @@ const SELECTIVITY = {
 };
 
 function scoreJob(j, ctx) {
-  const { S, myLevel, resumeTokens, hasClearance, hasResume } = ctx;
+  const { S, myLevel, resumeTokens, hasClearance, hasResume, myYears } = ctx;
   const city = cityMatch(j.location, S.cities);
   /* The server now fills most gaps from what comparable postings actually pay;
      the static table is only the floor for a band with too few real samples. */
@@ -130,12 +131,20 @@ function scoreJob(j, ctx) {
      all — the UI says to upload instead of showing a number built on nothing. */
   const overlapPts = jt.size ? Math.round(Math.min(1, shared.length / Math.min(8, Math.max(3, jt.size))) * 35) : 12;
   const clearPts = j.clearance ? (hasClearance ? 10 : -22) : 10;
-  const yearsPts = j.yearsReq == null ? 5 : j.yearsReq <= 2 ? 5 : j.yearsReq <= 4 ? 2 : -6;
-  const raw = levelPts + overlapPts + clearPts + yearsPts;
-  const sel = SELECTIVITY[j.cat] ?? 0.85;
-  const odds = hasResume ? Math.max(1, Math.min(100, Math.round(raw * sel))) : null;
+  const raw = levelPts + overlapPts + clearPts;
 
-  return { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, sel, gap, shared, place, growth, money_ };
+  /* A stated years requirement is a gate, not a gradient. Adding a few points
+     of penalty let strong keyword overlap cancel it out, so a posting asking
+     "3+ years IAM implementation, 4+ years security consulting" came back as
+     reachable for someone whose experience is two internships. Recruiters do
+     not average those two things — they filter on the years and never see the
+     keywords. It multiplies now, so the shortfall can't be argued away. */
+  const shortfall = j.yearsReq == null ? 0 : Math.max(0, j.yearsReq - myYears);
+  const yearsMult = [1, 0.82, 0.55, 0.36, 0.24][Math.min(shortfall, 4)] ?? 0.18;
+  const sel = SELECTIVITY[j.cat] ?? 0.85;
+  const odds = hasResume ? Math.max(1, Math.min(100, Math.round(raw * sel * yearsMult))) : null;
+
+  return { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, sel, gap, shortfall, shared, place, growth, money_ };
 }
 
 const oddsWord = (n) => (n >= 70 ? "Strong" : n >= 52 ? "Realistic" : n >= 34 ? "Stretch" : "Long shot");
@@ -206,11 +215,13 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const tracked = useMemo(() => new Set(apps.map((a) => (a.company + "|" + a.role).toLowerCase())), [apps]);
 
   const hasResume = !!String(S.resume || "").trim();
+  /* editable, because a resume's dates can't see freelance work or a gap */
+  const myYears = S.myYears != null ? Number(S.myYears) : yearsFromResume(S.resume);
   const scored = useMemo(() => {
     if (!data?.jobs) return [];
-    const ctx = { S, myLevel, resumeTokens, hasClearance, hasResume };
+    const ctx = { S, myLevel, resumeTokens, hasClearance, hasResume, myYears };
     return data.jobs.map((j) => scoreJob(j, ctx));
-  }, [data, S, myLevel, resumeTokens, hasClearance, hasResume]);
+  }, [data, S, myLevel, resumeTokens, hasClearance, hasResume, myYears]);
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -579,8 +590,19 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                 </span>
                 <span style={{ textAlign: "right", flexShrink: 0 }}>
                   <div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{money(j.adj)}</div>
-                  <div className="note" style={{ margin: 0, fontSize: 11 }}>
-                    {j.adj ? "adjusted" : "no pay data"}{j.estimated && j.adj ? " · est" : ""}
+                  {/* where the number came from, on every row — an estimate that
+                      looks identical to a published figure is a number you can't use */}
+                  <div className="note" style={{ margin: 0, fontSize: 11 }}
+                    title={j.compLow
+                      ? "The posting states " + money(j.compLow) + "–" + money(j.compHigh) + ". Shown is the midpoint, adjusted for cost of living."
+                      : j.compRough ? "No pay stated. Estimated from postings at this level across all employer types, rescaled toward this one's market."
+                      : j.compEst ? "No pay stated. Estimated from the median of comparable " + j.cat + " postings at this level that DO publish pay."
+                      : "Adjusted for cost of living."}>
+                    {!j.adj ? "no pay data"
+                      : j.compLow ? "posted " + money(j.compLow) + "–" + money(j.compHigh)
+                      : j.compRough ? "rough est ⓘ"
+                      : j.compEst ? "est from similar ⓘ"
+                      : "posted"}
                   </div>
                   {j.odds != null ? (
                     <div className="note" style={{ margin: 0, fontSize: 11.5, color: oddsColor(j.odds) }}>
@@ -596,7 +618,10 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                 <button className="btn small" disabled={already} onClick={() => track(j)}>{already ? "Tracked ✓" : "Track this"}</button>
                 <button className="x" title="Not interested — hide this one" onClick={() => dismiss(j.id)}>✕</button>
                 <span className="note" style={{ margin: 0, fontSize: 11 }}>
-                  fit {j.fit}/100{j.gap > 0 ? " · " + j.gap + " rung" + (j.gap > 1 ? "s" : "") + " above you" : j.gap < 0 ? " · below your level" : ""}
+                  fit {j.fit}/100
+                  {j.gap > 0 ? " · " + j.gap + " rung" + (j.gap > 1 ? "s" : "") + " above you" : j.gap < 0 ? " · below your level" : ""}
+                  {/* the single biggest reason a strong-looking match isn't one */}
+                  {j.shortfall > 0 && <b style={{ color: "var(--down)" }}> · wants {j.yearsReq}y, you have {myYears}</b>}
                 </span>
               </div>
             </div>
