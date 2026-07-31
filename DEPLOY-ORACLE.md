@@ -122,10 +122,12 @@ or run `npm run build` on your laptop and upload `client/dist/` â€” the ser
 serves that directory when it exists, so the VM never has to build.
 
 ## 6. Encrypted backups
-The entire database is `users.json` + `data-*.json` in `DATA_DIR`. Bank tokens
-inside are already encrypted, but back up to an **encrypted** archive so a
-stray backup file never leaks financial data. Pick a long passphrase and store
-it somewhere other than the VM:
+The entire database is `users.json` + `data-*.json` + `resume-*.pdf` in
+`DATA_DIR` — the command below archives the whole directory, so all three are
+covered. Bank tokens inside are already encrypted, but back up to an
+**encrypted** archive so a stray backup file never leaks financial data (or a
+resume, which carries a real name, address, and phone number). Pick a long
+passphrase and store it somewhere other than the VM:
 ```
 printf 'YOUR-LONG-BACKUP-PASSPHRASE' | sudo tee /root/.cache-backup-pass >/dev/null
 sudo chmod 600 /root/.cache-backup-pass

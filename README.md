@@ -23,9 +23,11 @@ runs like a native app.
 
 There's also a **Career** tab, because the biggest lever on your finances is
 usually your income: track applications with cost-of-living-adjusted comp tiers,
-keep your resume as a PDF (previewed in-app, text extracted so you and the AI
-can edit it, then rebuilt back into a PDF), tailor it per role, and ask what an
-offer would actually do to your budget, runway, and goal dates.
+keep up to **five resumes** as real PDFs (previewed in-app, text extracted so you
+and the AI can edit it, then rebuilt back into a PDF) so a utilities version and a
+consulting version can live side by side, generate a tailored variant aimed at one
+specific opening, draft a cover letter per application, and ask what an offer would
+actually do to your budget, runway, and goal dates.
 
 Registration is invite-code gated so you can share with friends/family —
 every user's data lives in its own file, invisible to other users.
@@ -137,6 +139,26 @@ Leave bank sync and AI unconfigured if you just want to click around.
   Bank tokens are never included — they never leave the server at all.
 - **Change password** (Security panel): requires the current password and
   signs out every other device.
+
+## Resumes and cover letters (Career tab)
+- Up to **five resumes**, each its own tab with its own stored PDF, its own
+  extracted text, and a name you pick ("General", "Utilities", "Consulting").
+  The first one is what fit scoring and the assistant read.
+- **New tailored resume** picks one of your tracked applications, rewrites the
+  current resume against it, builds a PDF, and drops it into a *new* tab — the
+  resume you started from is never touched.
+- **Cover letter** drafts one per application from your resume and saves it on
+  that application. It opens in an editable box, not a send button.
+- On the AI-writing question: employers essentially never run AI detectors on
+  cover letters — an applicant tracking system parses yours for keywords and a
+  human skims it. What loses you the interview is a letter that sounds like every
+  other letter. Use the draft for structure and facts, then rewrite it in your
+  own voice. The prompt is deliberately tuned against "I am excited to" filler
+  for that reason.
+- Nothing invented: every prompt forbids adding a job, date, tool, or number that
+  isn't already in your resume. Read the output anyway — it's your name on it.
+- Resume PDFs are stored `0600` in the same private directory as your finances
+  and are covered by the encrypted backups. `.gitignore` keeps them out of git.
 
 ## Multi-user model
 - `INVITE_CODE` in `.env` gates registration; rotate it anytime

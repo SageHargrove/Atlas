@@ -530,7 +530,7 @@ async function extractPdfText(buffer) {
 
 /* renders the stored PDF to canvases so you can see the real document,
    not just a filename */
-function PdfView({ nonce }) {
+function PdfView({ slot = 1, nonce }) {
   const [pages, setPages] = useState(null);
   const [err, setErr] = useState("");
   useEffect(() => {
@@ -538,7 +538,7 @@ function PdfView({ nonce }) {
     setErr(""); setPages(null); // otherwise one failed fetch wedges the preview until a reload
     (async () => {
       try {
-        const r = await fetch("/api/resume");
+        const r = await fetch("/api/resume/" + slot);
         if (!r.ok) { if (!dead) setErr("no file"); return; }
         const buf = await r.arrayBuffer();
         const pdfjs = await import("pdfjs-dist");
@@ -559,7 +559,7 @@ function PdfView({ nonce }) {
       } catch (e) { if (!dead) setErr(e.message); }
     })();
     return () => { dead = true; };
-  }, [nonce]);
+  }, [slot, nonce]);
 
   if (err) return <div className="note">Preview unavailable{err !== "no file" ? " — " + err : ""}.</div>;
   if (!pages) return <div className="note">Rendering preview…</div>;
@@ -617,39 +617,99 @@ const b64 = (buf) => {
   return btoa(s);
 };
 
-function ResumeCard({ S, setCareer, config, toast }) {
-  const meta = S.resumeMeta || null;
+/* Slot 1 keeps the original filename on the server, so a single stored resume
+   becomes resume #1 here with nothing to copy or re-upload. */
+function readResumes(S) {
+  if (Array.isArray(S.resumes) && S.resumes.length) return S.resumes;
+  if ((S.resume || "").trim() || S.resumeMeta) {
+    return [{ slot: 1, label: "General", text: S.resume || "", meta: S.resumeMeta || null }];
+  }
+  return [];
+}
+
+function ResumeCard({ S, setCareer, config, toast, apps }) {
+  const resumes = readResumes(S);
+  const [active, setActive] = useState(0);
+  const idx = Math.min(active, Math.max(0, resumes.length - 1));
+  const cur = resumes[idx] || null;
+  const meta = cur?.meta || null;
+  const text = cur?.text || "";
   const [busy, setBusy] = useState("");
   const [instr, setInstr] = useState("");
   const [draft, setDraft] = useState(null); // AI rewrite awaiting your yes/no
   const [nonce, setNonce] = useState(0);    // bump to re-render the preview
+  const [tailorTarget, setTailorTarget] = useState("");
+
+  /* every write goes through here so the legacy single-resume shape is migrated
+     exactly once, and the old keys stop being the source of truth */
+  const writeResumes = (fn) => setCareer((c) => {
+    const list = fn(readResumes({ ...c.settings }));
+    return { ...c, settings: { ...c.settings, resumes: list, resume: list[0]?.text || "", resumeMeta: list[0]?.meta || null } };
+  });
+  const patch = (slot, changes) => writeResumes((list) => list.map((r) => (r.slot === slot ? { ...r, ...changes } : r)));
+  const freeSlot = () => { for (let n = 1; n <= 5; n++) if (!resumes.some((r) => r.slot === n)) return n; return null; };
 
   /* text === null means "keep the text I already have" — used by publish, because
      re-extracting our own generated PDF is lossy (blank lines vanish, wrapped
      lines come back as separate lines, and an all-caps wrap tail gets promoted to
      a section heading on the next render). Your text stays the source of truth. */
-  const store = async (buf, name, pages, text) => {
-    const r = await fetch("/api/resume", {
+  const store = async (slot, buf, name, pages, text, label) => {
+    const r = await fetch("/api/resume/" + slot, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pdf: b64(buf) }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "upload failed");
-    setCareer((c) => ({ ...c, settings: { ...c.settings,
-      resume: text == null ? c.settings.resume : text.slice(0, MAX_RESUME_CHARS),
-      resumeMeta: { name, pages, bytes: buf.byteLength, uploaded: new Date().toISOString().slice(0, 10) } } }));
+    const m = { name, pages, bytes: buf.byteLength, uploaded: new Date().toISOString().slice(0, 10) };
+    writeResumes((list) => list.some((x) => x.slot === slot)
+      ? list.map((x) => (x.slot === slot ? { ...x, meta: m, ...(text == null ? {} : { text: text.slice(0, MAX_RESUME_CHARS) }), ...(label ? { label } : {}) } : x))
+      : [...list, { slot, label: label || "Resume " + slot, text: (text || "").slice(0, MAX_RESUME_CHARS), meta: m }]);
     setNonce((n) => n + 1);
   };
 
-  const pick = async (file) => {
+  const pick = async (file, intoSlot) => {
     if (!file) return;
+    const slot = intoSlot || cur?.slot || freeSlot();
+    if (!slot) { toast("You already have " + resumes.length + " resumes — delete one first.", "err"); return; }
+    const isNew = !resumes.some((r) => r.slot === slot);
     setBusy("read");
     try {
       const buf = await file.arrayBuffer();
       if (buf.byteLength > 2.5 * 1024 * 1024) throw new Error("that PDF is over 2.5 MB");
       const { text, pages } = await extractPdfText(buf);
-      await store(buf, file.name, pages, text);
+      await store(slot, buf, file.name, pages, text, isNew ? file.name.replace(/\.pdf$/i, "").slice(0, 24) : undefined);
+      /* a new slot is appended, so it lands at the end; a replacement keeps its place */
+      setActive(isNew ? resumes.length : idx);
       toast("Resume uploaded — " + pages + (pages === 1 ? " page" : " pages") + ", text extracted and editable below.");
     } catch (e) { toast("Couldn't read that PDF — " + e.message, "err"); }
+    setBusy("");
+  };
+
+  /* Build a whole variant of an existing resume aimed at one target, then store
+     it as its own slot with its own PDF — a real second resume you can send. */
+  const makeVariant = async () => {
+    const slot = freeSlot();
+    if (!slot) return toast("Five resumes is the limit — delete one first.", "err");
+    if (!text.trim()) return toast("This resume has no text to work from.", "err");
+    const target = apps.find((a) => a.id === tailorTarget);
+    setBusy("variant");
+    try {
+      const aim = target ? target.role + " at " + target.company + (target.city ? " in " + target.city : "") : instr.trim();
+      const out = (await callClaude(
+        "Here is the plain text of a resume:\n\n" + text.slice(0, 9000) +
+        "\n\nProduce a version of this SAME resume aimed at: " + aim +
+        "\n\nRules: every claim must stay truthful to the original — reorder, reword, cut, and re-emphasise, but never invent a job, " +
+        "date, tool or number. Put the most relevant experience first and drop what doesn't serve this target. Keep the same overall " +
+        "structure (name and contact first, then sections). Section headings in ALL CAPS on their own line. Bullets start with '- '. " +
+        "Plain text only, no markdown, no commentary."
+      )).trim();
+      if (!out) throw new Error("the model returned nothing");
+      const doc = await buildPdf(out);
+      const buf = doc.output("arraybuffer");
+      const label = (target ? target.company : aim).slice(0, 22) || "Variant";
+      await store(slot, buf, label.replace(/[^\w ()-]/g, "") + ".pdf", doc.getNumberOfPages(), out, label);
+      setActive(resumes.length);
+      toast("Made a new resume aimed at " + label + " — review it before you send it anywhere.");
+    } catch (e) { toast("Couldn't build that variant — " + e.message, "err"); }
     setBusy("");
   };
 
@@ -658,21 +718,21 @@ function ResumeCard({ S, setCareer, config, toast }) {
   const publish = async () => {
     setBusy("pub");
     try {
-      const doc = await buildPdf(S.resume);
+      const doc = await buildPdf(text);
       const buf = doc.output("arraybuffer");
       const base = (meta?.name || "resume.pdf").replace(/\.pdf$/i, "").replace(/ \(edited\)+$/i, "");
-      await store(buf, base + " (edited).pdf", doc.getNumberOfPages(), null);
+      await store(cur.slot, buf, base + " (edited).pdf", doc.getNumberOfPages(), null);
       toast("Your edits are now the stored PDF — preview and download both use it.");
     } catch (e) { toast("Couldn't rebuild the PDF — " + e.message, "err"); }
     setBusy("");
   };
 
   const aiEdit = async () => {
-    if (!S.resume.trim()) return toast("Upload a resume first.", "err");
+    if (!text.trim()) return toast("Upload a resume first.", "err");
     setBusy("ai");
     try {
       const out = (await callClaude(
-        "Here is the plain text of someone's resume:\n\n" + S.resume.slice(0, 9000) +
+        "Here is the plain text of someone's resume:\n\n" + text.slice(0, 9000) +
         "\n\nRewrite it with this instruction: " + (instr.trim() || "tighten the writing and lead every bullet with the outcome") +
         "\n\nRules: keep every claim truthful to the original — reword, reorder, cut, but never invent a job, a date, a tool, or a number. " +
         "Keep the same section structure (name and contact first, then sections). Section headings in ALL CAPS on their own line. " +
@@ -697,50 +757,90 @@ function ResumeCard({ S, setCareer, config, toast }) {
         Everything is stored with your finances: same private directory, same encrypted backups, same passkey.
       </div>
 
+      {resumes.length > 0 && (
+        <div className="row" style={{ marginTop: 10, gap: 4 }}>
+          <div className="tabs" style={{ flexWrap: "wrap" }}>
+            {resumes.map((r, i) => (
+              <button key={r.slot} className={"tab" + (i === idx ? " on" : "")} onClick={() => { setActive(i); setNonce((n) => n + 1); }}>
+                {r.label || "Resume " + r.slot}
+              </button>
+            ))}
+          </div>
+          {resumes.length < 5 && (
+            <button className="btn small" disabled={!!busy} title="Upload another PDF as a separate resume"
+              onClick={() => document.getElementById("resume-add").click()}>+ Another resume</button>
+          )}
+          <input id="resume-add" type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
+            onChange={(e) => { pick(e.target.files[0], freeSlot()); e.target.value = ""; }} />
+        </div>
+      )}
+
+      {cur && (
+        <div className="row" style={{ marginTop: 8 }}>
+          <label className="note" style={{ margin: 0 }}>Name this one</label>
+          <input className="in" style={{ width: 200, padding: "4px 8px" }} value={cur.label || ""}
+            placeholder="e.g. IAM / utilities"
+            onChange={(e) => patch(cur.slot, { label: e.target.value.slice(0, 24) })} />
+        </div>
+      )}
+
       <div className="row" style={{ marginTop: 10 }}>
         <button className="btn small primary" disabled={!!busy} onClick={() => document.getElementById("resume-pick").click()}>
           {busy === "read" ? "Reading…" : meta ? "Replace PDF" : "Upload PDF"}
         </button>
         <input id="resume-pick" type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
           onChange={(e) => { pick(e.target.files[0]); e.target.value = ""; }} />
-        {meta && <a className="btn small" href="/api/resume" target="_blank" rel="noreferrer noopener">Open PDF</a>}
-        {S.resume.trim() && (
+        {meta && <a className="btn small" href={"/api/resume/" + cur.slot} target="_blank" rel="noreferrer noopener">Open PDF</a>}
+        {text.trim() && (
           <>
             <button className="btn small" disabled={!!busy}
-              onClick={() => buildPdf(S.resume).then((doc) => doc.save("resume-" + new Date().toISOString().slice(0, 10) + ".pdf")).catch((e) => toast("Export failed — " + e.message, "err"))}>
+              onClick={() => buildPdf(text).then((doc) => doc.save(((cur.label || "resume") + "-" + new Date().toISOString().slice(0, 10) + ".pdf").replace(/[^\w.() -]/g, ""))).catch((e) => toast("Export failed — " + e.message, "err"))}>
               Download edited
             </button>
             <button className="btn small" disabled={!!busy} title="Rebuild the PDF from your edited text and make it the stored version"
               onClick={publish}>{busy === "pub" ? "Rebuilding…" : "Save edits as the PDF"}</button>
           </>
         )}
-        {meta && (
-          <button className="btn small danger" onClick={async () => {
-            if (!confirm("Remove the stored resume PDF and its text?")) return;
-            await fetch("/api/resume", { method: "DELETE" });
-            setCareer((c) => ({ ...c, settings: { ...c.settings, resume: "", resumeMeta: null } }));
-            toast("Resume removed.");
-          }}>Remove</button>
+        {cur && (
+          <button className="btn small danger" disabled={!!busy} onClick={async () => {
+            if (!confirm("Delete “" + (cur.label || "this resume") + "” — its PDF and its text?")) return;
+            const r = await fetch("/api/resume/" + cur.slot, { method: "DELETE" });
+            if (!r.ok) return toast("Couldn't delete it on the server — nothing changed.", "err");
+            writeResumes((list) => list.filter((x) => x.slot !== cur.slot));
+            setActive(0);
+            toast("Resume deleted.");
+          }}>Delete</button>
         )}
       </div>
 
-      {meta && <PdfView nonce={nonce} />}
+      {meta && <PdfView slot={cur.slot} nonce={nonce} />}
 
-      {S.resume.trim() ? (
+      {text.trim() ? (
         <>
           <label className="f">Resume text — edit freely</label>
-          <textarea className="in mono" style={{ minHeight: 240, fontSize: 12.5, lineHeight: 1.5 }} value={S.resume}
-            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, resume: e.target.value } }))} />
+          <textarea className="in mono" style={{ minHeight: 240, fontSize: 12.5, lineHeight: 1.5 }} value={text}
+            onChange={(e) => patch(cur.slot, { text: e.target.value.slice(0, MAX_RESUME_CHARS) })} />
           <div className="note">
-            {S.resume.trim().split(/\s+/).length} words. Edits feed fit scoring, tailoring and the assistant.
+            {text.trim().split(/\s+/).length} words. Edits feed fit scoring, tailoring and the assistant.
             <b> Download edited</b> gives you a file; <b>Save edits as the PDF</b> makes them the stored version you see above.
           </div>
           {config?.aiEnabled && (
-            <div className="row" style={{ marginTop: 8 }}>
-              <input className="in" style={{ flex: 1, minWidth: 180 }} placeholder="Tell the AI how to edit it — e.g. 'make it IAM-focused, cut to one page'"
-                value={instr} onChange={(e) => setInstr(e.target.value)} onKeyDown={(e) => e.key === "Enter" && aiEdit()} />
-              <button className="btn small" disabled={!!busy} onClick={aiEdit}>{busy === "ai" ? "Rewriting…" : "Edit with AI"}</button>
-            </div>
+            <>
+              <div className="row" style={{ marginTop: 8 }}>
+                <input className="in" style={{ flex: 1, minWidth: 180 }} placeholder="Tell the AI how to edit it — e.g. 'make it IAM-focused, cut to one page'"
+                  value={instr} onChange={(e) => setInstr(e.target.value)} onKeyDown={(e) => e.key === "Enter" && aiEdit()} />
+                <button className="btn small" disabled={!!busy} onClick={aiEdit}>{busy === "ai" ? "Rewriting…" : "Edit with AI"}</button>
+              </div>
+              <div className="row" style={{ marginTop: 8 }}>
+                <span className="note" style={{ margin: 0 }}>Make a tailored copy for</span>
+                <select className="in" style={{ width: 220 }} value={tailorTarget} onChange={(e) => setTailorTarget(e.target.value)}>
+                  <option value="">— use the instruction above —</option>
+                  {apps.map((a) => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}
+                </select>
+                <button className="btn small" disabled={!!busy || !freeSlot()} title={freeSlot() ? "Writes a new resume into its own tab — this one is untouched" : "Five resumes is the limit — delete one first"}
+                  onClick={makeVariant}>{busy === "variant" ? "Writing…" : "New tailored resume"}</button>
+              </div>
+            </>
           )}
         </>
       ) : (
@@ -754,8 +854,8 @@ function ResumeCard({ S, setCareer, config, toast }) {
           <div className="mrow">
             <button className="btn" onClick={() => setDraft(null)}>Discard</button>
             <button className="btn primary" onClick={() => {
-              setCareer((c) => ({ ...c, settings: { ...c.settings, resume: draft } }));
-              setDraft(null); toast("Resume text replaced — export a PDF when you're happy with it.");
+              patch(cur.slot, { text: draft.slice(0, MAX_RESUME_CHARS) });
+              setDraft(null); toast("Resume text replaced — Save edits as the PDF when you're happy with it.");
             }}>Use this version</button>
           </div>
         </Sheet>
@@ -832,6 +932,9 @@ export default function Career({ d, setD, config, toast }) {
   const [tailorFor, setTailorFor] = useState(null);
   const [tailorOut, setTailorOut] = useState("");
   const [busy, setBusy] = useState(false);
+  const [letterFor, setLetterFor] = useState(null);
+  const [letterOut, setLetterOut] = useState("");
+  const [letterBusy, setLetterBusy] = useState(false);
 
   const setCareer = (fn) => setD((p) => {
     const cur = p.career || DEFAULT_CAREER;
@@ -883,6 +986,39 @@ export default function Career({ d, setD, config, toast }) {
       toast("Tailoring failed — " + e.message, "err"); setTailorFor(null);
     }
     if (req === tailorReq.current) setBusy(false);
+  };
+
+  /* A cover letter is a first draft, never a send-as-is artifact. It comes out
+     deliberately plain and short, and it lands in an editable box with the
+     honest warning attached — a letter that reads like a model wrote it is the
+     thing that gets you skipped, not the fact that one helped. */
+  const letterReq = useRef(0);
+  const coverLetter = async (a) => {
+    if (letterBusy) return;
+    const base = readResumes(S)[0]?.text || "";
+    if (!base.trim()) return toast("Upload a resume below first — the letter is built from it.", "err");
+    const req = ++letterReq.current;
+    setLetterFor(a); setLetterOut(a.cover || ""); setLetterBusy(true);
+    try {
+      const out = (await callClaude(
+        "Resume:\n" + base.slice(0, 7000) +
+        "\n\nTarget: " + a.role + " at " + a.company + (a.city ? " in " + a.city : "") +
+        (a.notes ? "\nWhat I know about this role: " + String(a.notes).slice(0, 600) : "") +
+        "\n\nWrite a cover letter draft in the FIRST PERSON as this candidate. Rules: 200–260 words, four short paragraphs, " +
+        "no greeting flourish beyond 'Dear Hiring Team,'. Every specific must come from the resume — never invent a project, " +
+        "a number, an employer or an interest. Name two concrete things from the resume that map to this role and say plainly " +
+        "why they map. No superlatives, no 'I am excited to', no 'passionate', no 'thrilled', no 'I believe I would be a great " +
+        "fit', no restating the job description back at them. Write in short declarative sentences a real person would say out " +
+        "loud. Plain text only."
+      )).trim();
+      if (req !== letterReq.current) return;
+      if (!out) throw new Error("the model returned nothing");
+      setLetterOut(out);
+    } catch (e) {
+      if (req !== letterReq.current) return;
+      toast("Couldn't draft that letter — " + e.message, "err"); setLetterFor(null);
+    }
+    if (req === letterReq.current) setLetterBusy(false);
   };
 
   return (
@@ -963,6 +1099,11 @@ export default function Career({ d, setD, config, toast }) {
             <div className="row" style={{ gap: 8, marginTop: 8 }}>
               <a className="btn small" href={dest.url} target="_blank" rel="noreferrer noopener">Find on {dest.label}</a>
               {config?.aiEnabled && <button className="btn small" disabled={busy} onClick={() => tailor(a)}>Tailor resume</button>}
+              {config?.aiEnabled && (
+                <button className="btn small" disabled={letterBusy} onClick={() => coverLetter(a)}>
+                  {a.cover ? "Cover letter ✓" : "Cover letter"}
+                </button>
+              )}
               {a.comp != null && <button className="btn small" onClick={() => setImpact(a)}>What it pays me</button>}
               {a.growthNote && <span className="note" style={{ margin: 0, fontSize: 11.5 }}>growth {a.growth}/5 · {a.growthNote}</span>}
             </div>
@@ -978,7 +1119,7 @@ export default function Career({ d, setD, config, toast }) {
         </div>
       )}
 
-      <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} />
+      <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps} />
 
       <div className="card">
         <h3>Assumptions</h3>
@@ -1008,6 +1149,30 @@ export default function Career({ d, setD, config, toast }) {
           <div className="mrow">
             <button className="btn" onClick={() => { navigator.clipboard?.writeText(tailorOut); toast("Copied."); }}>Copy</button>
             <button className="btn primary" onClick={() => setTailorFor(null)}>Done</button>
+          </div>
+        </Sheet>
+      )}
+      {letterFor && (
+        <Sheet title={"Cover letter draft — " + letterFor.company} onClose={() => setLetterFor(null)}>
+          <div className="note" style={{ marginTop: 0 }}>
+            <b>Rewrite this in your own words before you send it.</b> Almost no employer runs an AI detector on cover letters —
+            their system parses it for keywords and a human skims it. What gets you skipped is a letter that sounds like every
+            other letter: generic praise, the job description read back to them, no specific you could only have written.
+            Use this for the structure and the facts, then say it the way you'd say it.
+          </div>
+          {letterBusy ? <div className="note">Drafting from your resume…</div> : (
+            <textarea className="in" style={{ minHeight: 300, fontSize: 13, lineHeight: 1.55 }}
+              value={letterOut} onChange={(e) => setLetterOut(e.target.value.slice(0, 8000))} />
+          )}
+          <div className="mrow">
+            <button className="btn" disabled={letterBusy} onClick={() => { navigator.clipboard?.writeText(letterOut); toast("Copied."); }}>Copy</button>
+            <button className="btn" disabled={letterBusy || !letterOut.trim()}
+              onClick={() => buildPdf(letterOut).then((doc) => doc.save(("cover-" + letterFor.company + ".pdf").replace(/[^\w.() -]/g, "")))
+                .catch((e) => toast("Export failed — " + e.message, "err"))}>Download PDF</button>
+            <button className="btn primary" disabled={letterBusy} onClick={() => {
+              saveApp({ ...letterFor, cover: letterOut });
+              setLetterFor(null); toast("Saved to " + letterFor.company + " — it'll be here next time.");
+            }}>Save to this application</button>
           </div>
         </Sheet>
       )}

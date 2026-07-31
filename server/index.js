@@ -512,10 +512,25 @@ app.put("/api/data", auth, writeLimiter, async (req, res) => {
    rather than base64 inside it — a 400KB resume would otherwise be re-sent on
    every 500ms autosave. The extracted TEXT lives in the data blob, because
    that is what the AI reads and what the user edits. */
-const resumePath = (uid) => path.join(DATA_DIR, "resume-" + uid + ".pdf");
+/* Several resumes per user, addressed by SLOT NUMBER rather than by a name the
+   client chooses — an integer 1..5 can't traverse a path no matter what is sent.
+   Slot 1 deliberately keeps the original filename so existing uploads migrate
+   with no copying. */
+const MAX_RESUME_SLOTS = 5;
+/* Match the digits before converting. Number() alone accepts " 1", "1e0" and
+   "\n1" as 1 — harmless here since the path is built from the integer, but a
+   validator whose accepted set isn't obvious to a reader is a bad validator. */
+const resumeSlot = (v) => {
+  if (!/^[0-9]{1,2}$/.test(String(v))) return null;
+  const n = Number(v);
+  return n >= 1 && n <= MAX_RESUME_SLOTS ? n : null;
+};
+const resumePath = (uid, slot = 1) => path.join(DATA_DIR, "resume-" + uid + (slot > 1 ? "-" + slot : "") + ".pdf");
 const MAX_RESUME_BYTES = 2.5 * 1024 * 1024;
 
-app.put("/api/resume", auth, writeLimiter, (req, res) => {
+app.put("/api/resume/:slot?", auth, writeLimiter, (req, res) => {
+  const slot = req.params.slot === undefined ? 1 : resumeSlot(req.params.slot);
+  if (!slot) return res.status(400).json({ error: "Bad resume slot" });
   const b64 = String(req.body?.pdf || "");
   if (!b64) return res.status(400).json({ error: "No file received" });
   let buf;
@@ -525,9 +540,9 @@ app.put("/api/resume", auth, writeLimiter, (req, res) => {
   /* trust the bytes, not the filename — this is written to disk and served back */
   if (buf.subarray(0, 5).toString("latin1") !== "%PDF-") return res.status(400).json({ error: "That doesn't look like a PDF" });
   try {
-    fs.writeFileSync(resumePath(req.userId) + ".tmp", buf, { mode: 0o600 });
-    fs.renameSync(resumePath(req.userId) + ".tmp", resumePath(req.userId));
-    res.json({ ok: true, bytes: buf.length });
+    fs.writeFileSync(resumePath(req.userId, slot) + ".tmp", buf, { mode: 0o600 });
+    fs.renameSync(resumePath(req.userId, slot) + ".tmp", resumePath(req.userId, slot));
+    res.json({ ok: true, bytes: buf.length, slot });
   } catch (e) { console.error("resume write failed:", e.message); res.status(500).json({ error: "Could not save the resume" }); }
 });
 
@@ -537,8 +552,10 @@ app.put("/api/resume", auth, writeLimiter, (req, res) => {
    the path at anything unreadable, and the server exits.) So: no exists-check
    race, headers only once the file is actually open, and the fd released if the
    client walks away mid-download. */
-app.get("/api/resume", auth, (req, res) => {
-  const stream = fs.createReadStream(resumePath(req.userId));
+app.get("/api/resume/:slot?", auth, (req, res) => {
+  const slot = req.params.slot === undefined ? 1 : resumeSlot(req.params.slot);
+  if (!slot) return res.status(400).json({ error: "Bad resume slot" });
+  const stream = fs.createReadStream(resumePath(req.userId, slot));
   stream.once("open", () => {
     res.type("application/pdf");
     res.set("Content-Disposition", 'inline; filename="resume.pdf"');
@@ -553,8 +570,10 @@ app.get("/api/resume", auth, (req, res) => {
   res.on("close", () => stream.destroy());
 });
 
-app.delete("/api/resume", auth, (req, res) => {
-  try { fs.rmSync(resumePath(req.userId), { force: true }); res.json({ ok: true }); }
+app.delete("/api/resume/:slot?", auth, (req, res) => {
+  const slot = req.params.slot === undefined ? 1 : resumeSlot(req.params.slot);
+  if (!slot) return res.status(400).json({ error: "Bad resume slot" });
+  try { fs.rmSync(resumePath(req.userId, slot), { force: true }); res.json({ ok: true }); }
   catch (e) { console.error("resume delete failed:", e.message); res.status(500).json({ error: "Could not remove the resume" }); }
 });
 
@@ -1059,6 +1078,22 @@ if (fs.existsSync(dist)) {
   app.use(express.static(dist));
   app.get("*", (req, res) => res.sendFile(path.join(dist, "index.html")));
 }
+
+/* Body-parser failures reach Express's default handler, which answers with an
+   HTML stack page. The client only ever reads JSON, so an oversized save showed
+   up as a blank "couldn't save" with nothing to act on. Answer in the shape the
+   client speaks, and say which limit was hit. */
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({ error: req.path.startsWith("/api/resume")
+      ? "That PDF is too large — 2.5 MB is the limit."
+      : "Your data is too large to save in one request. Trimming old transactions or an extra resume will bring it back under." });
+  }
+  if (err?.type === "entity.parse.failed") return res.status(400).json({ error: "Malformed request body" });
+  console.error("unhandled:", err?.message);
+  res.status(500).json({ error: "Something went wrong on the server" });
+});
 
 /* bind to loopback only — Caddy (same host) is the sole ingress; never listen on a public interface */
 const HOST = process.env.HOST || "127.0.0.1";
