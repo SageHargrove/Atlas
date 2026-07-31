@@ -289,8 +289,16 @@ function extractJSON(text) {
 /* `wide` is for the profile workspace: a resume PDF at 540px is unreadable, and
    the whole point of moving it off the page was to get room to actually work. */
 function Sheet({ title, onClose, children, wide }) {
+  /* A full-window workspace over a page that still scrolls means the wheel moves
+     the thing behind it the moment the document pane hits its end. Lock it. */
+  useEffect(() => {
+    if (!wide) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [wide]);
   return (
-    <div className="ov" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={"ov" + (wide ? " ovfull" : "")} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className={"modal" + (wide ? " wide" : "")}>
         <div className="mh"><h2>{title}</h2><button className="x" onClick={onClose}>✕</button></div>
         {children}
@@ -773,6 +781,7 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
             )}
           </div>
 
+          <div className="rpane">
           {!cur ? (
             <div className="rempty">
               <div style={{ fontSize: 15, fontWeight: 600 }}>No resume yet</div>
@@ -792,6 +801,7 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
           ) : (
             <div className="rempty"><div className="note">This one has text but no stored PDF — <b>Save edits as the PDF</b> builds one.</div></div>
           )}
+          </div>
         </div>
 
         <div className="rside">
@@ -1112,6 +1122,7 @@ export default function Career({ d, setD, config, toast }) {
   const [letterOut, setLetterOut] = useState("");
   const [letterBusy, setLetterBusy] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [profileTab, setProfileTab] = useState("resume");
   const [prepFor, setPrepFor] = useState(null);
   const [prepOut, setPrepOut] = useState("");
   const [prepBusy, setPrepBusy] = useState(false);
@@ -1360,11 +1371,28 @@ export default function Career({ d, setD, config, toast }) {
       {/* Resume and Projects used to sit inline and made this page endless. They
           are a workspace, not a feed item — you open them to work, then close. */}
       {profileOpen && (
-        <Sheet title="Your profile — resume, projects, level" onClose={() => setProfileOpen(false)} wide>
+        <Sheet title={
+          <span className="row" style={{ gap: 10 }}>
+            <span>Your profile</span>
+            {/* side by side rather than stacked: stacking is what forced a page
+                scroll on a screen whose whole point is fitting the document */}
+            <span className="pills">
+              <button className={"pill" + (profileTab === "resume" ? " on" : "")} onClick={() => setProfileTab("resume")}>Resume</button>
+              <button className={"pill" + (profileTab === "projects" ? " on" : "")} onClick={() => setProfileTab("projects")}>
+                Projects{(S.projects || []).length ? " " + S.projects.length : ""}
+              </button>
+            </span>
+          </span>
+        } onClose={() => setProfileOpen(false)} wide>
           <div className="wbody">
-            <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
-              myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
-            <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
+            {profileTab === "resume" ? (
+              <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
+                myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
+            ) : (
+              <div style={{ overflowY: "auto", minHeight: 0 }}>
+                <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
+              </div>
+            )}
           </div>
         </Sheet>
       )}

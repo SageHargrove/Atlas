@@ -266,25 +266,33 @@ const CSS = `
 .fh .ov{ position:fixed; inset:0; background:rgba(4,7,14,.65); display:flex; align-items:flex-start; justify-content:center; padding:44px 16px; z-index:50; overflow-y:auto; backdrop-filter:blur(5px); animation:fadeIn .2s ease both; }
 @keyframes fadeIn{ from{ opacity:0; } to{ opacity:1; } }
 .fh .modal{ background:var(--panel); border:1px solid var(--line2); border-radius:20px; width:100%; max-width:540px; padding:24px 26px; box-shadow:var(--shadow); animation:rise .3s cubic-bezier(.2,.7,.3,1) both; }
-/* a resume PDF at 540px is unreadable — the profile workspace gets real room,
-   and scrolls inside itself so the controls never leave the screen */
-.fh .modal.wide{ max-width:min(1500px, 96vw); height:min(92vh, 1000px); display:flex; flex-direction:column; padding:18px 20px; }
-.fh .modal.wide > .mh{ flex-shrink:0; }
-.fh .modal.wide .card{ border:none; padding:0; margin-top:14px; background:none; }
-.fh .modal.wide .wbody{ flex:1; min-height:0; overflow-y:auto; }
+/* The profile workspace takes the whole window. It is the one screen where you
+   sit and work on a document, so it gets the room a document needs — and each
+   pane scrolls itself, so the controls never slide off while you read page 2. */
+/* overflow:hidden matters — the overlay's own scrollbar is what let the whole
+   page scroll and pushed the controls off the bottom of the screen */
+.fh .ovfull{ padding:0; align-items:stretch; overflow:hidden; }
+.fh .modal.wide{ max-width:none; width:100vw; height:100vh; max-height:100vh; border-radius:0; border:none;
+  display:flex; flex-direction:column; padding:14px 26px 16px; animation:none; }
+.fh .modal.wide > .mh{ flex-shrink:0; margin-bottom:4px; }
+/* the card has to be a flex column too, or flex:1 on .rwork inside it does
+   nothing and the height chain from 100vh silently stops here */
+.fh .modal.wide .card{ border:none; padding:0; margin:0; background:none; flex:1; min-height:0; display:flex; flex-direction:column; }
+.fh .modal.wide .wbody{ flex:1; min-height:0; display:flex; flex-direction:column; }
 /* document centre stage, controls in a rail beside it */
-.fh .rwork{ display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start; }
-.fh .rdoc{ min-width:0; }
-.fh .rside{ border-left:1px solid var(--line); padding-left:16px; }
+.fh .rwork{ display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:22px; align-items:stretch; flex:1; min-height:0; }
+.fh .rdoc{ min-width:0; display:flex; flex-direction:column; min-height:0; }
+.fh .rpane{ flex:1; min-height:0; overflow-y:auto; padding-right:6px; }
+.fh .rside{ border-left:1px solid var(--line); padding-left:18px; overflow-y:auto; min-height:0; }
 .fh .rside .f{ margin-top:14px; }
-.fh .rtext{ width:100%; min-height:60vh; font-size:13px; line-height:1.55; resize:vertical; }
+.fh .rtext{ width:100%; height:100%; min-height:0; font-size:13.5px; line-height:1.6; resize:none; }
 .fh .rempty{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; text-align:center;
-  min-height:340px; border:1px dashed var(--line2); border-radius:12px; padding:24px; }
+  height:100%; border:1px dashed var(--line2); border-radius:12px; padding:24px; }
 @media (max-width:900px){
-  .fh .modal.wide{ height:94vh; }
-  .fh .rwork{ grid-template-columns:1fr; }
-  .fh .rside{ border-left:none; border-top:1px solid var(--line); padding-left:0; padding-top:14px; }
-  .fh .rtext{ min-height:45vh; }
+  .fh .modal.wide{ padding:12px 14px; }
+  .fh .rwork{ grid-template-columns:1fr; overflow-y:auto; }
+  .fh .rdoc{ min-height:60vh; }
+  .fh .rside{ border-left:none; border-top:1px solid var(--line); padding-left:0; padding-top:14px; overflow:visible; }
 }
 .fh .modal h2{ font-family:'Sora',sans-serif; font-weight:600; font-size:18px; letter-spacing:-.01em; }
 .fh .modal h3{ font-family:'Sora',sans-serif; font-weight:600; font-size:14.5px; margin-top:18px; }
