@@ -32,6 +32,9 @@ const DEFAULTS = {
     { id: uid(), name: "Groceries", limit: 0 },
     { id: uid(), name: "Eating out", limit: 0 },
     { id: uid(), name: "Transport", limit: 0 },
+    /* Utilities is its own line, not a subscription: "cut your subscriptions"
+       is useless advice when a third of that number is the power bill. */
+    { id: uid(), name: "Utilities", limit: 0 },
     { id: uid(), name: "Subscriptions", limit: 0 },
     { id: uid(), name: "Fun", limit: 0 },
   ],
@@ -768,7 +771,12 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onSync, onRemoveBank, on
               }}>Add</button>
               <button className="btn small" onClick={() => setAdding(false)}>Cancel</button>
             </div>}
-        <div className="note">Debt balances are entered as positive numbers — they subtract from net worth automatically.</div>
+        <div className="note">
+          Debt balances are entered as positive numbers — they subtract from net worth automatically.
+          {" "}<b>APY/APR is optional and only feeds forecasts.</b> Bank sync sends balances, never interest rates, so
+          nothing can fill it in for you — and nothing needs it to track your money. Fill it in on a savings account or
+          a credit card and the Plan tab can project growth and payoff instead of quietly assuming zero.
+        </div>
       </div>
 
       {(() => { /* asset allocation — color follows the asset TYPE's fixed index */
@@ -798,21 +806,92 @@ function Budget({ d, setD, config }) {
   const [recoBusy, setRecoBusy] = useState(false);
   const [reco, setReco] = useState(null);
 
+  /* Monthly totals per category, complete months only — the current month is
+     always partial and averaging it in is what produced a $19 rent budget. */
+  const monthlyByCat = () => {
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const per = {};   // cat -> { month -> total }
+    for (const t of d.txns) {
+      if (t.kind !== "out") continue;
+      const m = String(t.date || "").slice(0, 7);
+      if (!m || m >= thisMonth) continue;
+      const n = d.cats.find((c) => c.id === t.catId)?.name || "Uncategorized";
+      ((per[n] ||= {})[m] ||= 0);
+      per[n][m] += Number(t.amount) || 0;
+    }
+    return per;
+  };
+  /* Median of the months a category actually appears in. Mean would let one
+     $549 clothing month set a permanent budget; median wouldn't. */
+  const medianOf = (obj) => {
+    const v = Object.values(obj).sort((a, b) => a - b);
+    if (!v.length) return 0;
+    const mid = Math.floor(v.length / 2);
+    return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+  };
+  const monthsOfData = () => {
+    const ms = new Set(d.txns.filter((t) => t.kind === "out").map((t) => String(t.date || "").slice(0, 7)).filter(Boolean));
+    ms.delete(new Date().toISOString().slice(0, 7));
+    return ms.size;
+  };
+  /* Income from the ledger when the setting is blank. It defaulted to $0, and
+     the AI then correctly concluded that someone earning nothing must cut
+     everything to nothing — garbage in, confident garbage out. */
+  const incomeGuess = () => {
+    const set = Number(d.settings.incomeMonthly) || 0;
+    if (set > 0) return { value: set, from: "your settings" };
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const per = {};
+    for (const t of d.txns) {
+      if (t.kind !== "in") continue;
+      const m = String(t.date || "").slice(0, 7);
+      if (!m || m >= thisMonth) continue;
+      per[m] = (per[m] || 0) + (Number(t.amount) || 0);
+    }
+    const v = medianOf(per);
+    return { value: Math.round(v), from: v ? "your deposits" : null };
+  };
+
+  /* No model call, no guesswork: what you actually spend, month by month. */
+  const estimateFromHistory = () => {
+    const n = monthsOfData();
+    if (!n) return toast("No complete month of spending yet — an estimate now would just be noise.", "err");
+    const per = monthlyByCat();
+    const inc = incomeGuess();
+    const limits = d.cats.map((c) => {
+      const months = per[c.name] || {};
+      const med = medianOf(months);
+      /* round to something a person would actually type */
+      const step = med >= 400 ? 25 : med >= 100 ? 10 : 5;
+      return { cat: c.name, limit: Math.max(0, Math.round(med / step) * step), months: Object.keys(months).length };
+    });
+    const total = limits.reduce((s, l) => s + l.limit, 0);
+    const thin = limits.filter((l) => l.months === 1 && l.limit > 0).map((l) => l.cat);
+    const uncat = medianOf(per["Uncategorized"] || {});
+    setReco({
+      limits,
+      note: "Median of what you actually spent across " + n + " complete month" + (n === 1 ? "" : "s") +
+        " — median, not average, so one heavy month doesn't set a permanent budget. Totals " + fmt(total) + "/mo" +
+        (inc.value ? " against " + fmt(inc.value) + " income (" + inc.from + "), leaving " + fmt(inc.value - total) : "") + "." +
+        (uncat > 0 ? " " + fmt(uncat) + "/mo is still uncategorized and isn't in any line below — sort that in Merchants first for a real number." : "") +
+        (thin.length ? " Only one month of data for: " + thin.join(", ") + "." : ""),
+    });
+  };
+
   const recommend = async () => {
     setRecoBusy(true); setReco(null);
     try {
-      const threeMo = new Date(Date.now() - 92 * 864e5).toISOString().slice(0, 10);
-      const recent = d.txns.filter((t) => t.kind === "out" && (t.date || "") >= threeMo);
-      const byCat = {};
-      recent.forEach((t) => { const n = d.cats.find((c) => c.id === t.catId)?.name || "Uncategorized"; byCat[n] = (byCat[n] || 0) + Number(t.amount || 0); });
-      const avg = Object.fromEntries(Object.entries(byCat).map(([k, v]) => [k, Math.round(v / 3)]));
+      const per = monthlyByCat();
+      const avg = Object.fromEntries(Object.entries(per).map(([k, v]) => [k, Math.round(medianOf(v))]));
       const debts = d.accounts.filter((a) => ["Credit card", "Auto loan", "Student loan", "Mortgage", "Other debt"].includes(a.type) && Number(a.balance) > 0)
         .map((a) => ({ name: a.name, balance: Number(a.balance), apr: Number(a.rate) || null, min: Number(a.minPay) || null }));
       const goalsMo = d.goals.reduce((s, g) => s + (Number(g.monthly) || 0), 0);
-      const inc = Number(d.settings.incomeMonthly) || 0;
+      const guess = incomeGuess();
+      const inc = guess.value;
+      if (!inc) { toast("No income on record — set monthly income in Settings, or sync a month of deposits. Without it any budget is fiction.", "err"); setRecoBusy(false); return; }
       const prompt =
         "You are a pragmatic budget planner. Monthly take-home income: $" + inc +
-        ". 3-month average spending by category: " + JSON.stringify(avg) +
+        " (from " + guess.from + "). Typical monthly spending by category, median of complete months: " + JSON.stringify(avg) +
         ". Debts: " + JSON.stringify(debts) + " (their minimum payments must be payable)." +
         " Goal contributions already planned: $" + goalsMo + "/mo." +
         " Categories to budget: " + JSON.stringify(d.cats.map((c) => c.name)) +
@@ -886,6 +965,7 @@ function Budget({ d, setD, config }) {
         <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
           <h3>Categories</h3>
           <span className="row" style={{ gap: 6 }}>
+            <button className="btn small" onClick={estimateFromHistory} title="Median of what you actually spent, no model involved">From my history</button>
             {config?.aiEnabled && <button className="btn small" disabled={recoBusy} onClick={recommend}>{recoBusy ? "Thinking…" : "AI recommend"}</button>}
             <span className="note" style={{ margin: 0 }}>spent so far / monthly budget</span>
           </span>
@@ -1202,6 +1282,16 @@ function Plan({ d, setD }) {
 
   return (
     <>
+      {/* Plan and Goals genuinely do look alike; the split is what you're
+          asking. Goals answers "am I on track for this thing I named."
+          Plan answers "what should I do with the next dollar." */}
+      <div className="note" style={{ marginBottom: 12 }}>
+        <b>Plan is the strategy; Goals is the scoreboard.</b> Here you work out what the next dollar should do —
+        emergency fund size, which debt to hit, whether a big purchase is affordable, what to owe in tax.
+        In <b>Goals</b> you name a specific target ("move-out fund, $6,000 by June") and watch it fill.
+        Set the strategy here, then create the goal there for anything you're actually saving toward.
+      </div>
+
       <OrderOfOps d={d} k401ok={matchCap > 0 && contribPct >= matchCap} />
 
       <TaxCard d={d} setD={setD} />
@@ -1796,11 +1886,21 @@ const CAT_RULES = [
      The third element is a minimum $ amount for the rule to apply. */
   [/\birs\b|internal revenue|us ?treasury|treas ?tax|tax ?(pmt|payment)|dept? of revenue|state tax|franchise tax|turbotax|h&r block|jackson hewitt|taxact/, "Taxes"],
   [/venmo payment|zelle (payment|to)/, "Rent", 500],
-  [/kroger|trader joe|aldi|wal-?mart|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
+  /* Walmart's own merchant string is "WM SUPERCENTER #124", which no amount of
+     matching on "walmart" will ever catch. */
+  [/kroger|trader joe|aldi|wal-?mart|\bwm supercenter|\bwm superc|neighborhood market|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
   [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
   [/exxon|shell oil|chevron|texaco|citgo|valero|racetrac|quiktrip|\bqt\b|speedway|murphy usa|circle k|7-?eleven fuel|uber(?! ?eats)|lyft|parking|toll|jiffy lube|autozone|o'?reilly|discount tire|car wash/, "Transport"],
-  [/netflix|spotify|hulu|disney ?\+|hbo ?max|paramount|peacock|crunchyroll|youtube ?(premium|tv)|apple\.com\/bill|apple ?one|icloud|google ?(one|storage)|dropbox|adobe|microsoft 365|xbox game|playstation|nintendo|patreon|twitch|discord|cloudflare|github|godaddy|namecheap|\bvpn\b|audible|kindle unltd/, "Subscriptions"],
-  [/amazon|amzn|target\b|best buy|ebay|etsy|dollar (general|tree)|five below|ross store|tj ?maxx|marshalls|old navy|h&m\b|zara|nike|shein|temu|home depot|lowe'?s|ikea/, "Shopping"],
+  /* Utilities before Subscriptions: a cable/internet bill is a utility, and
+     lumping it in with Netflix made "cut your subscriptions" advice nonsense —
+     you cannot cancel your electricity. Airlines before Transport's fuel list
+     so a flight doesn't fall through to uncategorized. */
+  [/optimum|spectrum|xfinity|comcast|cox communi|at&?t\b|verizon|t-?mobile|sparklight|centurylink|frontier comm|google fiber|starlink|entergy|swepco|ameren|duke energy|dominion energy|con ?ed|pg&?e|oncor|centerpoint|city of \w+ util|water (works|dept|utility)|sewer|waste management|republic services|trash|electric (co|company|coop)|gas (co|company|utility)|utility|utilities/, "Utilities"],
+  /* "southwes" alone would also match Southwest Power Pool — his employer — so
+     the airline form requires the ticket number the airline always appends. */
+  [/southwest airlines|southwes\w* \d|delta air|american air|united air|jetblue|alaska air|spirit air|frontier air|allegiant|hawaiian air|expedia|kayak|priceline|orbitz|booking\.com|airbnb|vrbo|hertz|enterprise rent|avis|budget rent|national car|amtrak|greyhound|\bairlines?\b|\bairways\b/, "Transport"],
+  [/netflix|spotify|hulu|disney ?\+|hbo ?max|paramount|peacock|crunchyroll|youtube ?(premium|tv)|apple\.com\/bill|apple ?one|icloud|google ?(one|storage)|dropbox|adobe|microsoft 365|xbox game|playstation|nintendo|patreon|twitch|discord|cloudflare|github|godaddy|namecheap|\bvpn\b|audible|kindle unltd|anthropic|openai|chatgpt|claude/, "Subscriptions"],
+  [/amazon|amzn|target\b|best buy|ebay|etsy|dollar (general|tree)|five below|ross store|tj ?maxx|marshalls|old navy|h&m\b|zara|nike|shein|temu|home depot|lowe'?s|ikea|j\.? ?crew|gap\b|banana republic|american eagle|hollister|abercrombie|urban outfitters|forever 21|uniqlo|lululemon|dick'?s sporting|academy sports|belk\b|dillard|macy'?s|nordstrom|kohl'?s|jcpenney|sephora|ulta|bath ?& ?body/, "Shopping"],
   [/rent\b|apartment|property (mgmt|management)|landlord/, "Rent"],
   [/gym|planet fitness|la fitness|ymca|crunch fitness|walgreens|cvs\b|rite aid|pharmacy|clinic|dental|doctor|hospital|urgent care|optical|optometr/, "Health"],
   [/cinema|cinemark|\bamc\b|regal|steam(games| purchase)|steampowered|epic games|riot|blizzard|ticketmaster|stubhub|bowling|arcade|spotify concert|eventbrite/, "Fun"],
@@ -2196,6 +2296,32 @@ function Merchants({ d, setD }) {
     toast("Moved " + n + " out of spending — they're transfers now.");
   };
 
+  /* The per-merchant dropdown is fine for one row and tedious for thirty. This
+     runs the same rules the sync uses over everything still unfiled — J.Crew is
+     Shopping, a Delta ticket is Transport — and touches nothing already filed,
+     so a category you set by hand is never overwritten. */
+  const uncatted = rows.filter((r) => r.uncatted > 0);
+  const fileTheObvious = () => {
+    let n = 0, hits = {};
+    setD((p) => {
+      const mem = buildMerchantMemory(p.txns, p.cats);
+      const txns = p.txns.map((t) => {
+        if (t.kind !== "out" || t.catId) return t;
+        const catId = autoCategorize(t.note, p.cats, mem, Number(t.amount) || 0);
+        if (!catId) return t;
+        n++;
+        const nm = p.cats.find((c) => c.id === catId)?.name || "?";
+        hits[nm] = (hits[nm] || 0) + 1;
+        return { ...t, catId };
+      });
+      return { ...p, txns };
+    });
+    setTimeout(() => {
+      if (!n) toast("Nothing matched a rule — the rest need a category from you, or the AI categorize button in Budget.", "err");
+      else toast("Filed " + n + " transactions: " + Object.entries(hits).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + " " + v).join(", ") + ".");
+    }, 0);
+  };
+
   return (
     <>
       <div className="card">
@@ -2209,6 +2335,15 @@ function Merchants({ d, setD }) {
           Every place your money went, biggest first. Setting a category here files <b>all</b> of that merchant's
           transactions at once, and Atlas remembers it for future syncs.
         </div>
+        {uncatted.length > 0 && (
+          <div className="row" style={{ marginTop: 8 }}>
+            <span className="note bad" style={{ margin: 0, flex: 1, minWidth: 180 }}>
+              {uncatted.length} merchant{uncatted.length === 1 ? " has" : "s have"} unfiled transactions —
+              they're missing from every budget line and from the month-in-review.
+            </span>
+            <button className="btn small primary" onClick={fileTheObvious}>File the obvious ones</button>
+          </div>
+        )}
         <div className="row" style={{ marginTop: 10 }}>
           <input className="in" style={{ flex: 1, minWidth: 160 }} placeholder="Filter merchants…" value={q} onChange={(e) => setQ(e.target.value)} />
           <select className="in" style={{ width: 170 }} value={sort} onChange={(e) => setSort(e.target.value)}>

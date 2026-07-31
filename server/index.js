@@ -974,11 +974,21 @@ const CAT_RULES = [
      The third element is a minimum $ amount for the rule to apply. */
   [/\birs\b|internal revenue|us ?treasury|treas ?tax|tax ?(pmt|payment)|dept? of revenue|state tax|franchise tax|turbotax|h&r block|jackson hewitt|taxact/, "Taxes"],
   [/venmo payment|zelle (payment|to)/, "Rent", 500],
-  [/kroger|trader joe|aldi|wal-?mart|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
+  /* Walmart's own merchant string is "WM SUPERCENTER #124", which no amount of
+     matching on "walmart" will ever catch. */
+  [/kroger|trader joe|aldi|wal-?mart|\bwm supercenter|\bwm superc|neighborhood market|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
   [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
   [/exxon|shell oil|chevron|texaco|citgo|valero|racetrac|quiktrip|\bqt\b|speedway|murphy usa|circle k|7-?eleven fuel|uber(?! ?eats)|lyft|parking|toll|jiffy lube|autozone|o'?reilly|discount tire|car wash/, "Transport"],
-  [/netflix|spotify|hulu|disney ?\+|hbo ?max|paramount|peacock|crunchyroll|youtube ?(premium|tv)|apple\.com\/bill|apple ?one|icloud|google ?(one|storage)|dropbox|adobe|microsoft 365|xbox game|playstation|nintendo|patreon|twitch|discord|cloudflare|github|godaddy|namecheap|\bvpn\b|audible|kindle unltd/, "Subscriptions"],
-  [/amazon|amzn|target\b|best buy|ebay|etsy|dollar (general|tree)|five below|ross store|tj ?maxx|marshalls|old navy|h&m\b|zara|nike|shein|temu|home depot|lowe'?s|ikea/, "Shopping"],
+  /* Utilities before Subscriptions: a cable/internet bill is a utility, and
+     lumping it in with Netflix made "cut your subscriptions" advice nonsense —
+     you cannot cancel your electricity. Airlines before Transport's fuel list
+     so a flight doesn't fall through to uncategorized. */
+  [/optimum|spectrum|xfinity|comcast|cox communi|at&?t\b|verizon|t-?mobile|sparklight|centurylink|frontier comm|google fiber|starlink|entergy|swepco|ameren|duke energy|dominion energy|con ?ed|pg&?e|oncor|centerpoint|city of \w+ util|water (works|dept|utility)|sewer|waste management|republic services|trash|electric (co|company|coop)|gas (co|company|utility)|utility|utilities/, "Utilities"],
+  /* "southwes" alone would also match Southwest Power Pool — his employer — so
+     the airline form requires the ticket number the airline always appends. */
+  [/southwest airlines|southwes\w* \d|delta air|american air|united air|jetblue|alaska air|spirit air|frontier air|allegiant|hawaiian air|expedia|kayak|priceline|orbitz|booking\.com|airbnb|vrbo|hertz|enterprise rent|avis|budget rent|national car|amtrak|greyhound|\bairlines?\b|\bairways\b/, "Transport"],
+  [/netflix|spotify|hulu|disney ?\+|hbo ?max|paramount|peacock|crunchyroll|youtube ?(premium|tv)|apple\.com\/bill|apple ?one|icloud|google ?(one|storage)|dropbox|adobe|microsoft 365|xbox game|playstation|nintendo|patreon|twitch|discord|cloudflare|github|godaddy|namecheap|\bvpn\b|audible|kindle unltd|anthropic|openai|chatgpt|claude/, "Subscriptions"],
+  [/amazon|amzn|target\b|best buy|ebay|etsy|dollar (general|tree)|five below|ross store|tj ?maxx|marshalls|old navy|h&m\b|zara|nike|shein|temu|home depot|lowe'?s|ikea|j\.? ?crew|gap\b|banana republic|american eagle|hollister|abercrombie|urban outfitters|forever 21|uniqlo|lululemon|dick'?s sporting|academy sports|belk\b|dillard|macy'?s|nordstrom|kohl'?s|jcpenney|sephora|ulta|bath ?& ?body/, "Shopping"],
   [/rent\b|apartment|property (mgmt|management)|landlord/, "Rent"],
   [/gym|planet fitness|la fitness|ymca|crunch fitness|walgreens|cvs\b|rite aid|pharmacy|clinic|dental|doctor|hospital|urgent care|optical|optometr/, "Health"],
   [/cinema|cinemark|\bamc\b|regal|steam(games| purchase)|steampowered|epic games|riot|blizzard|ticketmaster|stubhub|bowling|arcade|spotify concert|eventbrite/, "Fun"],

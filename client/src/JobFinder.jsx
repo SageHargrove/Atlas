@@ -85,8 +85,18 @@ export function guessMyLevel(resume) {
   return maxYears >= 1 ? "entry" : "entry";
 }
 
+/* How hard the front door is, independent of you. A new grad's odds at Jane
+   Street are not "stretch" — quant shops take low single-digit percentages of
+   applicants and screen on competitive-programming ability, and telling someone
+   otherwise is the kind of flattery that wastes a recruiting season. Utilities
+   and consultancies hire volume from campus; the trading firms do not. */
+const SELECTIVITY = {
+  quant: 0.22, bigtech: 0.45, financial: 0.72, cleared: 0.82,
+  enterprise: 0.85, consulting: 0.92, utility: 0.95,
+};
+
 function scoreJob(j, ctx) {
-  const { S, myLevel, resumeTokens, hasClearance } = ctx;
+  const { S, myLevel, resumeTokens, hasClearance, hasResume } = ctx;
   const city = cityMatch(j.location, S.cities);
   /* The server now fills most gaps from what comparable postings actually pay;
      the static table is only the floor for a band with too few real samples. */
@@ -115,12 +125,17 @@ function scoreJob(j, ctx) {
   const levelPts = gap <= -2 ? 38 : gap === -1 ? 46 : gap === 0 ? 50 : gap === 1 ? 26 : gap === 2 ? 9 : 2;
   const jt = tokensOf(j.title + " " + (j.desc || ""));
   const shared = [...jt].filter((t) => resumeTokens.has(t));
+  /* With no resume there is nothing to overlap, so a neutral 12 was being handed
+     out and then read as a real signal. Without one, odds are not computed at
+     all — the UI says to upload instead of showing a number built on nothing. */
   const overlapPts = jt.size ? Math.round(Math.min(1, shared.length / Math.min(8, Math.max(3, jt.size))) * 35) : 12;
   const clearPts = j.clearance ? (hasClearance ? 10 : -22) : 10;
   const yearsPts = j.yearsReq == null ? 5 : j.yearsReq <= 2 ? 5 : j.yearsReq <= 4 ? 2 : -6;
-  const odds = Math.max(1, Math.min(100, levelPts + overlapPts + clearPts + yearsPts));
+  const raw = levelPts + overlapPts + clearPts + yearsPts;
+  const sel = SELECTIVITY[j.cat] ?? 0.85;
+  const odds = hasResume ? Math.max(1, Math.min(100, Math.round(raw * sel))) : null;
 
-  return { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, gap, shared, place, growth, money_ };
+  return { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, sel, gap, shared, place, growth, money_ };
 }
 
 const oddsWord = (n) => (n >= 70 ? "Strong" : n >= 52 ? "Realistic" : n >= 34 ? "Stretch" : "Long shot");
@@ -153,6 +168,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const [hideStale, setHideStale] = useState(false);
   const [onlyNew, setOnlyNew] = useState(false);
   const [found, setFound] = useState(null);   // discovered boards awaiting your yes
+  const [whyId, setWhy] = useState(null);     // which row's city detail is expanded
 
   const load = async () => {
     try {
@@ -186,11 +202,12 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
     dismissed: [...new Set([...(c.settings.dismissed || []), id])].slice(-400) } }));
   const tracked = useMemo(() => new Set(apps.map((a) => (a.company + "|" + a.role).toLowerCase())), [apps]);
 
+  const hasResume = !!String(S.resume || "").trim();
   const scored = useMemo(() => {
     if (!data?.jobs) return [];
-    const ctx = { S, myLevel, resumeTokens, hasClearance };
+    const ctx = { S, myLevel, resumeTokens, hasClearance, hasResume };
     return data.jobs.map((j) => scoreJob(j, ctx));
-  }, [data, S, myLevel, resumeTokens, hasClearance]);
+  }, [data, S, myLevel, resumeTokens, hasClearance, hasResume]);
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -280,16 +297,30 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
     toast("Tracking " + j.company + " — it's in your list with comp, city and level filled in.");
   };
 
+  /* A chip that says "Internship 2" and then shows nothing when you press it is
+     worse than no count: both of those internships were SOC roles, filtered out
+     by the area chips above. Each chip counts what you'd get if you clicked it —
+     every OTHER filter applied, its own dimension left open. */
+  const base = useMemo(() => scored.filter((j) =>
+    !dismissed.has(j.id) && (!usOnly || j.us) && (!remoteOnly || j.remote) && (!iamOnly || j.iam) &&
+    (!hideCleared || !j.clearance) && (!hideStale || !(j.ageDays > 60)) &&
+    (!fitCities || j.remote || !!j.city) && (!minPay || (j.adj || 0) >= minPay)),
+    [scored, dismissed, usOnly, remoteOnly, iamOnly, hideCleared, hideStale, fitCities, minPay]);
+
   const counts = useMemo(() => {
     const m = {};
-    for (const j of scored) if ((!usOnly || j.us) && !dismissed.has(j.id)) m[j.level] = (m[j.level] || 0) + 1;
+    for (const j of base) if (!fams.size || fams.has(j.family)) m[j.level] = (m[j.level] || 0) + 1;
     return m;
-  }, [scored, usOnly, dismissed]);
+  }, [base, fams]);
   const famCounts = useMemo(() => {
     const m = {};
-    for (const j of scored) if ((!usOnly || j.us) && !dismissed.has(j.id) && (!levels.size || levels.has(j.level))) m[j.family] = (m[j.family] || 0) + 1;
+    const wantsUnlabelled = showUnlabelled && levels.size && !levels.has("mid");
+    for (const j of base) {
+      if (levels.size && !levels.has(j.level) && !(wantsUnlabelled && j.levelSure === false && !j.levelBasis)) continue;
+      m[j.family] = (m[j.family] || 0) + 1;
+    }
     return m;
-  }, [scored, usOnly, dismissed, levels]);
+  }, [base, levels, showUnlabelled]);
   const newCount = useMemo(() =>
     lastSeen ? scored.filter((j) => (j.firstSeen || "") > lastSeen && (!usOnly || j.us) && !dismissed.has(j.id)).length : 0,
     [scored, lastSeen, usOnly, dismissed]);
@@ -365,6 +396,14 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
         </> : "Loading postings…"}
       </div>
 
+      {!hasResume && (
+        <div className="note bad" style={{ marginTop: 8 }}>
+          <b>No resume uploaded, so half of this is guessing.</b> Without one there's nothing to match a posting against —
+          the odds column is switched off rather than showing a number built on nothing, and your level is being taken from
+          keywords instead of read properly. Upload one in the Resume card below and every score here changes.
+        </div>
+      )}
+
       {addOpen && (
         <div className="card" style={{ marginTop: 8 }}>
           <div className="note" style={{ marginTop: 0 }}>
@@ -389,12 +428,16 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
 
       {/* the ladder — the whole point is that it grows with you, so nothing is dropped */}
       <div className="row" style={{ marginTop: 10, gap: 5, flexWrap: "wrap" }}>
-        {LEVELS.map(([k, label]) => (
-          <button key={k} className={"btn small" + (levels.has(k) ? " primary" : "")} onClick={() => toggleLevel(k)}
-            title={myLevel === k ? "Where your resume reads today" : undefined}>
-            {label}{counts[k] ? " " + counts[k] : ""}{myLevel === k ? " ●" : ""}
-          </button>
-        ))}
+        {LEVELS.map(([k, label]) => {
+          const n = counts[k] || 0;
+          return (
+            <button key={k} className={"btn small" + (levels.has(k) ? " primary" : "")} onClick={() => toggleLevel(k)}
+              disabled={!n && !levels.has(k)} style={!n && !levels.has(k) ? { opacity: 0.35 } : undefined}
+              title={myLevel === k ? "Where your resume reads today" : !n ? "Nothing at this level matches your other filters" : undefined}>
+              {label} {n}{myLevel === k ? " ●" : ""}
+            </button>
+          );
+        })}
         {!!levels.size && <button className="btn small" onClick={() => setLevels(new Set())}>All levels</button>}
         {!!levels.size && !levels.has("mid") && (
           <button className={"btn small" + (showUnlabelled ? " primary" : "")} onClick={() => setShowUnlabelled((v) => !v)}
@@ -418,7 +461,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
       <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
         {FAMILY_LABELS.map(([k, label]) => {
           const n = famCounts[k] || 0;
-          if (!n) return null;
+          if (!n && !fams.has(k)) return null;
           return (
             <button key={k} className={"btn small" + (fams.has(k) ? " primary" : "")}
               onClick={() => setFams((p) => {
@@ -478,8 +521,16 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
             <div key={j.id} style={{ padding: "10px 0", borderTop: "1px solid var(--line)" }}>
               <div className="row" style={{ justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <span className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                    <b>{j.title}</b>
+                  {/* the employer is what you actually scan for, so it leads */}
+                  <span className="row" style={{ gap: 7, flexWrap: "wrap", alignItems: "baseline" }}>
+                    <b style={{ fontSize: 15 }}>{j.company}</b>
+                    {j.city && !j.remote && (
+                      <button className="tag" title="Click for what's there for a partner"
+                        style={{ cursor: "pointer", color: partnerColor(j.city.partner), borderColor: partnerColor(j.city.partner), background: "none" }}
+                        onClick={() => setWhy(whyId === j.id ? null : j.id)}>
+                        {j.city.name} · {j.city.tier}-tier ▾
+                      </button>
+                    )}
                     {lastSeen && (j.firstSeen || "") > lastSeen && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>New</span>}
                     {j.iam && <span className="tag" style={{ color: "var(--acc)", borderColor: "var(--acc)" }}>IAM</span>}
                     {j.remote && <span className="tag" style={{ color: "var(--up)", borderColor: "var(--up)" }}>Remote</span>}
@@ -497,12 +548,14 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                       </span>
                     )}
                   </span>
+                  <span style={{ display: "block", fontSize: 13.5, marginTop: 1 }}>{j.title}</span>
                   <span className="note" style={{ display: "block", margin: 0, fontSize: 12 }}>
-                    {j.company} · {j.location || "location not stated"}{j.posted ? " · posted " + ago(j.posted) : ""}
+                    {j.location || "location not stated"}{j.posted ? " · posted " + ago(j.posted) : ""}
                   </span>
-                  {j.city && !j.remote && (
-                    <span className="note" style={{ display: "block", margin: 0, fontSize: 11.5, color: partnerColor(j.city.partner) }}>
-                      Their side: {partnerLabel(j.city.partner)}{j.city.orgs ? " — " + j.city.orgs : ""}
+                  {whyId === j.id && j.city && (
+                    <span className="note" style={{ display: "block", margin: "3px 0 0", fontSize: 11.5, color: partnerColor(j.city.partner) }}>
+                      {j.city.name} is {j.city.tier}-tier for you · cost of living {j.city.col} ·{" "}
+                      {partnerLabel(j.city.partner)} for a partner{j.city.orgs ? " — " + j.city.orgs : ""}
                     </span>
                   )}
                   {!!j.shared.length && (
@@ -516,9 +569,13 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                   <div className="note" style={{ margin: 0, fontSize: 11 }}>
                     {j.adj ? "adjusted" : "no pay data"}{j.estimated && j.adj ? " · est" : ""}
                   </div>
-                  <div className="note" style={{ margin: 0, fontSize: 11.5, color: oddsColor(j.odds) }}>
-                    {oddsWord(j.odds)} · {j.odds}/100
-                  </div>
+                  {j.odds != null ? (
+                    <div className="note" style={{ margin: 0, fontSize: 11.5, color: oddsColor(j.odds) }}>
+                      {oddsWord(j.odds)} · {j.odds}/100
+                    </div>
+                  ) : (
+                    <div className="note" style={{ margin: 0, fontSize: 11 }}>odds need a resume</div>
+                  )}
                 </span>
               </div>
               <div className="row" style={{ gap: 6, marginTop: 6 }}>
