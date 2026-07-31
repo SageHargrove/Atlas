@@ -151,6 +151,47 @@ false-matching (`"LA"` matching Dallas, `"York"` matching New York).
   instant that write lands — then the data file and every resume PDF. There is no
   undo; export from Settings first if you might want it.
 
+## Job finder (Career tab)
+The server polls ~40 employers' **own public job board APIs** — the same
+endpoints their careers pages call — a few times a day, and caches the result.
+Greenhouse, Lever, Ashby and Workday adapters; every seeded employer was verified
+to return postings before being added. A live run pulls ~500 security and identity
+postings in about 30 seconds. LinkedIn and Indeed are deliberately absent: they
+block programmatic access and say so. Every link goes to the employer.
+
+Employers on an unguessable Workday tenant are added by pasting their careers URL
+(**+ Employer**), which states the tenant exactly where guessing fails ~80% of
+the time. Anyone's added employer is polled for everyone.
+
+Two scores, **not** blended into one:
+- **Fit** — pay adjusted for cost of living, place (remote scores highest, since
+  it makes the city question disappear), category growth rate, IAM focus.
+- **Odds** — how far the role is from your rung, how much of your actual resume
+  overlaps it, and clearance/experience barriers.
+
+Blending them would hide the case that matters most: a great job you can't get
+*yet*, which you want to see rather than have averaged away.
+
+The ladder — intern → entry → mid → senior → lead → principal → director+ — is a
+filter, not a cutoff. Nothing is discarded, so the tool still works in ten years.
+It defaults to your rung and the one above; your rung is read off your resume by
+keywords, or by the AI on request (**Re-check my level**), stored with a date so
+a shift is visible rather than guessed at.
+
+Known limits, so you don't over-trust it: Workday's list endpoint returns a very
+short description, so **clearance detection is unreliable for Workday employers**
+(Leidos, CACI) — check the posting. Pay is an estimate unless the posting states
+it, and is labelled `est` when it is. Entry-level roles are genuinely scarce
+outside the August–October new-grad window; that's the market, not a bug.
+
+## Projects (Career tab)
+What you built, in your words. Seedable from your public GitHub repos (proxied
+through the server, so the page keeps `connect-src 'self'` and GitHub never sees
+your IP). Tag each with **best for** — "finance, full-stack" pulls Atlas forward
+for a fintech application and leaves it out of a cleared-defense one — and the
+pitch line you'd say in an interview, which is the part a repo description can
+never give you. Projects feed resume tailoring, cover letters and fit scoring.
+
 ## Where you could both work (Career tab)
 This tracker started as **Habitat**: it ranked cities by whether a partner could
 work in zoos, aquariums, or conservation — not just by what the security job paid.
