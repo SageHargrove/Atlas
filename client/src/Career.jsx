@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityMatch } from "./careerData.js";
 import JobFinder, { guessMyLevel, LEVELS } from "./JobFinder.jsx";
 import Projects, { projectsBrief } from "./Projects.jsx";
+import Timeline, { compoundGap } from "./Timeline.jsx";
 
 /* ------------------------------------------------------------------
    Career tab — the IAM job tracker, moved into Atlas.
@@ -1008,6 +1009,35 @@ function OfferImpact({ app, d, S, onClose }) {
           ))}
         </>
       )}
+      {app.comp > 0 && (
+        <>
+          <label className="f">Does starting here cap you?</label>
+          {(() => {
+            /* The real mechanism, not vibes: internal raises are a percentage of
+               what you already earn, so a starting gap widens instead of closing.
+               Changing employer is what resets the base. Worth SEEING, because
+               the conclusion is "take it and move in 2-3 years", not "don't". */
+            const higher = Math.round(app.comp * 1.2);
+            const stay = compoundGap(app.comp, higher, 10);
+            const hop = compoundGap(app.comp, higher, 10, 0.035, 3, 0.18);
+            return (
+              <>
+                <div className="kv"><span className="k">Staying put, 3.5%/yr raises — in 10 years</span>
+                  <span className="mono">{money(stay.a)} <span style={{ color: "var(--faint)" }}>vs {money(stay.b)} from a {money(higher)} start</span></span></div>
+                <div className="kv"><span className="k">Same start, but moving every 3 years (+18%)</span>
+                  <span className="mono good">{money(hop.a)}</span></div>
+                <div className="note" style={{ marginTop: 4 }}>
+                  A {money(app.comp)} start does follow you — after ten years of internal raises alone it's still
+                  about {Math.round(((stay.b - stay.a) / stay.a) * 100)}% behind a start {money(higher - app.comp)} higher, because every raise
+                  is a percentage of a smaller number. But changing employer resets the base, and that single lever
+                  outruns the whole gap: the third row starts at the <i>lower</i> number and still ends ahead.
+                  So a lower first offer with real work on it isn't a trap — staying in it for eight years is.
+                </div>
+              </>
+            );
+          })()}
+        </>
+      )}
       <div className="note">
         Rough by design: take-home uses a flat {S.takeHomePct}% of gross (federal, FICA and state vary), and your spending is
         scaled by cost-of-living index, which moves rent far more than groceries. Treat it as the shape of the answer, not the answer.
@@ -1244,6 +1274,8 @@ export default function Career({ d, setD, config, toast }) {
           </button>
         </div>
       )}
+
+      <Timeline S={S} apps={apps} setCareer={setCareer} setEditing={setEditing} />
 
       <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel} />
 

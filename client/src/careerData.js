@@ -112,3 +112,46 @@ export function cityMatch(city, cities) {
   const word = (hay, needle) => new RegExp("(^|[^a-z])" + needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([^a-z]|$)").test(hay);
   return cities.find((x) => x.name.length >= 4 && word(c, x.name.toLowerCase())) || null;
 }
+
+/* ---------------- hiring windows ----------------
+   The seed list always knew that the tier-1 consultancies open Aug-Oct and the
+   tier-3 enterprises open Jan-Apr, but it kept that in a free-text string where
+   nothing could act on it. Parsed into absolute month numbers, comparisons are
+   arithmetic and the whole list can sort itself into "late / open / not yet". */
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+export const MON_FULL = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+const mi = (s) => MONTHS.indexOf(String(s || "").slice(0, 3).toLowerCase());
+
+export const absMonth = (d) => d.getFullYear() * 12 + d.getMonth();
+export const monthLabel = (abs) => MON_FULL[((abs % 12) + 12) % 12] + " " + Math.floor(abs / 12);
+
+/* Handles "Aug-Oct 2026 + rolling", "Jul-Sep 2026 - rolling, apply ASAP",
+   "Jan-Apr 2027", "Aug 2026 - apply early", and a bare "rolling". */
+export function parseWindow(text, today = new Date()) {
+  const t = String(text || "").trim();
+  if (!t) return null;
+  const rolling = /\b(rolling|asap|open|year[- ]round|continuous)\b/i.test(t);
+  const year = (t.match(/\b(20\d{2})\b/) || [])[1];
+  const names = [...t.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/gi)].map((m) => mi(m[1]));
+  if (!names.length) return rolling ? { rolling: true, from: null, to: null } : null;
+  const y = year ? Number(year) : today.getFullYear();
+  const from = y * 12 + names[0];
+  let to = names.length > 1 ? y * 12 + names[names.length - 1] : from;
+  if (to < from) to += 12;   // a window that ends before it starts wrapped the year: Nov-Feb
+  return { rolling, from, to };
+}
+
+/* Does a low starting salary actually cap you? Yes, through a specific mechanism
+   worth seeing rather than being told: internal raises are a percentage of what
+   you already earn, so a starting gap widens instead of closing. Changing
+   employer is what resets the base — which is why the honest conclusion is
+   "take it, then move in two or three years", not "don't take it". */
+export function compoundGap(startA, startB, years = 10, internal = 0.035, hopEvery = 0, hopBump = 0.18) {
+  const run = (start) => {
+    let s = start;
+    for (let y = 1; y <= years; y++) s *= (hopEvery && y % hopEvery === 0) ? 1 + hopBump : 1 + internal;
+    return Math.round(s);
+  };
+  return { a: run(startA), b: run(startB) };
+}

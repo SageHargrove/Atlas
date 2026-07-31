@@ -57,6 +57,28 @@ eq("senior director is executive", lv("Senior Director, Information Security"), 
 eq("years fill in when the title says nothing", lv("Security Engineer", { desc: "8+ years of experience" }), "principal");
 eq("low years read as entry", lv("Security Analyst", { desc: "1-2 years of experience required" }), "entry");
 
+/* Numbered bands, romans and digits alike. These were read inconsistently:
+   roman II landed in senior while arabic 3 and 4 landed in mid, so
+   "Security Engineer II" outranked "Information Security Analyst 4". */
+console.log("\nnumbered bands:");
+eq("Analyst I is entry", lv("IAM Analyst I"), "entry");
+eq("Analyst 1 is entry", lv("IAM Analyst 1"), "entry");
+eq("Level 1 is entry", lv("Cybersecurity Analyst, Level 1"), "entry");
+eq("Tier 1 is entry", lv("SOC Analyst Tier 1"), "entry");
+eq("Engineer I is entry", lv("Machine Learning Engineer I - Message Security"), "entry");
+eq("Engineer II is MID, not senior", lv("Security Engineer II"), "mid");
+eq("Analyst 2 is mid", lv("Threat Analyst 2"), "mid");
+eq("SOC Analyst II is mid", lv("SOC Analyst II"), "mid");
+eq("Engineer III is senior", lv("Cyber Security Engineer III"), "senior");
+eq("Analyst 3 is SENIOR, not mid", lv("Threat Analyst 3"), "senior");
+eq("Analyst 4 is SENIOR, not mid", lv("Information Security Analyst 4"), "senior");
+eq("Engineer V is lead", lv("Security Engineer V"), "lead");
+eq("an explicit word beats the number", lv("Senior Threat Analyst 1"), "senior");
+eq("staff beats the number", lv("Staff Security Engineer II"), "principal");
+/* a number that isn't a band must not be read as one */
+eq("a product name is not a band", lv("Security Engineer, Auth0"), "mid");
+eq("a year is not a band", lv("Security Analyst, 2027 Start"), "mid");
+
 console.log("\nflags:");
 const f = (title, extra) => c(title, extra);
 eq("remote from location", f("Security Engineer", { location: "Remote - USA" }).remote, true);

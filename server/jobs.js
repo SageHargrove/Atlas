@@ -227,19 +227,48 @@ const TITLE_BLOCK = /\b(sales|account executive|account manager|business develop
    "Associate Principal" is a principal, which a naive /associate/ match called
    entry level. */
 export const LEVELS = ["intern", "entry", "mid", "senior", "lead", "principal", "executive"];
+
+/* Numbered titles are how most large employers actually band roles, and getting
+   them wrong misfiles whole companies. They were being read inconsistently:
+   roman II landed in senior (because "ii" sat in the seniority word list) while
+   arabic 3 and 4 landed in mid (because digits weren't read at all) — so
+   "Security Engineer II" outranked "Information Security Analyst 4".
+
+   One rung per number, romans and digits treated identically:
+     I / 1    entry     <- a level 1 IAM analyst is an entry role
+     II / 2   mid
+     III / 3  senior
+     IV / 4   senior
+     V / 5+   lead */
+const ROMAN = { i: 1, ii: 2, iii: 3, iv: 4, v: 5 };
+const NUM_RUNG = { 1: "entry", 2: "mid", 3: "senior", 4: "senior", 5: "lead" };
+const NUMBERED = /\b(?:analyst|engineer|specialist|consultant|administrator|architect|associate|officer|technician|developer|scientist)\s*[-–]?\s*(i{1,3}|iv|v|[1-5])\b/i;
+const EXPLICIT_LEVEL = /\b(?:level|lvl|tier|band|grade)\s*[-–]?\s*(i{1,3}|iv|v|[1-5])\b/i;
+function numberedRung(title) {
+  const m = EXPLICIT_LEVEL.exec(title) || NUMBERED.exec(title);
+  if (!m) return null;
+  const raw = m[1].toLowerCase();
+  return NUM_RUNG[ROMAN[raw] ?? Number(raw)] || null;
+}
+
 const LADDER = [
   ["executive", /\b(chief|c[teifos]o\b|vice president|\bvp\b|svp|evp|head of|director|dir\.?)\b/i],
   ["principal", /\b(principal|distinguished|fellow|staff)\b/i],
-  ["lead", /\b(lead|manager|mgr\.?|supervisor|team lead|tech lead)\b/i],
-  ["senior", /\b(senior|sr\.?|iii|iv|\bii?i\b)\b/i],
-  ["intern", /\b(intern|internship|co-?op|apprentice|trainee)\b/i],
-  ["entry", /\b(new ?grad|graduate|entry[- ]level|junior|jr\.?|early career|university|campus|rotational|residency|analyst i\b|engineer i\b|level 1|tier ?1|\bi\b)\b|\bassociate\b(?!\s+(principal|director|vp|partner|manager))/i],
+  ["lead", /\b(lead|manager|mgr\.?|supervisor)\b/i],
+  ["senior", /\b(senior|sr\.?)\b/i],
 ];
+const ENTRY_WORDS = /\b(new ?grad|graduate|entry[- ]level|junior|jr\.?|early career|university|campus|rotational|residency)\b|\bassociate\b(?!\s+(principal|director|vp|partner|manager))/i;
+
 function levelOf(title, years) {
   /* an internship is an internship even when titled "Security Engineering Intern,
-     Senior Platform Team", so it wins over any seniority word in the title */
-  if (/\b(intern|internship|co-?op)\b/i.test(title)) return "intern";
+     Senior Platform Team", so it wins over everything else in the title */
+  if (/\b(intern|internship|co-?op|apprentice|trainee)\b/i.test(title)) return "intern";
+  /* an explicit seniority word beats the number: "Senior Threat Analyst 1" is a
+     senior role at a company whose band-1 happens to be its senior band */
   for (const [name, re] of LADDER) if (re.test(title)) return name;
+  const numbered = numberedRung(title);
+  if (numbered) return numbered;
+  if (ENTRY_WORDS.test(title)) return "entry";
   if (years != null) return years >= 8 ? "principal" : years >= 5 ? "senior" : years <= 2 ? "entry" : "mid";
   return "mid";
 }
