@@ -488,7 +488,9 @@ async function extractPdfText(buffer) {
 
 /* renders the stored PDF to canvases so you can see the real document,
    not just a filename */
-function PdfView({ slot = 1, nonce }) {
+/* Renders at device pixel ratio and lets CSS size it, so the page is sharp on a
+   retina screen instead of the upscaled blur a fixed 300px canvas produced. */
+function PdfView({ slot = 1, nonce, big }) {
   const [pages, setPages] = useState(null);
   const [err, setErr] = useState("");
   useEffect(() => {
@@ -504,9 +506,10 @@ function PdfView({ slot = 1, nonce }) {
         pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
         const doc = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
         const out = [];
-        for (let p = 1; p <= Math.min(doc.numPages, 4); p++) {
+        const max = big ? 8 : 4;
+        for (let p = 1; p <= Math.min(doc.numPages, max); p++) {
           const page = await doc.getPage(p);
-          const scale = 1.4;
+          const scale = big ? 2.6 : 1.4;
           const vp = page.getViewport({ scale });
           const canvas = document.createElement("canvas");
           canvas.width = vp.width; canvas.height = vp.height;
@@ -517,10 +520,21 @@ function PdfView({ slot = 1, nonce }) {
       } catch (e) { if (!dead) setErr(e.message); }
     })();
     return () => { dead = true; };
-  }, [slot, nonce]);
+  }, [slot, nonce, big]);
 
   if (err) return <div className="note">Preview unavailable{err !== "no file" ? " — " + err : ""}.</div>;
   if (!pages) return <div className="note">Rendering preview…</div>;
+
+  /* Stacked down the page, full width, like reading the actual document. The
+     old side-by-side 300px thumbnails were a filmstrip, not a resume. */
+  if (big) return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, alignItems: "center" }}>
+      {pages.map((src, i) => (
+        <img key={i} src={src} alt={"Resume page " + (i + 1)}
+          style={{ width: "100%", maxWidth: 820, borderRadius: 8, border: "1px solid var(--line2)", background: "#fff", display: "block" }} />
+      ))}
+    </div>
+  );
   return (
     <div className="hscroll" style={{ marginTop: 10 }}>
       <div className="row" style={{ gap: 10, flexWrap: "nowrap", alignItems: "flex-start" }}>
@@ -597,6 +611,7 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
   const [draft, setDraft] = useState(null); // AI rewrite awaiting your yes/no
   const [nonce, setNonce] = useState(0);    // bump to re-render the preview
   const [tailorTarget, setTailorTarget] = useState("");
+  const [view, setView] = useState("pdf");  // the document pane: rendered PDF or editable text
 
   /* every write goes through here so the legacy single-resume shape is migrated
      exactly once, and the old keys stop being the source of truth */
@@ -731,122 +746,135 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
     setBusy("");
   };
 
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+
   return (
     <div className="card">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h3>Resume</h3>
-        {meta && <span className="note" style={{ margin: 0 }}>{meta.name} · {meta.pages} pg · uploaded {meta.uploaded}</span>}
-      </div>
-      <div className="note" style={{ marginTop: 0 }}>
-        Upload the PDF you actually send. Atlas keeps the original file and pulls its text out so you — and the AI — can work on it.
-        Everything is stored with your finances: same private directory, same encrypted backups, same passkey.
-      </div>
-
-      {resumes.length > 0 && (
-        <div className="row" style={{ marginTop: 10, gap: 4 }}>
-          <div className="tabs" style={{ flexWrap: "wrap" }}>
-            {resumes.map((r, i) => (
-              <button key={r.slot} className={"tab" + (i === idx ? " on" : "")} onClick={() => { setActive(i); setNonce((n) => n + 1); }}>
-                {r.label || "Resume " + r.slot}
-              </button>
-            ))}
-          </div>
-          {resumes.length < 5 && (
-            <button className="btn small" disabled={!!busy} title="Upload another PDF as a separate resume"
-              onClick={() => document.getElementById("resume-add").click()}>+ Another resume</button>
-          )}
-          <input id="resume-add" type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
-            onChange={(e) => { pick(e.target.files[0], freeSlot()); e.target.value = ""; }} />
-        </div>
-      )}
-
-      {cur && (
-        <div className="row" style={{ marginTop: 8 }}>
-          <label className="note" style={{ margin: 0 }}>Name this one</label>
-          <input className="in" style={{ width: 200, padding: "4px 8px" }} value={cur.label || ""}
-            placeholder="e.g. IAM / utilities"
-            onChange={(e) => patch(cur.slot, { label: e.target.value.slice(0, 24) })} />
-          {resumes.length > 1 && (
-            <span className="note" style={{ margin: 0, fontSize: 11.5 }}>
-              {idx === 0 ? "This first one is what fit scoring and the assistant read."
-                         : "Fit scoring reads the first tab (" + (resumes[0].label || "Resume 1") + "), not this one."}
-            </span>
-          )}
-        </div>
-      )}
-
-      <div className="row" style={{ marginTop: 10 }}>
-        <button className="btn small primary" disabled={!!busy} onClick={() => document.getElementById("resume-pick").click()}>
-          {busy === "read" ? "Reading…" : meta ? "Replace PDF" : "Upload PDF"}
-        </button>
-        <input id="resume-pick" type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
-          onChange={(e) => { pick(e.target.files[0]); e.target.value = ""; }} />
-        {meta && <a className="btn small" href={"/api/resume/" + cur.slot} target="_blank" rel="noreferrer noopener">Open PDF</a>}
-        {text.trim() && (
-          <>
-            <button className="btn small" disabled={!!busy}
-              onClick={() => buildPdf(text).then((doc) => doc.save(((cur.label || "resume") + "-" + new Date().toISOString().slice(0, 10) + ".pdf").replace(/[^\w.() -]/g, ""))).catch((e) => toast("Export failed — " + e.message, "err"))}>
-              Download edited
-            </button>
-            <button className="btn small" disabled={!!busy} title="Rebuild the PDF from your edited text and make it the stored version"
-              onClick={publish}>{busy === "pub" ? "Rebuilding…" : "Save edits as the PDF"}</button>
-          </>
-        )}
-        {cur && (
-          <button className="btn small danger" disabled={!!busy} onClick={async () => {
-            if (!confirm("Delete “" + (cur.label || "this resume") + "” — its PDF and its text?")) return;
-            const r = await fetch("/api/resume/" + cur.slot, { method: "DELETE" });
-            if (!r.ok) return toast("Couldn't delete it on the server — nothing changed.", "err");
-            writeResumes((list) => list.filter((x) => x.slot !== cur.slot));
-            setActive(0);
-            toast("Resume deleted.");
-          }}>Delete</button>
-        )}
-      </div>
-
-      {meta && <PdfView slot={cur.slot} nonce={nonce} />}
-
-      {text.trim() ? (
-        <>
-          <label className="f">Resume text — edit freely</label>
-          <textarea className="in mono" style={{ minHeight: 240, fontSize: 12.5, lineHeight: 1.5 }} value={text}
-            onChange={(e) => patch(cur.slot, { text: e.target.value.slice(0, MAX_RESUME_CHARS) })} />
-          <div className="note">
-            {text.trim().split(/\s+/).length} words. Edits feed fit scoring, tailoring and the assistant.
-            <b> Download edited</b> gives you a file; <b>Save edits as the PDF</b> makes them the stored version you see above.
-          </div>
-          {config?.aiEnabled && (
-            <>
-              <div className="row" style={{ marginTop: 8 }}>
-                <input className="in" style={{ flex: 1, minWidth: 180 }} placeholder="Tell the AI how to edit it — e.g. 'make it IAM-focused, cut to one page'"
-                  value={instr} onChange={(e) => setInstr(e.target.value)} onKeyDown={(e) => e.key === "Enter" && aiEdit()} />
-                <button className="btn small" disabled={!!busy} onClick={aiEdit}>{busy === "ai" ? "Rewriting…" : "Edit with AI"}</button>
-              </div>
-              <div className="row" style={{ marginTop: 8 }}>
-                <span className="note" style={{ margin: 0 }}>
-                  Reads as <b style={{ color: "var(--acc)" }}>{(LEVELS.find(([k]) => k === myLevel) || [, myLevel])[1]}</b>
-                  {levelSource === "ai" ? " (AI)" : " (from keywords)"} — the finder defaults to this rung and the one above.
-                  {S.levelAI?.why ? " " + S.levelAI.why : ""}
-                </span>
-                <button className="btn small" disabled={!!busy} onClick={estimateLevel}>
-                  {busy === "level" ? "Reading…" : "Re-check my level"}
+      {/* Document centre stage, controls in a rail beside it — a resume you can
+          only see at thumbnail size is a resume you can't actually work on. */}
+      <div className="rwork">
+        <div className="rdoc">
+          <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
+            <div className="tabs" style={{ flexWrap: "wrap" }}>
+              {resumes.map((r, i) => (
+                <button key={r.slot} className={"tab" + (i === idx ? " on" : "")} onClick={() => { setActive(i); setNonce((n) => n + 1); }}>
+                  {r.label || "Resume " + r.slot}
                 </button>
+              ))}
+              {resumes.length > 0 && resumes.length < 5 && (
+                <button className="tab" disabled={!!busy} onClick={() => document.getElementById("resume-add").click()}>+</button>
+              )}
+            </div>
+            {text.trim() && (
+              <div className="pills">
+                <button className={"pill" + (view === "pdf" ? " on" : "")} onClick={() => setView("pdf")}>PDF</button>
+                <button className={"pill" + (view === "text" ? " on" : "")} onClick={() => setView("text")}>Text</button>
               </div>
-              <div className="row" style={{ marginTop: 8 }}>
-                <span className="note" style={{ margin: 0 }}>Make a tailored copy for</span>
-                <select className="in" style={{ width: 220 }} value={tailorTarget} onChange={(e) => setTailorTarget(e.target.value)}>
-                  <option value="">— use the instruction above —</option>
-                  {apps.map((a) => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}
-                </select>
-                <button className="btn small" disabled={!!busy || !freeSlot()} title={freeSlot() ? "Writes a new resume into its own tab — this one is untouched" : "Five resumes is the limit — delete one first"}
-                  onClick={makeVariant}>{busy === "variant" ? "Writing…" : "New tailored resume"}</button>
+            )}
+          </div>
+
+          {!cur ? (
+            <div className="rempty">
+              <div style={{ fontSize: 15, fontWeight: 600 }}>No resume yet</div>
+              <div className="note" style={{ maxWidth: 380 }}>
+                Upload the PDF you actually send. Atlas keeps the original file and pulls its text out so you — and the
+                AI — can work on it. Stored with your finances: same private directory, same encrypted backups.
               </div>
+              <button className="btn primary" disabled={!!busy} onClick={() => document.getElementById("resume-pick").click()}>
+                {busy === "read" ? "Reading…" : "Upload a PDF"}
+              </button>
+            </div>
+          ) : view === "text" ? (
+            <textarea className="in mono rtext" value={text}
+              onChange={(e) => patch(cur.slot, { text: e.target.value.slice(0, MAX_RESUME_CHARS) })} />
+          ) : meta ? (
+            <PdfView slot={cur.slot} nonce={nonce} big />
+          ) : (
+            <div className="rempty"><div className="note">This one has text but no stored PDF — <b>Save edits as the PDF</b> builds one.</div></div>
+          )}
+        </div>
+
+        <div className="rside">
+          {cur && (
+            <>
+              <label className="f" style={{ marginTop: 0 }}>Name</label>
+              <input className="in" value={cur.label || ""} placeholder="e.g. IAM / utilities"
+                onChange={(e) => patch(cur.slot, { label: e.target.value.slice(0, 24) })} />
+              <div className="note" style={{ fontSize: 11.5 }}>
+                {meta ? meta.name + " · " + meta.pages + " pg · " + meta.uploaded : "no PDF stored"}
+                {words ? " · " + words + " words" : ""}
+                {resumes.length > 1 && (idx === 0
+                  ? " · fit scoring reads this one"
+                  : " · fit scoring reads " + (resumes[0].label || "Resume 1") + ", not this")}
+              </div>
+
+              <div className="row" style={{ marginTop: 10 }}>
+                <button className="btn small primary" disabled={!!busy} onClick={() => document.getElementById("resume-pick").click()}>
+                  {busy === "read" ? "Reading…" : "Replace PDF"}
+                </button>
+                {meta && <a className="btn small" href={"/api/resume/" + cur.slot} target="_blank" rel="noreferrer noopener">Open</a>}
+              </div>
+              {text.trim() && (
+                <div className="row" style={{ marginTop: 6 }}>
+                  <button className="btn small" disabled={!!busy} title="Rebuild the stored PDF from your edited text"
+                    onClick={publish}>{busy === "pub" ? "Rebuilding…" : "Save edits as PDF"}</button>
+                  <button className="btn small" disabled={!!busy}
+                    onClick={() => buildPdf(text).then((doc) => doc.save(((cur.label || "resume") + "-" + new Date().toISOString().slice(0, 10) + ".pdf").replace(/[^\w.() -]/g, ""))).catch((e) => toast("Export failed — " + e.message, "err"))}>
+                    Download
+                  </button>
+                </div>
+              )}
+
+              {config?.aiEnabled && text.trim() && (
+                <>
+                  <label className="f">Ask the AI to change it</label>
+                  <textarea className="in" style={{ minHeight: 62, fontSize: 12.5 }}
+                    placeholder="e.g. make it IAM-focused and cut it to one page"
+                    value={instr} onChange={(e) => setInstr(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) aiEdit(); }} />
+                  <button className="btn small" style={{ marginTop: 6 }} disabled={!!busy} onClick={aiEdit}>
+                    {busy === "ai" ? "Rewriting…" : "Rewrite — you approve first"}
+                  </button>
+
+                  <label className="f">Tailored copy for a target</label>
+                  <select className="in" value={tailorTarget} onChange={(e) => setTailorTarget(e.target.value)}>
+                    <option value="">— use the instruction above —</option>
+                    {apps.map((a) => <option key={a.id} value={a.id}>{a.company} · {a.role}</option>)}
+                  </select>
+                  <button className="btn small" style={{ marginTop: 6 }} disabled={!!busy || !freeSlot()}
+                    title={freeSlot() ? "Writes a new resume into its own tab — this one is untouched" : "Five resumes is the limit — delete one first"}
+                    onClick={makeVariant}>{busy === "variant" ? "Writing…" : "New tailored resume"}</button>
+
+                  <label className="f">Your level</label>
+                  <div className="note" style={{ marginTop: 0, fontSize: 11.5 }}>
+                    Reads as <b style={{ color: "var(--acc)" }}>{(LEVELS.find(([k]) => k === myLevel) || [, myLevel])[1]}</b>
+                    {levelSource === "ai" ? " (AI)" : " (from keywords)"}. {S.levelAI?.why || ""}
+                    {S.levelAI?.next ? " To move up: " + S.levelAI.next : ""}
+                  </div>
+                  <button className="btn small" style={{ marginTop: 6 }} disabled={!!busy} onClick={estimateLevel}>
+                    {busy === "level" ? "Reading…" : "Re-check my level"}
+                  </button>
+                </>
+              )}
+
+              {/* its own line, away from the harmless buttons — this one deletes a file */}
+              <button className="btn small danger" style={{ marginTop: 18, display: "block" }} disabled={!!busy} onClick={async () => {
+                if (!confirm("Delete “" + (cur.label || "this resume") + "” — its PDF and its text?")) return;
+                const r = await fetch("/api/resume/" + cur.slot, { method: "DELETE" });
+                if (!r.ok) return toast("Couldn't delete it on the server — nothing changed.", "err");
+                writeResumes((list) => list.filter((x) => x.slot !== cur.slot));
+                setActive(0);
+                toast("Resume deleted.");
+              }}>Delete this resume</button>
             </>
           )}
-        </>
-      ) : (
-        <div className="note">Nothing uploaded yet — the AI features here stay off until there's a resume to read.</div>
-      )}
+        </div>
+      </div>
+
+      <input id="resume-pick" type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
+        onChange={(e) => { pick(e.target.files[0]); e.target.value = ""; }} />
+      <input id="resume-add" type="file" accept="application/pdf,.pdf" style={{ display: "none" }}
+        onChange={(e) => { pick(e.target.files[0], freeSlot()); e.target.value = ""; }} />
 
       {draft && (
         <Sheet title="AI rewrite — review before it replaces yours" onClose={() => setDraft(null)}>
@@ -1333,13 +1361,11 @@ export default function Career({ d, setD, config, toast }) {
           are a workspace, not a feed item — you open them to work, then close. */}
       {profileOpen && (
         <Sheet title="Your profile — resume, projects, level" onClose={() => setProfileOpen(false)} wide>
-          <div className="note" style={{ marginTop: 0 }}>
-            Everything the AI reads about you lives here. The resume feeds fit scoring, tailoring, cover letters and
-            interview prep; projects get pulled into whichever application they suit.
+          <div className="wbody">
+            <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
+              myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
+            <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
           </div>
-          <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
-            myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
-          <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
         </Sheet>
       )}
 
