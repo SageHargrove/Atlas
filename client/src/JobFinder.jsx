@@ -136,6 +136,7 @@ function Meter({ label, value, color, title }) {
   );
 }
 const meterColor = (n) => (n == null ? "var(--faint)" : n >= 70 ? "var(--up)" : n >= 50 ? "var(--acc)" : n >= 32 ? "var(--gold)" : "var(--down)");
+const STATUS_CLR = { Target: "var(--faint)", Applied: "var(--gold)", Interviewing: "var(--acc)", Offer: "var(--up)" };
 
 const oddsWord = (n) => (n >= 70 ? "Strong" : n >= 52 ? "Realistic" : n >= 34 ? "Stretch" : "Long shot");
 const oddsColor = (n) => (n >= 70 ? "var(--up)" : n >= 52 ? "var(--acc)" : n >= 34 ? "var(--gold)" : "var(--down)");
@@ -145,7 +146,31 @@ const ago = (d) => {
   return days <= 0 ? "today" : days === 1 ? "1 day ago" : days < 30 ? days + " days ago" : Math.round(days / 30) + " mo ago";
 };
 
-export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact }) {
+/* A tracked application, shaped like a posting so one list can hold both.
+
+   They were two cards showing the same thing twice: the tracker had 102 rows of
+   companies you're aiming at, the finder had 500 live postings, and moving
+   between them meant scrolling past one to reach the other. They are one list
+   with a source filter now — "everything I'm looking at", however it got there. */
+function appAsRow(a, S) {
+  const city = cityMatch(a.city, S.cities);
+  const comp = a.comp == null || a.comp === "" ? null : Math.round(Number(a.comp) * (1 + (Number(a.extrasPct) || 0) / 100));
+  const remote = a.locationType === "Remote";
+  return {
+    id: "app:" + a.id,
+    tracked: true, appId: a.id, status: a.status,
+    company: a.company, title: a.role || "target", location: remote ? "Remote" : (a.city || ""),
+    comp, compEst: !!a.compEst, remote, us: true,
+    city, cat: a.cat || "enterprise", family: a.family === "IAM" ? "iam" : "analyst",
+    iam: (a.family || "").toUpperCase().includes("IAM"),
+    clearance: a.clearance === "Required",
+    level: "entry", levelSure: false, levelBasis: null, yearsReq: null,
+    desc: a.notes || "", url: a.link || "", window: a.window || "",
+    posted: "", firstSeen: "", ageDays: null,
+  };
+}
+
+export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -174,6 +199,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   const [whyId, setWhy] = useState(null);     // which row's city detail is expanded
   const [menuId, setMenuId] = useState(null); // which card's overflow menu is open
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [source, setSource] = useState("all");
   /* The offer you're near-certain of, adjusted the same way every row is, so the
      comparison is like for like: a $70k utility job in Little Rock is not
      beaten by an $80k one in Boston. */
@@ -221,10 +247,15 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   /* editable, because a resume's dates can't see freelance work or a gap */
   const myYears = S.myYears != null ? Number(S.myYears) : yearsFromResume(S.resume);
   const scored = useMemo(() => {
-    if (!data?.jobs) return [];
     const ctx = { S, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj };
-    return data.jobs.map((j) => scoreJob(j, ctx));
-  }, [data, S, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj]);
+    const board = (data?.jobs || []).map((j) => scoreJob(j, ctx));
+    /* your own tracked targets, scored the same way, so a company you added by
+       hand sits next to a live posting rather than in a separate table */
+    const mine = apps
+      .filter((a) => a.status !== "Rejected" && a.status !== "Withdrawn")
+      .map((a) => scoreJob(appAsRow(a, S), ctx));
+    return [...board, ...mine];
+  }, [data, apps, S, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj]);
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -238,6 +269,10 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     const unknown = (j) => j.levelSure === false && !j.levelBasis;
     let out = scored.filter((j) =>
       !dismissed.has(j.id) &&
+      (source === "all" || (source === "board" ? !j.tracked
+        : source === "tracked" ? j.tracked
+        : source === "applied" ? j.status && j.status !== "Target"
+        : true)) &&
       (!levels.size || levels.has(j.level) || (wantsUnlabelled && unknown(j))) &&
       (!fams.size || fams.has(j.family)) &&
       (!cats.size || cats.has(j.cat)) &&
@@ -257,7 +292,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       new: (a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""),
     };
     return out.sort(cmp[sort]);
-  }, [scored, levels, showUnlabelled, fams, cats, minPay, hideStale, onlyNew, lastSeen, dismissed,
+  }, [scored, source, levels, showUnlabelled, fams, cats, minPay, hideStale, onlyNew, lastSeen, dismissed,
       remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
 
   const unlabelled = useMemo(() => scored.filter((j) => j.levelSure === false && !j.levelBasis && (!usOnly || j.us)).length, [scored, usOnly]);
@@ -421,6 +456,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h3>Find jobs</h3>
         <span className="row" style={{ gap: 6 }}>
+          {header}
           {apps.length > 0 && <button className="btn small" disabled={!!busy} onClick={discover}
             title="Look up public job boards for the companies you track">{busy === "discover" ? "Looking…" : "Find boards"}</button>}
           <button className="btn small" disabled={!!busy} onClick={() => setAddOpen((v) => !v)}>+ Employer</button>
@@ -513,6 +549,12 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       <div className="fbar" style={{ marginTop: 10 }}>
         <input className="in" style={{ flex: 1, minWidth: 150 }} placeholder="Search company, title, city…"
           value={q} onChange={(e) => setQ(e.target.value)} />
+        <select className="in" style={{ width: 148 }} value={source} onChange={(e) => setSource(e.target.value)}>
+          <option value="all">Everything ({scored.length})</option>
+          <option value="board">Live postings ({scored.filter((j) => !j.tracked).length})</option>
+          <option value="tracked">My targets ({scored.filter((j) => j.tracked).length})</option>
+          <option value="applied">Applied ({scored.filter((j) => j.status && j.status !== "Target").length})</option>
+        </select>
         <select className="in" style={{ width: 160 }} value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="fit">Sort: best for me</option>
           <option value="odds">Sort: most gettable</option>
@@ -651,6 +693,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
               </div>
 
               <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
+                {j.tracked && <span className="tag" style={{ color: STATUS_CLR[j.status] || "var(--faint)", borderColor: STATUS_CLR[j.status] || "var(--line2)" }}>{j.status}</span>}
                 {lastSeen && (j.firstSeen || "") > lastSeen && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>New</span>}
                 {j.remote ? (
                   <span className="tag" style={{ color: "var(--up)", borderColor: "var(--up)" }}
@@ -695,8 +738,13 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
               </span>
 
               <div className="jfoot">
-                <a className="btn small primary" href={j.url} target="_blank" rel="noreferrer noopener">Open</a>
-                <button className="btn small" disabled={already} onClick={() => track(j)}>{already ? "Tracked ✓" : "Track"}</button>
+                {j.url
+                  ? <a className="btn small primary" href={j.url} target="_blank" rel="noreferrer noopener">Open</a>
+                  : <a className="btn small primary" href={"https://duckduckgo.com/?q=" + encodeURIComponent(j.company + " careers " + j.title)}
+                      target="_blank" rel="noreferrer noopener">Find it</a>}
+                {j.tracked
+                  ? <button className="btn small" onClick={() => onEdit(apps.find((a) => a.id === j.appId))}>Edit</button>
+                  : <button className="btn small" disabled={already} onClick={() => track(j)}>{already ? "Tracked ✓" : "Track"}</button>}
                 <span className="menuwrap">
                   <button className="btn small" onClick={() => setMenuId(menuId === j.id ? null : j.id)} title="More">···</button>
                   {menuId === j.id && (

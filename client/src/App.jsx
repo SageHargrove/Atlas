@@ -378,6 +378,19 @@ const CSS = `
 .fh .achip{ display:inline-flex; align-items:center; gap:5px; font-size:11.5px; padding:2px 5px 2px 9px;
   border-radius:999px; border:1px solid var(--acc); color:var(--acc); }
 .fh .achip button{ background:none; border:none; color:inherit; cursor:pointer; font-size:13px; line-height:1; padding:0 3px; }
+.fh .foldhead{ display:flex; justify-content:space-between; align-items:center; width:100%; background:none;
+  border:none; padding:0; cursor:pointer; color:var(--text); font:inherit; text-align:left; }
+.fh .foldhead:hover h3{ color:var(--acc); }
+/* an actual timeline: months across, your window shaded, milestones on it */
+.fh .tlwrap{ overflow-x:auto; padding-bottom:6px; }
+.fh .tl{ position:relative; min-width:620px; height:112px; margin-top:6px; }
+.fh .tl .axis{ position:absolute; left:0; right:0; top:52px; height:2px; background:var(--line2); }
+.fh .tl .season{ position:absolute; top:40px; height:26px; border-radius:6px; background:var(--acc-soft); border:1px solid var(--acc); }
+.fh .tl .tick{ position:absolute; top:58px; transform:translateX(-50%); font-size:10px; color:var(--faint); white-space:nowrap; }
+.fh .tl .now{ position:absolute; top:26px; bottom:22px; width:2px; background:var(--gold); }
+.fh .tl .mile{ position:absolute; transform:translateX(-50%); text-align:center; width:120px; }
+.fh .tl .dot{ width:13px; height:13px; border-radius:50%; margin:0 auto; border:2px solid var(--panel); }
+.fh .tl .mlabel{ font-size:10.5px; line-height:1.25; margin-top:3px; color:var(--faint); }
 .fh .tbl{ width:100%; border-collapse:collapse; font-size:13px; }
 .fh .tbl th{ text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); font-weight:600; padding:6px 10px 6px 0; border-bottom:1px solid var(--line); white-space:nowrap; }
 .fh .tbl td{ padding:8px 10px 8px 0; border-bottom:1px solid var(--line); vertical-align:top; }

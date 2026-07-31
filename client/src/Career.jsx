@@ -928,6 +928,7 @@ function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource })
 function TwoCareerCities({ S, apps, setCareer }) {
   const [minPartner, setMinPartner] = useState(2);
   const [open, setOpen] = useState(false);
+  const [sort, setSort] = useState("adj");
 
   const rows = useMemo(() => {
     /* what you could actually earn there, from your own tracked targets */
@@ -949,8 +950,13 @@ function TwoCareerCities({ S, apps, setCareer }) {
         const adj = best ? Math.round(best.comp / (c.col / 100)) : null;
         return { ...c, targets: mine.length, best, adj };
       })
-      .sort((a, b) => (b.adj || 0) - (a.adj || 0) || (b.partner - a.partner) || (a.col - b.col));
-  }, [S.cities, apps, minPartner]);
+      .sort({
+        adj: (a, b) => (b.adj || 0) - (a.adj || 0) || (b.partner - a.partner) || (a.col - b.col),
+        partner: (a, b) => (b.partner - a.partner) || (b.adj || 0) - (a.adj || 0),
+        col: (a, b) => a.col - b.col || (b.partner - a.partner),
+        name: (a, b) => a.name.localeCompare(b.name),
+      }[sort]);
+  }, [S.cities, apps, minPartner, sort]);
 
   const withTargets = rows.filter((r) => r.targets > 0);
   const show = open ? rows : rows.slice(0, 8);
@@ -974,6 +980,12 @@ function TwoCareerCities({ S, apps, setCareer }) {
           <option value={2}>Solid or better</option>
           <option value={1}>Anything at all</option>
           <option value={0}>Show every city</option>
+        </select>
+        <select className="in" style={{ width: 190 }} value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="adj">Sort: adjusted pay</option>
+          <option value="partner">Sort: best for her</option>
+          <option value="col">Sort: cheapest</option>
+          <option value="name">Sort: A–Z</option>
         </select>
         <span className="note" style={{ margin: 0 }}>
           {rows.length} cities · {withTargets.length} where you already track a target
@@ -1019,6 +1031,26 @@ function TwoCareerCities({ S, apps, setCareer }) {
           in one of them, and this table starts comparing real money instead of just cost of living.
         </div>
       )}
+    </div>
+  );
+}
+
+/* A card that starts shut. Five open cards stacked down a page is the same
+   mistake as thirty filter controls in a row: everything is visible, so nothing
+   is. The one you use constantly stays open; the rest announce what's inside
+   and wait to be asked. */
+function Fold({ title, sub, defaultOpen, children }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div className="card">
+      <button className="foldhead" onClick={() => setOpen((v) => !v)}>
+        <span className="row" style={{ gap: 8, alignItems: "baseline" }}>
+          <h3 style={{ margin: 0 }}>{title}</h3>
+          {sub && <span className="note" style={{ margin: 0, fontSize: 12 }}>{sub}</span>}
+        </span>
+        <span className="note" style={{ margin: 0 }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && <div style={{ marginTop: 12 }}>{children}</div>}
     </div>
   );
 }
@@ -1381,161 +1413,45 @@ export default function Career({ d, setD, config, toast }) {
 
   return (
     <>
-      <div className="card">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>Career</h3>
+      {/* Three cards, not five, and the one you actually use is first and open.
+          The tracker used to be its own card listing the same companies the
+          finder already shows — it's a source filter inside the finder now. */}
+      <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel}
+        onTailor={tailor} onCoverLetter={coverLetter} onImpact={setImpact} onEdit={setEditing}
+        header={
           <span className="row" style={{ gap: 6 }}>
             <button className={"btn small" + (S.resume ? "" : " primary")} onClick={() => setProfileOpen(true)}>
               {S.resume ? "Your profile" : "Add your resume"}
             </button>
-            {!apps.length && <button className="btn small" onClick={() => { setCareer((c) => ({ ...c, apps: seedApps() })); toast("Loaded " + SEED.length + " starter targets — tiers recomputed from cost-of-living."); }}>Load starter targets</button>}
-            <button className="btn small primary" onClick={() => setEditing({})}>+ Add</button>
+            {!apps.length && (
+              <button className="btn small" onClick={() => { setCareer((c) => ({ ...c, apps: seedApps() })); toast("Loaded " + SEED.length + " starter targets."); }}>
+                Load starter targets
+              </button>
+            )}
+            <button className="btn small" onClick={() => setEditing({})}>+ Add</button>
           </span>
-        </div>
-        {apps.length ? (
-          <>
-            <div className="grid4" style={{ marginTop: 10 }}>
-              <div><div className="sub">Tracked</div><div className="mono" style={{ fontSize: 20, fontWeight: 600 }}>{apps.length}</div></div>
-              <div><div className="sub">In flight</div><div className="mono" style={{ fontSize: 20, fontWeight: 600 }}>{inFlight}</div></div>
-              <div><div className="sub">Interviewing</div><div className="mono" style={{ fontSize: 20, fontWeight: 600, color: "var(--acc)" }}>{counts.Interviewing || 0}</div></div>
-              <div><div className="sub">Offers</div><div className="mono" style={{ fontSize: 20, fontWeight: 600, color: "var(--up)" }}>{counts.Offer || 0}</div></div>
-            </div>
-            <div className="row" style={{ marginTop: 12 }}>
-              <input className="in" style={{ flex: 1, minWidth: 150 }} placeholder="Search company, role, city…" value={q} onChange={(e) => setQ(e.target.value)} />
-              <select className="in" style={{ width: 140 }} value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option>All</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}
-              </select>
-              <select className="in" style={{ width: 170 }} value={sort} onChange={(e) => setSort(e.target.value)}>
-                <option value="adj">Sort: adjusted comp</option>
-                <option value="comp">Sort: raw comp</option>
-                <option value="next">Sort: next step</option>
-                <option value="company">Sort: company</option>
-              </select>
-              <button className={"btn small" + (fitOnly ? " primary" : "")} onClick={() => setFitOnly((v) => !v)}>Fits my cities</button>
-            </div>
-            {/* the same filtering the finder has, because 102 rows sorted by pay
-                is still 102 rows */}
-            <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
-              {["1", "2", "3"].map((t) => {
-                const n = apps.filter((a) => effTier(a, S) === t && a.status !== "Rejected" && a.status !== "Withdrawn").length;
-                if (!n && !tiers.has(t)) return null;
-                return (
-                  <button key={t} className={"btn small" + (tiers.has(t) ? " primary" : "")}
-                    onClick={() => setTiers((p) => { const s = new Set(p); s.has(t) ? s.delete(t) : s.add(t); return s; })}>
-                    Tier {t} {n}
-                  </button>
-                );
-              })}
-              {!!tiers.size && <button className="btn small" onClick={() => setTiers(new Set())}>All tiers</button>}
-              <button className={"btn small" + (openNow ? " primary" : "")} onClick={() => setOpenNow((v) => !v)}
-                title="Only targets whose hiring window is open today">Open now</button>
-              <button className={"btn small" + (remoteOnly ? " primary" : "")} onClick={() => setRemoteOnly((v) => !v)}>Remote only</button>
-              <button className={"btn small" + (noClear ? " primary" : "")} onClick={() => setNoClear((v) => !v)}>No clearance</button>
-              <span className="note" style={{ margin: 0 }}>{rows.length} of {apps.length}</span>
-            </div>
-            <div className="note">
-              Tier is computed from comp adjusted for cost of living — Tier 1 above {money(S.tierT1)} adjusted, Tier 2 above {money(S.tierT2)}.
-              A $66k job in Little Rock can outrank a $95k job in the Bay Area.
-            </div>
-          </>
-        ) : (
-          <div className="note">
-            Nothing tracked yet. <b>Load starter targets</b> brings in the {SEED.length}-company list — utilities, IAM consultancies,
-            cleared primes, financials, enterprises in zoo cities, and the lottery tickets — each with an expected comp, hiring window,
-            and the right board to apply through.
-          </div>
-        )}
-      </div>
+        } />
 
-      {rows.slice(0, limit).map((a) => {
-        const f = computeFit(a, S.cities);
-        const t = effTier(a, S);
-        const adj = adjComp(a, S);
-        const dest = findDest(a);
-        const home = cityMatch(a.city, S.cities);
-        return (
-          <div className="card" key={a.id} style={{ marginTop: 8, padding: "12px 16px" }}>
-            <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
-              <span style={{ overflow: "hidden", flex: 1 }}>
-                <span className="row" style={{ gap: 7, flexWrap: "nowrap" }}>
-                  <b style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.company}</b>
-                  <span className="tag" style={{ color: STATUS_CLR[a.status], borderColor: STATUS_CLR[a.status] }}>{a.status}</span>
-                  <span className="tag">Tier {t}</span>
-                  {a.fitScore != null && <span className="tag" style={{ color: FIT_CLR[a.fitLabel] }}>{a.fitScore}/10</span>}
-                </span>
-                <span className="note" style={{ display: "block", margin: 0, fontSize: 12 }}>
-                  {a.role} · {a.locationType === "Remote" ? "Remote" : a.city || "city TBD"}
-                  {f.fit ? <span className="good"> · fits{f.cityTier ? " (" + f.cityTier + ")" : ""}</span> : <span className="bad"> · outside your cities</span>}
-                  {a.clearance === "Required" && " · clearance"}
-                  {a.window && " · " + a.window}
-                </span>
-                {/* an onsite job in a city with nothing for the other half of the
-                    household is a worse offer than its salary suggests */}
-                {home && a.locationType !== "Remote" && (
-                  <span className="note" style={{ display: "block", margin: 0, fontSize: 11.5, color: partnerColor(home.partner) }}>
-                    Their side: {partnerLabel(home.partner)}{home.orgs ? " — " + home.orgs : ""}
-                  </span>
-                )}
-              </span>
-              <span className="row" style={{ gap: 8, flexShrink: 0 }}>
-                <span style={{ textAlign: "right" }}>
-                  <div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{money(totalComp(a))}</div>
-                  <div className="note" style={{ margin: 0, fontSize: 11 }}>{money(adj)} adjusted</div>
-                </span>
-                <button className="btn small" onClick={() => setEditing(a)}>Edit</button>
-              </span>
-            </div>
-            <div className="row" style={{ gap: 8, marginTop: 8 }}>
-              <a className="btn small" href={dest.url} target="_blank" rel="noreferrer noopener">Find on {dest.label}</a>
-              {config?.aiEnabled && <button className="btn small" disabled={busy} onClick={() => tailor(a)}>Tailor resume</button>}
-              {config?.aiEnabled && (
-                <button className="btn small" disabled={letterBusy} onClick={() => coverLetter(a)}>
-                  {a.cover ? "Cover letter ✓" : "Cover letter"}
-                </button>
-              )}
-              {config?.aiEnabled && (a.status === "Interviewing" || a.status === "Applied") && (
-                <button className="btn small" disabled={prepBusy} onClick={() => prep(a)}>
-                  {a.prep ? "Interview prep ✓" : "Interview prep"}
-                </button>
-              )}
-              {a.comp != null && <button className="btn small" onClick={() => setImpact(a)}>What it pays me</button>}
-              {a.growthNote && <span className="note" style={{ margin: 0, fontSize: 11.5 }}>growth {a.growth}/5 · {a.growthNote}</span>}
-            </div>
-          </div>
-        );
-      })}
+      <Fold title="Timeline" sub={apps.length ? "when to apply, and what's left to do" : "add targets to see one"}>
+        <Timeline S={S} apps={apps} setCareer={setCareer} setEditing={setEditing} />
+      </Fold>
 
-      {rows.length > limit && (
-        <div className="mrow" style={{ justifyContent: "center", marginTop: 10 }}>
-          <button className="btn small" onClick={() => setLimit((n) => n + 10)}>
-            Show 10 more — {rows.length - limit} of {rows.length} hidden
-          </button>
-        </div>
-      )}
+      <Fold title="Where you could both work" sub="cities that work for both of you">
+        <TwoCareerCities S={S} apps={apps} setCareer={setCareer} />
+      </Fold>
 
-      <Timeline S={S} apps={apps} setCareer={setCareer} setEditing={setEditing} />
-
-      {/* the finder can now reach the same three actions the tracker has, so
-          "tailor my resume to this" works from the posting you're looking at
-          instead of requiring you to track it, scroll, and find it again */}
-      <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel}
-        onTailor={tailor} onCoverLetter={coverLetter} onImpact={setImpact} />
-
-      <TwoCareerCities S={S} apps={apps} setCareer={setCareer} />
-
-      {/* Resume and Projects used to sit inline and made this page endless. They
-          are a workspace, not a feed item — you open them to work, then close. */}
       {profileOpen && (
         <Sheet title={
           <span className="row" style={{ gap: 10 }}>
             <span>Your profile</span>
-            {/* side by side rather than stacked: stacking is what forced a page
-                scroll on a screen whose whole point is fitting the document */}
             <span className="pills">
               <button className={"pill" + (profileTab === "resume" ? " on" : "")} onClick={() => setProfileTab("resume")}>Resume</button>
               <button className={"pill" + (profileTab === "projects" ? " on" : "")} onClick={() => setProfileTab("projects")}>
                 Projects{(S.projects || []).length ? " " + S.projects.length : ""}
               </button>
+              {/* the numbers every score depends on belong with the rest of "who
+                  you are", not stranded in a card at the bottom of the page */}
+              <button className={"pill" + (profileTab === "assume" ? " on" : "")} onClick={() => setProfileTab("assume")}>Assumptions</button>
             </span>
           </span>
         } onClose={() => setProfileOpen(false)} wide>
@@ -1544,31 +1460,35 @@ export default function Career({ d, setD, config, toast }) {
               <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
                 myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
             ) : (
-              <div style={{ overflowY: "auto", minHeight: 0 }}>
-                <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
+              <div style={{ overflowY: "auto", minHeight: 0, paddingRight: 6 }}>
+                {profileTab === "projects" ? (
+                  <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
+                ) : (
+                  <>
+                    <FloorOffer S={S} setCareer={setCareer} />
+                    <div className="grid3" style={{ marginTop: 18 }}>
+                      <div><label className="f">Take-home % of gross</label>
+                        <input className="in mono" type="number" value={S.takeHomePct}
+                          onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, takeHomePct: Number(e.target.value) || 0 } }))} /></div>
+                      <div><label className="f">Your current cost of living</label>
+                        <input className="in mono" type="number" value={S.homeCol}
+                          onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, homeCol: Number(e.target.value) || 0 } }))} />
+                        <div className="note">100 = US average. Ruston ≈ 84.</div></div>
+                      <div><label className="f">Tier 1 cutoff (adjusted)</label>
+                        <input className="in mono" type="number" value={S.tierT1}
+                          onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, tierT1: Number(e.target.value) || 0 } }))} /></div>
+                    </div>
+                    <div className="note" style={{ marginTop: 12 }}>
+                      Tier is comp adjusted for cost of living — Tier 1 above {money(S.tierT1)} adjusted, Tier 2 above {money(S.tierT2)}.
+                      A {money(66000)} job in Little Rock can outrank a {money(95000)} job in the Bay Area.
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
         </Sheet>
       )}
-
-      <div className="card">
-        <h3>Assumptions</h3>
-        <FloorOffer S={S} setCareer={setCareer} />
-
-        <div className="grid3" style={{ marginTop: 14 }}>
-          <div><label className="f">Take-home % of gross</label>
-            <input className="in mono" type="number" value={S.takeHomePct}
-              onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, takeHomePct: Number(e.target.value) || 0 } }))} /></div>
-          <div><label className="f">Your current cost of living</label>
-            <input className="in mono" type="number" value={S.homeCol}
-              onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, homeCol: Number(e.target.value) || 0 } }))} />
-            <div className="note">100 = US average. Ruston ≈ 84.</div></div>
-          <div><label className="f">Tier 1 cutoff (adjusted)</label>
-            <input className="in mono" type="number" value={S.tierT1}
-              onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, tierT1: Number(e.target.value) || 0 } }))} /></div>
-        </div>
-      </div>
 
       {editing && (
         <AppForm initial={editing} S={S} resume={S.resume} toast={toast}
