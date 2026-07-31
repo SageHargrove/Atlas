@@ -57,6 +57,21 @@ eq("senior director is executive", lv("Senior Director, Information Security"), 
 eq("years fill in when the title says nothing", lv("Security Engineer", { desc: "8+ years of experience" }), "principal");
 eq("low years read as entry", lv("Security Analyst", { desc: "1-2 years of experience required" }), "entry");
 
+/* A bare /\d+ years/ was fine against a 700-char snippet and became actively
+   wrong once it read whole descriptions: it filed a $199k Stripe role as entry
+   level off the phrase "in the last 2 years" buried in company boilerplate. */
+console.log("\nyears must mean required experience:");
+const yr = (d) => c("Security Engineer", { _full: d })?.yearsReq;
+eq("plain requirement", yr("Requires 5+ years of experience in security"), 5);
+eq("a range takes the floor", yr("3-5 years of relevant experience"), 3);
+eq("qualifier words between", yr("7+ years of hands-on professional experience"), 7);
+eq("reversed phrasing", yr("Experience: 6+ years"), 6);
+eq("minimum phrasing", yr("Minimum of 4 years in an operational role"), 4);
+eq("company boilerplate is NOT a requirement", yr("Stripe has grown enormously in the last 2 years."), null);
+eq("a founding date is not a requirement", yr("For 15 years we have served customers"), null);
+eq("an absurd figure is rejected", yr("40 years of experience"), null);
+eq("nothing stated", yr("We value curiosity."), null);
+
 /* Numbered bands, romans and digits alike. These were read inconsistently:
    roman II landed in senior while arabic 3 and 4 landed in mid, so
    "Security Engineer II" outranked "Information Security Analyst 4". */
@@ -87,7 +102,10 @@ eq("a band is a statement", sure("Security Engineer II"), true);
 eq("a seniority word is a statement", sure("Senior Security Engineer"), true);
 eq("an entry word is a statement", sure("Cybersecurity Analyst: New Grad"), true);
 eq("intern is a statement", sure("Security Intern"), true);
-eq("years in the body are a statement", sure("Security Engineer", { desc: "5+ years required" }), true);
+eq("years in the body are a statement", sure("Security Engineer", { desc: "5+ years of experience required" }), true);
+/* "5+ years required" without saying years of WHAT is genuinely ambiguous, and
+   guessing there is what misfiled a $199k role as entry level */
+eq("a bare years figure states nothing", sure("Security Engineer", { desc: "5+ years required" }), false);
 eq("a bare title states nothing", sure("Cyber Security Engineer"), false);
 eq("...and still defaults to mid", lv("Cyber Security Engineer"), "mid");
 

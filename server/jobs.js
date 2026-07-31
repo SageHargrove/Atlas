@@ -358,7 +358,18 @@ function levelOf(title, years) {
 }
 const CLEARED = /\b(clearance|ts\/sci|top secret|secret clearance|polygraph|poly\b|dod 8570|public trust)\b/i;
 const REMOTE = /\b(remote|work from home|wfh|distributed|anywhere)\b/i;
-const YEARS = /(\d+)\s*\+?\s*(?:-\s*\d+\s*)?years?/i;
+/* Must be tied to experience. A bare /\d+ years/ was fine against a 700-char
+   snippet but became actively wrong once it read the whole description: it
+   matched prose like "in the last 2 years" and filed a $199k Stripe role as
+   entry level on the strength of it. */
+const YEARS = /(\d+)\s*\+?\s*(?:(?:-|–|to)\s*\d+\s*)?years?[’']?s?\s+(?:of\s+)?(?:[\w-]+\s+){0,3}?experience|(?:experience|background)\s*(?:of|:)?\s*(\d+)\s*\+?\s*years?|minimum\s+(?:of\s+)?(\d+)\s*\+?\s*years?/i;
+const yearsFrom = (text) => {
+  const m = YEARS.exec(String(text || ""));
+  if (!m) return null;
+  const n = Number(m[1] ?? m[2] ?? m[3]);
+  /* 30 years of experience is a typo or a company anniversary, not a requirement */
+  return Number.isFinite(n) && n >= 0 && n <= 25 ? n : null;
+};
 
 /* He can't take a role in Bengaluru or Dublin, and those were a third of the
    first run. Detected rather than dropped, so the filter stays the user's call. */
@@ -377,8 +388,7 @@ export function classifyPosting(p, cat) {
   /* a body-only mention at a security company is boilerplate — the title decides */
   if (!TITLE_HITS.test(title)) return null;
 
-  const ym = YEARS.exec(full);
-  const years = ym ? Number(ym[1]) : null;
+  const years = yearsFrom(full);
   const stated = levelOf(title, years);
   /* Read the pay here too rather than trusting the adapter to have done it —
      inference that silently no-ops when a caller skips a step is worse than
