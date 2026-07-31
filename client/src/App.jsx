@@ -2388,8 +2388,29 @@ function Merchants({ d, setD }) {
      so a category you set by hand is never overwritten. */
   const uncatted = rows.filter((r) => r.uncatted > 0);
   const fileTheObvious = () => {
-    let n = 0, hits = {};
+    let n = 0, hits = {}, added = [];
     setD((p) => {
+      /* A rule whose category doesn't exist silently does nothing. Accounts
+         created before Utilities existed would never file a power bill and
+         would never be told why — so create what the matching rules need. */
+      let cats = p.cats;
+      const want = new Set();
+      for (const t of p.txns) {
+        if (t.kind !== "out" || t.catId) continue;
+        const n2 = String(t.note || "").toLowerCase();
+        for (const [re, name, min] of CAT_RULES) {
+          if (min && !(Number(t.amount) >= min)) continue;
+          if (re.test(n2)) { want.add(name); break; }
+        }
+      }
+      for (const name of want) {
+        if (!cats.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+          cats = [...cats, { id: uid(), name, limit: 0 }];
+          added.push(name);
+        }
+      }
+      p = { ...p, cats };
+
       const mem = buildMerchantMemory(p.txns, p.cats);
       const txns = p.txns.map((t) => {
         if (t.kind !== "out" || t.catId) return t;
@@ -2404,7 +2425,8 @@ function Merchants({ d, setD }) {
     });
     setTimeout(() => {
       if (!n) toast("Nothing matched a rule — the rest need a category from you, or the AI categorize button in Budget.", "err");
-      else toast("Filed " + n + " transactions: " + Object.entries(hits).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + " " + v).join(", ") + ".");
+      else toast("Filed " + n + " transactions: " + Object.entries(hits).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + " " + v).join(", ") + "."
+        + (added.length ? " Added the " + added.join(" and ") + " categor" + (added.length > 1 ? "ies" : "y") + " to hold them." : ""));
     }, 0);
   };
 

@@ -907,7 +907,7 @@ function TwoCareerCities({ S, apps, setCareer }) {
       </div>
       <div className="note" style={{ marginTop: 0 }}>
         Ranked by what your best tracked target there pays after cost of living, but only showing cities
-        where the zoo / aquarium / conservation side is real. A city you can't both work in isn't an option,
+        where the zoo, wildlife and conservation side is real. A city you can't both work in isn't an option,
         however good the salary looks.
       </div>
 
