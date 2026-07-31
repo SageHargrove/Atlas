@@ -259,18 +259,23 @@ const LADDER = [
 ];
 const ENTRY_WORDS = /\b(new ?grad|graduate|entry[- ]level|junior|jr\.?|early career|university|campus|rotational|residency)\b|\bassociate\b(?!\s+(principal|director|vp|partner|manager))/i;
 
+/* Returns whether the level was actually STATED or just defaulted. It matters:
+   "Cyber Security Engineer" with no band and no years is not a mid-level role,
+   it's a role of unknown level that got filed under mid. A new grad who filters
+   to entry and sees 4 results is being told something false — most of the market
+   simply doesn't label itself, and those are the ones worth reading. */
 function levelOf(title, years) {
   /* an internship is an internship even when titled "Security Engineering Intern,
      Senior Platform Team", so it wins over everything else in the title */
-  if (/\b(intern|internship|co-?op|apprentice|trainee)\b/i.test(title)) return "intern";
+  if (/\b(intern|internship|co-?op|apprentice|trainee)\b/i.test(title)) return { level: "intern", sure: true };
   /* an explicit seniority word beats the number: "Senior Threat Analyst 1" is a
      senior role at a company whose band-1 happens to be its senior band */
-  for (const [name, re] of LADDER) if (re.test(title)) return name;
+  for (const [name, re] of LADDER) if (re.test(title)) return { level: name, sure: true };
   const numbered = numberedRung(title);
-  if (numbered) return numbered;
-  if (ENTRY_WORDS.test(title)) return "entry";
-  if (years != null) return years >= 8 ? "principal" : years >= 5 ? "senior" : years <= 2 ? "entry" : "mid";
-  return "mid";
+  if (numbered) return { level: numbered, sure: true };
+  if (ENTRY_WORDS.test(title)) return { level: "entry", sure: true };
+  if (years != null) return { level: years >= 8 ? "principal" : years >= 5 ? "senior" : years <= 2 ? "entry" : "mid", sure: true };
+  return { level: "mid", sure: false };
 }
 const CLEARED = /\b(clearance|ts\/sci|top secret|secret clearance|polygraph|poly\b|dod 8570|public trust)\b/i;
 const REMOTE = /\b(remote|work from home|wfh|distributed|anywhere)\b/i;
@@ -292,13 +297,14 @@ export function classifyPosting(p) {
 
   const ym = YEARS.exec(p.desc || "");
   const years = ym ? Number(ym[1]) : null;
-  const level = levelOf(title, years);
+  const { level, sure: levelSure } = levelOf(title, years);
 
   const remote = !!p.remoteHint || REMOTE.test(loc) || REMOTE.test(title);
   const nonUs = NON_US.test(loc);
   return {
     ...p,
     level,
+    levelSure,
     remote,
     /* a remote listing with no country signal is assumed US-eligible rather than
        hidden — being wrong here costs a glance, hiding a real job costs the job */

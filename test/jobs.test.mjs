@@ -79,6 +79,18 @@ eq("staff beats the number", lv("Staff Security Engineer II"), "principal");
 eq("a product name is not a band", lv("Security Engineer, Auth0"), "mid");
 eq("a year is not a band", lv("Security Analyst, 2027 Start"), "mid");
 
+/* Stated vs defaulted. Most postings never state a band, and treating those as
+   genuinely mid-level makes the entry market look 20x smaller than it is. */
+console.log("\nstated vs defaulted level:");
+const sure = (t, extra) => c(t, extra)?.levelSure;
+eq("a band is a statement", sure("Security Engineer II"), true);
+eq("a seniority word is a statement", sure("Senior Security Engineer"), true);
+eq("an entry word is a statement", sure("Cybersecurity Analyst: New Grad"), true);
+eq("intern is a statement", sure("Security Intern"), true);
+eq("years in the body are a statement", sure("Security Engineer", { desc: "5+ years required" }), true);
+eq("a bare title states nothing", sure("Cyber Security Engineer"), false);
+eq("...and still defaults to mid", lv("Cyber Security Engineer"), "mid");
+
 console.log("\nflags:");
 const f = (title, extra) => c(title, extra);
 eq("remote from location", f("Security Engineer", { location: "Remote - USA" }).remote, true);

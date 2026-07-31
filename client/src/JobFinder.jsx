@@ -93,7 +93,11 @@ function scoreJob(j, ctx) {
   const fit = Math.max(0, Math.min(100, money_ + place + growth + focus));
 
   /* --- Odds: could you actually land it --- */
-  const gap = LEVEL_ORDER.indexOf(j.level) - LEVEL_ORDER.indexOf(myLevel || "entry");
+  const rawGap = LEVEL_ORDER.indexOf(j.level) - LEVEL_ORDER.indexOf(myLevel || "entry");
+  /* An unstated level defaulted to mid. Scoring that as a hard rung gap punishes
+     the posting for the employer's vagueness rather than for anything true about
+     you, so uncertainty is capped at one rung instead of counted in full. */
+  const gap = j.levelSure === false ? Math.min(rawGap, 1) : rawGap;
   const levelPts = gap <= -2 ? 38 : gap === -1 ? 46 : gap === 0 ? 50 : gap === 1 ? 26 : gap === 2 ? 9 : 2;
   const jt = tokensOf(j.title + " " + (j.desc || ""));
   const shared = [...jt].filter((t) => resumeTokens.has(t));
@@ -123,6 +127,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const [iamOnly, setIamOnly] = useState(false);
   const [hideCleared, setHideCleared] = useState(false);
   const [fitCities, setFitCities] = useState(false);
+  const [showUnlabelled, setShowUnlabelled] = useState(true);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("fit");
   const [limit, setLimit] = useState(25);
@@ -159,8 +164,13 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
+    /* Most postings never state a level. Filtering to "entry" and hiding all of
+       them tells a new grad the market has 4 jobs in it, which is false — those
+       unlabelled roles are exactly the ones to read. They're included by default
+       and tagged, rather than silently folded into mid. */
+    const wantsUnlabelled = showUnlabelled && levels.size && !levels.has("mid");
     let out = scored.filter((j) =>
-      (!levels.size || levels.has(j.level)) &&
+      (!levels.size || levels.has(j.level) || (wantsUnlabelled && j.levelSure === false)) &&
       (!remoteOnly || j.remote) &&
       (!usOnly || j.us) &&
       (!iamOnly || j.iam) &&
@@ -174,7 +184,9 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
       new: (a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""),
     };
     return out.sort(cmp[sort]);
-  }, [scored, levels, remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
+  }, [scored, levels, showUnlabelled, remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
+
+  const unlabelled = useMemo(() => scored.filter((j) => j.levelSure === false && (!usOnly || j.us)).length, [scored, usOnly]);
 
   const toggleLevel = (k) => setLevels((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
@@ -286,6 +298,12 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
           </button>
         ))}
         {!!levels.size && <button className="btn small" onClick={() => setLevels(new Set())}>All levels</button>}
+        {!!levels.size && !levels.has("mid") && (
+          <button className={"btn small" + (showUnlabelled ? " primary" : "")} onClick={() => setShowUnlabelled((v) => !v)}
+            title="Most postings never state a band. Hiding them makes the market look far smaller than it is.">
+            + {unlabelled} unlabelled
+          </button>
+        )}
       </div>
 
       <div className="row" style={{ marginTop: 8 }}>
@@ -325,7 +343,9 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                     {j.iam && <span className="tag" style={{ color: "var(--acc)", borderColor: "var(--acc)" }}>IAM</span>}
                     {j.remote && <span className="tag" style={{ color: "var(--up)", borderColor: "var(--up)" }}>Remote</span>}
                     {j.clearance && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>Clearance</span>}
-                    <span className="tag">{(LEVELS.find(([k]) => k === j.level) || [, j.level])[1]}</span>
+                    <span className="tag" title={j.levelSure === false ? "The posting doesn't state a level — worth reading whatever rung you're on" : undefined}>
+                      {j.levelSure === false ? "Level not stated" : (LEVELS.find(([k]) => k === j.level) || [, j.level])[1]}
+                    </span>
                   </span>
                   <span className="note" style={{ display: "block", margin: 0, fontSize: 12 }}>
                     {j.company} · {j.location || "location not stated"}{j.posted ? " · posted " + ago(j.posted) : ""}
