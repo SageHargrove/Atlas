@@ -1,7 +1,14 @@
-# Atlas — self-hosted personal finance, multi-user
+# Atlas — self-hosted money and career, multi-user
 
 > MIT-licensed. Run it on your own server; your financial data never touches
 > anyone else's cloud. See `SETUP.md` for the full setup walkthrough.
+
+Two halves that belong together. **Money**: bank sync, budgets, goals, debt
+payoff, investments, tax estimation. **Career**: a job finder that polls
+employers' own boards, resume and cover-letter tooling, and an application
+timeline. They're one app because income is the biggest variable in a budget —
+Atlas can tell you what an offer actually does to your runway and goal dates,
+which neither half could answer alone.
 
 React + Express. Real bank sync (SimpleFIN, read-only) with automatic
 transfer detection (credit-card payments and account-to-account moves never

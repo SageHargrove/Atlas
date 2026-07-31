@@ -188,6 +188,16 @@ eq("red team is offensive", fam("Red Team Operator"), "offsec");
 eq("vulnerability assessment is offensive", fam("Associate, Vulnerability Assessment"), "offsec");
 eq("cloud security", fam("Cloud Security Engineer"), "cloud");
 eq("a bare security engineer is engineering", fam("Security Engineer"), "eng");
+/* "Cybersecurity Analyst" is not SOC work, and conflating them is the difference
+   between a job he wants and one he specifically doesn't. It was falling through
+   to "other" and being filtered away with the genuine leftovers. */
+eq("a plain cybersecurity analyst is its own thing", fam("Cybersecurity Analyst"), "analyst");
+eq("information security analyst too", fam("Information Security Analyst"), "analyst");
+eq("security specialist too", fam("Cyber Security Specialist, Junior"), "analyst");
+eq("...but a SOC analyst is still SOC", fam("SOC Analyst"), "soc");
+eq("...and so is a security operations analyst", fam("Security Operations Analyst"), "soc");
+eq("...and a threat analyst", fam("Threat Analyst 2"), "soc");
+eq("an IAM analyst is still IAM", fam("IAM Analyst"), "iam");
 eq("the title beats the body", fam("GRC Analyst", "You will use Splunk and hunt threats daily"), "grc");
 eq("the body is the fallback", fam("Cyber Specialist", "Own our SailPoint IGA platform and access reviews"), "iam");
 eq("nothing matches", fam("Cyber Specialist"), "other");

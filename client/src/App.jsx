@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import Career from "./Career.jsx";
+import TaxCard from "./TaxCard.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -1202,6 +1203,8 @@ function Plan({ d, setD }) {
   return (
     <>
       <OrderOfOps d={d} k401ok={matchCap > 0 && contribPct >= matchCap} />
+
+      <TaxCard d={d} setD={setD} />
 
       <div className="card">
         <h3>Emergency fund</h3>

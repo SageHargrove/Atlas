@@ -548,6 +548,7 @@ app.put("/api/data", auth, writeLimiter, async (req, res) => {
   if (d.settings != null && (typeof d.settings !== "object" || Array.isArray(d.settings))) return res.status(400).json({ error: "Invalid data payload (settings)" });
   if (d.invest != null && (typeof d.invest !== "object" || Array.isArray(d.invest))) return res.status(400).json({ error: "Invalid data payload (invest)" });
   if (d.career != null && (typeof d.career !== "object" || Array.isArray(d.career))) return res.status(400).json({ error: "Invalid data payload (career)" });
+  if (d.tax != null && (typeof d.tax !== "object" || Array.isArray(d.tax))) return res.status(400).json({ error: "Invalid data payload (tax)" });
   try {
     let conflictRev = null, newRev = 0;
     await withLock("data:" + req.userId, () => {

@@ -25,10 +25,14 @@ const LEVEL_ORDER = LEVELS.map(([k]) => k);
 /* Mirrors the server's families. Kept short here because these are buttons in a
    wrapping row, not prose. */
 export const FAMILY_LABELS = [
-  ["iam", "IAM / identity"], ["soc", "SOC / detection"], ["grc", "GRC / compliance"],
-  ["appsec", "AppSec"], ["offsec", "Offensive"], ["cloud", "Cloud / infra"],
-  ["eng", "Security eng"], ["other", "Other"],
+  ["iam", "IAM / identity"], ["eng", "Security eng"], ["analyst", "Security analyst"],
+  ["appsec", "AppSec"], ["grc", "GRC / compliance"], ["cloud", "Cloud / infra"],
+  ["soc", "SOC / detection"], ["offsec", "Offensive"], ["other", "Other"],
 ];
+/* What he actually wants to do, so the finder opens filtered instead of showing
+   500 rows of work he has said he doesn't want. Every other area stays one
+   click away — this is a default, not a decision. */
+export const DEFAULT_FAMILIES = ["iam", "eng", "analyst"];
 
 /* Postings almost never state pay, so a comp figure has to be an estimate or
    nothing. These are deliberately conservative national midpoints; anything
@@ -144,7 +148,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const [boardUrl, setBoardUrl] = useState("");
   const [boardCo, setBoardCo] = useState("");
   const [addOpen, setAddOpen] = useState(false);
-  const [fams, setFams] = useState(() => new Set());
+  const [fams, setFams] = useState(() => new Set(S.jobFamilies || DEFAULT_FAMILIES));
   const [minPay, setMinPay] = useState(0);
   const [hideStale, setHideStale] = useState(false);
   const [onlyNew, setOnlyNew] = useState(false);
@@ -417,12 +421,20 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
           if (!n) return null;
           return (
             <button key={k} className={"btn small" + (fams.has(k) ? " primary" : "")}
-              onClick={() => setFams((p) => { const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k); return s; })}>
+              onClick={() => setFams((p) => {
+                const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k);
+                /* remembered, so the next visit opens the way you left it */
+                setCareer((c) => ({ ...c, settings: { ...c.settings, jobFamilies: [...s] } }));
+                return s;
+              })}>
               {label} {n}
             </button>
           );
         })}
-        {!!fams.size && <button className="btn small" onClick={() => setFams(new Set())}>All areas</button>}
+        {!!fams.size && <button className="btn small" onClick={() => {
+          setFams(new Set());
+          setCareer((c) => ({ ...c, settings: { ...c.settings, jobFamilies: [] } }));
+        }}>All areas</button>}
       </div>
 
       <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>

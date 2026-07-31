@@ -388,10 +388,17 @@ export const FAMILIES = [
      Intelligence". Same bug that let "Recruiter" past the block list. */
   ["iam", "IAM / identity", /\b(iam|identit\w*|iga|pam\b|privileged access|sso\b|saml|oidc|scim|okta|sailpoint|saviynt|cyberark|ping identity|entra|active directory|ldap|directory services|access manag\w*|access review\w*|provision\w*|entitlement\w*|zero trust)\b/i],
   ["offsec", "Offensive / red team", /\b(penetration test\w*|pen test\w*|pentest\w*|red team\w*|offensive security|exploit\w*|adversary emulation|vulnerability assessment|bug bounty|purple team)\b/i],
-  ["soc", "SOC / detection & response", /\b(soc\b|security operations|detection\w*|incident response|threat\s*(hunt\w*|intel\w*|research\w*|detect\w*)|hunting|siem|soar|forensic\w*|malware|triage|blue team|csirt|monitoring)\b/i],
+  ["soc", "SOC / detection & response", /\b(soc\b|security operations|detection\w*|incident response|threat\s*(hunt\w*|intel\w*|research\w*|detect\w*|analy\w*|monitor\w*)|hunting|siem|soar|forensic\w*|malware|triage|blue team|csirt|monitoring)\b/i],
   ["grc", "GRC / compliance", /\b(grc\b|governance|\brisk\b|complian\w*|audit\w*|policy|privacy|assurance|isso\b|isse\b|issm\b|system security officer|information system\w* security|nist|fedramp|cmmc|iso 27001|soc 2|controls|third[- ]party risk|vendor risk)\b/i],
   ["appsec", "Application / product security", /\b(appsec|application security|product security|secure (cod\w*|development)|sdlc|devsecops|code review|sast|dast|supply chain security|psirt)\b/i],
   ["cloud", "Cloud & infrastructure security", /\b(cloud security|aws|azure|gcp|kubernetes|container\w*|infrastructure security|network security|firewall\w*|platform security|cspm|cnapp)\b/i],
+  /* Generic analyst work is NOT SOC work, and conflating them is the difference
+     between a job he wants and one he specifically doesn't. SOC is matched
+     first above, so anything with operations/detection/triage language is
+     already gone by the time this runs — what's left is the broad
+     "Cybersecurity Analyst" title, which was falling through to "other" and
+     getting filtered away with the genuine leftovers. */
+  ["analyst", "Security analyst", /\b(cyber ?security analyst|security analyst|cyber analyst|information security analyst|infosec analyst|security specialist|cyber ?security specialist|security consultant|security advisor|security administrator)\b/i],
   ["eng", "Security engineering", /\b(security engineer\w*|software engineer\w*|developer|platform|automation|tooling|data scientist|machine learning)\b/i],
 ];
 export function familyOf(title, desc) {
