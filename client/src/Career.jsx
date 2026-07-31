@@ -781,6 +781,12 @@ function ResumeCard({ S, setCareer, config, toast, apps }) {
           <input className="in" style={{ width: 200, padding: "4px 8px" }} value={cur.label || ""}
             placeholder="e.g. IAM / utilities"
             onChange={(e) => patch(cur.slot, { label: e.target.value.slice(0, 24) })} />
+          {resumes.length > 1 && (
+            <span className="note" style={{ margin: 0, fontSize: 11.5 }}>
+              {idx === 0 ? "This first one is what fit scoring and the assistant read."
+                         : "Fit scoring reads the first tab (" + (resumes[0].label || "Resume 1") + "), not this one."}
+            </span>
+          )}
         </div>
       )}
 

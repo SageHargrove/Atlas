@@ -51,7 +51,12 @@ app.use(helmet({
    make us JSON.parse megabytes on the event loop. Only the two endpoints that
    legitimately carry bulk get the big limits; everything else stays small. */
 app.use("/api/resume", express.json({ limit: "4mb" }));   // a PDF, base64'd
-app.use("/api/data", express.json({ limit: "2mb" }));     // the whole finance blob
+/* 6 MB, not 2 MB, so this agrees with MAX_TXNS below. At 2 MB the declared
+   25,000-transaction cap was unreachable — saves started failing around 8,000
+   and the user would have hit a limit the app never mentioned. Measured: real
+   synced rows run ~250-330 bytes each, so 15,000 rows plus five full resumes
+   and a cover letter per application lands near 5 MB. */
+app.use("/api/data", express.json({ limit: "6mb" }));     // the whole finance blob
 app.use(express.json({ limit: "128kb" }));
 app.use(cookieParser());
 
@@ -481,6 +486,12 @@ app.get("/api/data", auth, (req, res) => {
   delete d._rev; // rev travels beside the data, not inside it
   res.json({ data: d, rev });
 });
+/* Chosen so it actually fits under the 6 MB body limit alongside five resumes
+   and a cover letter per application — a cap the request can never reach is not
+   a cap, it just turns into an unexplained failure years later. At a typical
+   couple hundred synced rows a year this is many decades of history. */
+const MAX_TXNS = 15000;
+
 app.put("/api/data", auth, writeLimiter, async (req, res) => {
   const d = req.body?.data;
   if (d === null || d === undefined || typeof d !== "object" || Array.isArray(d)) return res.status(400).json({ error: "Invalid data payload" });
@@ -489,7 +500,8 @@ app.put("/api/data", auth, writeLimiter, async (req, res) => {
     if (k in d && !Array.isArray(d[k])) return res.status(400).json({ error: "Invalid data payload (" + k + ")" });
   /* the sync merge is quadratic in txns, so an absurd array would pin the event
      loop for every user on this server, not just the one who sent it */
-  if (Array.isArray(d.txns) && d.txns.length > 25000) return res.status(413).json({ error: "Too many transactions (25,000 max)" });
+  if (Array.isArray(d.txns) && d.txns.length > MAX_TXNS)
+    return res.status(413).json({ error: "Too many transactions (" + MAX_TXNS.toLocaleString("en-US") + " max)" });
   if (d.settings != null && (typeof d.settings !== "object" || Array.isArray(d.settings))) return res.status(400).json({ error: "Invalid data payload (settings)" });
   if (d.invest != null && (typeof d.invest !== "object" || Array.isArray(d.invest))) return res.status(400).json({ error: "Invalid data payload (invest)" });
   if (d.career != null && (typeof d.career !== "object" || Array.isArray(d.career))) return res.status(400).json({ error: "Invalid data payload (career)" });
