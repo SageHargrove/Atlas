@@ -1284,7 +1284,7 @@ export default function Career({ d, setD, config, toast }) {
       <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
         myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
 
-      <Projects S={S} setCareer={setCareer} toast={toast} />
+      <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
 
       <div className="card">
         <h3>Assumptions</h3>

@@ -13,11 +13,12 @@ import React, { useState } from "react";
 const MAX_PROJECTS = 12;
 const blank = () => ({ id: Math.random().toString(36).slice(2, 9), name: "", what: "", stack: "", url: "", pitch: "", tags: "" });
 
-export default function Projects({ S, setCareer, toast }) {
+export default function Projects({ S, setCareer, toast, aiEnabled }) {
   const list = S.projects || [];
   const [gh, setGh] = useState(S.githubUser || "");
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState(false);
+  const [paste, setPaste] = useState(null);   // README text awaiting extraction
 
   const write = (fn) => setCareer((c) => ({ ...c, settings: { ...c.settings, projects: fn(c.settings.projects || []) } }));
   const patch = (id, ch) => write((l) => l.map((p) => (p.id === id ? { ...p, ...ch } : p)));
@@ -52,6 +53,38 @@ export default function Projects({ S, setCareer, toast }) {
     setBusy("");
   };
 
+  /* The GitHub import can't see a private repo, and the best work often is one.
+     A README has everything the fields need except the pitch line, so pasting
+     one and pulling the fields out beats retyping it — and the pitch still gets
+     written by you, because "why this matters" isn't in any README. */
+  const fromReadme = async () => {
+    const text = String(paste || "").trim();
+    if (text.length < 40) return toast("Paste the README text first.", "err");
+    setBusy("readme");
+    try {
+      const r = await fetch("/api/ai", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt:
+          "Here is a project README:\n\n" + text.slice(0, 12000) +
+          '\n\nExtract it as ONLY JSON, no fences: {"name": string, "what": string under 30 words describing what it does, ' +
+          '"stack": comma-separated technologies actually named in the README, ' +
+          '"tags": comma-separated industries or role types this project is good evidence for (from: finance, IAM, identity, security, consulting, utilities, cleared, enterprise, product, data, web), ' +
+          '"pitch": one sentence under 35 words in first person saying why this project matters, drawn from the README\'s own reasoning}. ' +
+          "Invent nothing that isn't in the README." }),
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      const clean = JSON.parse(String(j.text || "").replace(/```json|```/g, "").trim().match(/\{[\s\S]*\}/)?.[0] || "null");
+      if (!clean || !clean.name) throw new Error("couldn't read a project out of that");
+      const str = (v, n) => String(v || "").slice(0, n);
+      write((l) => [...l, { ...blank(), name: str(clean.name, 60), what: str(clean.what, 200),
+        stack: str(clean.stack, 120), tags: str(clean.tags, 80), pitch: str(clean.pitch, 300) }]);
+      setPaste(null); setOpen(true);
+      toast("Added " + clean.name + " — check the pitch line reads like you, not like a README.");
+    } catch (e) { toast("Couldn't read that README — " + e.message, "err"); }
+    setBusy("");
+  };
+
   return (
     <div className="card">
       <div className="row" style={{ justifyContent: "space-between" }}>
@@ -71,8 +104,28 @@ export default function Projects({ S, setCareer, toast }) {
         <input className="in" style={{ width: 190 }} placeholder="GitHub username" value={gh}
           onChange={(e) => setGh(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importGithub()} />
         <button className="btn small" disabled={!!busy} onClick={importGithub}>{busy === "gh" ? "Importing…" : "Import from GitHub"}</button>
-        <span className="note" style={{ margin: 0, fontSize: 11.5 }}>Public repos only · fills name, description and stack</span>
+        {aiEnabled && list.length < MAX_PROJECTS && (
+          <button className="btn small" disabled={!!busy} onClick={() => setPaste(paste == null ? "" : null)}>
+            {paste == null ? "Paste a README" : "Cancel"}
+          </button>
+        )}
+        <span className="note" style={{ margin: 0, fontSize: 11.5 }}>Public repos only · private ones, paste the README</span>
       </div>
+
+      {paste != null && (
+        <div style={{ marginTop: 8 }}>
+          <textarea className="in mono" style={{ minHeight: 130, fontSize: 12 }} placeholder="Paste the README here — works for private repos, or anything that never had one"
+            value={paste} onChange={(e) => setPaste(e.target.value.slice(0, 20000))} />
+          <div className="row">
+            <button className="btn small primary" disabled={busy === "readme" || paste.trim().length < 40} onClick={fromReadme}>
+              {busy === "readme" ? "Reading…" : "Pull the fields out"}
+            </button>
+            <span className="note" style={{ margin: 0, fontSize: 11.5 }}>
+              Fills name, what it does, stack and tags. Read the pitch line it writes — that one should sound like you.
+            </span>
+          </div>
+        </div>
+      )}
 
       {!list.length ? (
         <div className="note">Nothing here yet. Import from GitHub for the ones that are public, and add anything that isn't by hand.</div>
