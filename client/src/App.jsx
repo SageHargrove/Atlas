@@ -35,6 +35,7 @@ const DEFAULTS = {
     /* Utilities is its own line, not a subscription: "cut your subscriptions"
        is useless advice when a third of that number is the power bill. */
     { id: uid(), name: "Utilities", limit: 0 },
+    { id: uid(), name: "Car / loan payment", limit: 0 },
     { id: uid(), name: "Subscriptions", limit: 0 },
     { id: uid(), name: "Fun", limit: 0 },
   ],
@@ -1978,6 +1979,12 @@ const CAT_RULES = [
   /* big p2p payments are almost always rent/housing — small ones could be anything.
      The third element is a minimum $ amount for the rule to apply. */
   [/\birs\b|internal revenue|us ?treasury|treas ?tax|tax ?(pmt|payment)|dept? of revenue|state tax|franchise tax|turbotax|h&r block|jackson hewitt|taxact/, "Taxes"],
+  /* A car payment is not Transport (that's fuel and parking) and not Rent. It's
+     a fixed debt obligation, and lumping it into either makes both budgets
+     nonsense — the whole point of a budget line is that you can cut it, and you
+     cannot cut a loan payment. */
+  [/\b(auto|car) (loan|pmt|payment|finance)|carmax auto|capital one auto|ally (auto|financial)|santander consumer|chrysler capital|toyota financial|honda financial|ford credit|gm financial|nissan motor accept|hyundai motor finance|westlake financial|exeter finance|bridgecrest|\bcredit acceptance\b|drivetime|regional acceptance/, "Car / loan payment"],
+  [/\b(student ?loan|nelnet|mohela|navient|great lakes|aidvantage|sallie mae|earnest|sofi loan)\b/, "Car / loan payment"],
   [/venmo payment|zelle (payment|to)/, "Rent", 500],
   /* Walmart's own merchant string is "WM SUPERCENTER #124", which no amount of
      matching on "walmart" will ever catch. */

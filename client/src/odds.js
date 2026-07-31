@@ -115,36 +115,108 @@ export function oddsParts(job, me) {
    biggest thing standing in the way. Listing every factor reads as a spec
    sheet; naming the one that decides it reads as advice. */
 export function explainRow(j, me = {}) {
-  const { myYears = 0, floorAdj = 0, growth = 0 } = me;
+  const { myYears = 0, floorAdj = 0, growth = 0, myLevel = 'entry' } = me;
   const good = [], bad = [];
 
-  if (j.remote) good.push("remote, so the city question goes away");
-  else if (j.city) good.push(j.city.name + " is " + j.city.tier + "-tier for you");
-
+  /* Lead with what is DIFFERENT about this row. Remote IAM work was mentioned
+     first on every card, which is useless when the whole filtered list is remote
+     IAM work — the sentence has to earn its space by saying something the card
+     beside it wouldn't. Pay against your floor and the specific skills that
+     matched are the two facts that actually vary row to row. */
   if (floorAdj && j.adj) {
     const d = j.adj - floorAdj;
-    if (d >= 8000) good.push(money(Math.abs(d)) + " over your floor");
-    else if (d <= -8000) bad.push(money(Math.abs(d)) + " under your floor");
+    if (d >= 25000) good.push('pays ' + money(d) + ' over your floor');
+    else if (d >= 8000) good.push(money(d) + ' over your floor');
+    else if (d <= -8000) bad.push(money(Math.abs(d)) + ' under your floor');
+    else good.push('about level with your floor');
   }
-  if (j.iam) good.push("identity work specifically");
-  if (growth >= 4) good.push("fast promotion track");
-  if (j.shared?.length >= 4) good.push("hits " + j.shared.length + " things on your resume");
+  if (j.shared?.length >= 3) good.push('matches you on ' + j.shared.slice(0, 3).join(', '));
+  else if (j.shared?.length) good.push('matches on ' + j.shared[0]);
+  if (j.compLow) good.push('pay is published, not guessed');
 
-  /* the blockers, worst first — only the top one is shown */
-  if (j.shortfall >= 2) bad.push("wants " + j.yearsReq + " years and you have " + myYears);
-  else if (j.shortfall > 0) bad.push("asks for " + j.yearsReq + " years, just past you");
-  if (j.build < 0.7) bad.push("it's a software engineering role, not an identity one");
-  if (j.clearance) bad.push("needs a clearance you don't have");
-  if ((j.sel ?? 1) <= 0.45) bad.push("this tier hires almost entirely from its own interns");
-  if (j.gap >= 2) bad.push("it's " + j.gap + " rungs above where you read");
-  if (j.ageDays > 120) bad.push("open four months, so it may be filled or evergreen");
+  const gap = j.gap ?? 0;
+  if (gap === 1) good.push('a rung up from where you read');
+  else if (gap === 0 && j.levelSure) good.push('pitched right at your level');
+  if ((j.moveUp ?? 0) >= 80) good.push('fast ladder');
+  else if ((j.moveUp ?? 0) <= 45) bad.push('a slow ladder — good pay now, less movement later');
 
-  const lead = good.slice(0, 2).join(", ");
+  if (!j.remote && j.city && (j.city.tier === 'S' || j.city.tier === 'A')) good.push(j.city.name + ' is ' + j.city.tier + '-tier for you');
+
+  /* blockers, worst first — only the top one is shown */
+  if (j.shortfall >= 2) bad.unshift('wants ' + j.yearsReq + ' years and you have ' + myYears);
+  else if (j.shortfall > 0) bad.unshift('asks for ' + j.yearsReq + ' years, just past you');
+  if (j.build < 0.7) bad.unshift("it's a software engineering role, not an identity one");
+  if (j.clearance) bad.unshift("needs a clearance you don't have");
+  if ((j.sel ?? 1) <= 0.45) bad.unshift('this tier hires almost entirely from its own interns');
+  if (!j.remote && j.city && (j.city.tier === 'D' || j.city.tier === 'F')) bad.unshift(j.city.name + ' is somewhere you ranked low');
+  if (j.ageDays > 120) bad.push('open four months, so it may be filled or evergreen');
+
+  const lead = good.slice(0, 2).join(', ');
   const block = bad[0];
-  if (!lead && !block) return "";
-  if (!block) return cap(lead) + ".";
-  if (!lead) return cap(block) + ".";
-  return cap(lead) + " — but " + block + ".";
+  if (!lead && !block) return '';
+  if (!block) return cap(lead) + '.';
+  if (!lead) return cap(block) + '.';
+  return cap(lead) + ' — but ' + block + '.';
 }
+
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const money = (n) => "$" + Math.round(Number(n) / 1000) + "k";
+
+/* ---------------- Fit and Growth ----------------
+   Both were saturating. Fit summed four components that all max out together
+   for the profile he actually wants — remote (35/35), IAM (15/15), consulting
+   growth (15/15), and pay above a fixed $98k line (35/35) — so every remote IAM
+   consultancy scored exactly 100 and the number stopped saying anything. A
+   score that gives eleven cards the same 97 is a decoration.
+
+   The fix is to measure against HIM rather than against constants: pay relative
+   to the offer he already has, place on a scale where remote and a top city are
+   comparable rather than both maxed, and growth that varies per row. */
+
+const BRAND = { quant: 1, bigtech: 1, consulting: .8, financial: .6, enterprise: .5, cleared: .4, utility: .3 };
+const LADDER = { consulting: 5, quant: 5, bigtech: 4, financial: 3, cleared: 3, enterprise: 3, utility: 2 };
+const CITY_PTS = { S: 25, A: 20, B: 14, C: 8, D: 4, F: 0 };
+
+/* How much this job would move your career, as opposed to how good it is today.
+   A utility role paying well now on a two-rung-a-decade ladder and a consultancy
+   paying the same with up-or-out promotion are not the same job, and Fit alone
+   could never say so. */
+export function scoreGrowth(job, me = {}) {
+  const ladder = (LADDER[job.cat] ?? 3) / 5;
+  const gap = LEVEL_ORDER.indexOf(job.level) - LEVEL_ORDER.indexOf(me.myLevel || "entry");
+  /* one rung up is the sweet spot: real stretch, still reachable. Sideways is
+     fine but teaches less; three rungs up you will not be hired into. */
+  const stretch = gap <= -1 ? 0.2 : gap === 0 ? 0.5 : gap === 1 ? 1 : gap === 2 ? 0.7 : 0.35;
+  const brand = BRAND[job.cat] ?? 0.5;
+  return Math.max(1, Math.min(100, Math.round(ladder * 55 + stretch * 25 + brand * 20)));
+}
+
+/* Is this job worth wanting. Measured against your floor where you have one,
+   because "good pay" is meaningless in the abstract and precise the moment
+   there's an offer to beat. */
+export function scoreFit(job, me = {}) {
+  const { floorAdj = 0, tierT1 = 98000 } = me;
+  const adj = job.adj;
+
+  let pay = 12;
+  if (adj > 0) {
+    if (floorAdj > 0) {
+      /* −20% to +60% of your floor spans the whole range, so the difference
+         between $100k and $156k against a $97k floor is 14 points, not zero */
+      const rel = (adj - floorAdj) / floorAdj;
+      pay = Math.round(Math.max(0, Math.min(1, (rel + 0.2) / 0.8)) * 40);
+    } else {
+      pay = Math.round(Math.max(0, Math.min(1, (adj - 60000) / (tierT1 - 60000))) * 40);
+    }
+  }
+
+  /* Remote is excellent but not automatically better than a city you'd both
+     love. They were both pinned to the maximum before, so neither could win. */
+  const place = job.remote ? 22 : job.city ? (CITY_PTS[job.city.tier] ?? 8) : 4;
+  const partner = job.remote ? 0 : Math.round((job.city?.partner ?? 0) * 1.7);
+
+  const focus = job.iam ? 15 : job.family === "analyst" || job.family === "eng" ? 10 : 5;
+  const growthPart = Math.round((scoreGrowth(job, me) / 100) * 18);
+
+  return Math.max(1, Math.min(100, pay + place + partner + focus + growthPart));
+}

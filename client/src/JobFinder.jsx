@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money, yearsFromResume, offerValue } from "./careerData.js";
-import { scoreOdds, oddsParts, explainRow, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
+import { scoreOdds, oddsParts, explainRow, scoreFit, scoreGrowth, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
 export { yearsFromResume };
 
 /* ------------------------------------------------------------------
@@ -88,17 +88,13 @@ function scoreJob(j, ctx) {
   const col = j.remote ? (S.remoteCol || 90) : (city?.col || 100);
   const adj = comp ? Math.round(comp / (col / 100)) : null;
 
-  /* --- Fit: is this a job worth wanting --- */
-  let money_ = 0;
-  if (adj != null) money_ = Math.max(0, Math.min(35, Math.round(((adj - 60000) / ((S.tierT1 || 98000) - 60000)) * 35)));
-  /* Remote is the strongest possible location outcome here: it means the city
-     question goes away entirely and the partner's search picks the city. */
-  const place = j.remote ? 35
-    : city ? Math.round(({ S: 22, A: 19, B: 15, C: 11 }[city.tier] ?? 11) + (city.partner ?? 0) * 4.3)
-    : 4;
-  const growth = Math.round(((CAT_GROWTH[j.cat]?.[0] ?? 3) / 5) * 15);
-  const focus = j.iam ? 15 : 8;
-  const fit = Math.max(0, Math.min(100, money_ + place + growth + focus));
+  /* --- Fit and Growth, both measured against him rather than constants. Live
+     in odds.js so the saturation that made every card read 97 can be tested
+     for rather than eyeballed. --- */
+  const scored_ = { ...j, adj, city };
+  const fitMe = { myLevel, floorAdj: ctx.floorAdj, tierT1: S.tierT1 || 98000 };
+  const fit = scoreFit(scored_, fitMe);
+  const moveUp = scoreGrowth(scored_, fitMe);
 
   /* --- Odds: could you actually land it. Lives in odds.js so it can be tested
      without a browser — it is the number most likely to be quietly wrong. --- */
@@ -107,13 +103,8 @@ function scoreJob(j, ctx) {
   const { shared, shortfall, build } = oddsParts(j, me);
   const gap = ODDS_ORDER.indexOf(j.level) - ODDS_ORDER.indexOf(myLevel || "entry");
 
-  /* growth as its own visible number, not buried inside fit — "does this go
-     anywhere" is a different question from "is it good now", and a utility job
-     that pays well today with a 2/5 ladder is exactly the row where the two
-     answers disagree */
-  const moveUp = Math.round(((CAT_GROWTH[j.cat]?.[0] ?? 3) / 5) * 100);
-  const row = { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, moveUp, gap, shortfall, build, shared, place, growth, money_ };
-  row.why = explainRow(row, { myYears, floorAdj: ctx.floorAdj, growth: CAT_GROWTH[j.cat]?.[0] ?? 3 });
+  const row = { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, moveUp, gap, shortfall, build, shared };
+  row.why = explainRow(row, { myYears, floorAdj: ctx.floorAdj, growth: CAT_GROWTH[j.cat]?.[0] ?? 3, myLevel });
   return row;
 }
 
@@ -139,6 +130,15 @@ function Meter({ label, value, color, title }) {
 }
 const meterColor = (n) => (n == null ? "var(--faint)" : n >= 70 ? "var(--up)" : n >= 50 ? "var(--acc)" : n >= 32 ? "var(--gold)" : "var(--down)");
 const STATUS_CLR = { Target: "var(--faint)", Applied: "var(--gold)", Interviewing: "var(--acc)", Offer: "var(--up)" };
+
+/* If the poll has ever seen a posting from this employer, we know their board
+   and can link straight at it instead of guessing via a search engine. */
+function careersFor(company, data) {
+  const hit = (data?.jobs || []).find((j) => j.company === company && j.url);
+  if (!hit) return null;
+  const m = /^(https:\/\/(?:job-boards|boards)\.greenhouse\.io\/[^/]+|https:\/\/jobs\.lever\.co\/[^/]+|https:\/\/jobs\.ashbyhq\.com\/[^/]+|https:\/\/[^/]+\.myworkdayjobs\.com\/[^/]+\/[^/]+)/.exec(hit.url);
+  return m ? m[1] : hit.url;
+}
 
 const oddsWord = (n) => (n >= 70 ? "Strong" : n >= 52 ? "Realistic" : n >= 34 ? "Stretch" : "Long shot");
 const oddsColor = (n) => (n >= 70 ? "var(--up)" : n >= 52 ? "var(--acc)" : n >= 34 ? "var(--gold)" : "var(--down)");
@@ -740,7 +740,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                   title={j.odds == null ? "Upload a resume and this turns on" : "Your rung, resume overlap, years, clearance, and how selective this employer is"} />
                 <Meter label="FIT" value={j.fit} color={meterColor(j.fit)}
                   title="Pay after cost of living, place, growth, and whether it's the work you want" />
-                <Meter label="MOVE UP" value={j.moveUp} color={meterColor(j.moveUp)}
+                <Meter label="GROWTH" value={j.moveUp} color={meterColor(j.moveUp)}
                   title={CAT_GROWTH[j.cat]?.[1] || "How fast this kind of employer promotes"} />
               </div>
 
@@ -753,10 +753,20 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
               </span>
 
               <div className="jfoot">
-                {j.url
-                  ? <a className="btn small primary" href={j.url} target="_blank" rel="noreferrer noopener">Open</a>
-                  : <a className="btn small primary" href={"https://duckduckgo.com/?q=" + encodeURIComponent(j.company + " careers " + j.title)}
-                      target="_blank" rel="noreferrer noopener">Find it</a>}
+                {/* A live posting has its own URL. A tracked target usually
+                    doesn't, but Atlas often knows the employer's board from the
+                    poll registry — so go to their real careers page, and only
+                    fall back to a search when there genuinely isn't one. The
+                    query also drops the placeholder role, which was producing
+                    searches for "IAM / Security — target". */}
+                {(() => {
+                  const direct = j.url || careersFor(j.company, data);
+                  if (direct) return <a className="btn small primary" href={direct} target="_blank" rel="noreferrer noopener">Open</a>;
+                  const role = /target|^$/i.test(j.title) ? (j.iam ? "IAM analyst" : "security analyst") : j.title;
+                  return <a className="btn small primary" title="No board on file for this employer — searching their careers page"
+                    href={"https://duckduckgo.com/?q=" + encodeURIComponent(j.company + " careers " + role)}
+                    target="_blank" rel="noreferrer noopener">Find it</a>;
+                })()}
                 {j.tracked
                   ? <button className="btn small" onClick={() => onEdit(apps.find((a) => a.id === j.appId))}>Edit</button>
                   : <button className="btn small" disabled={already} onClick={() => track(j)}>{already ? "Tracked ✓" : "Track"}</button>}
