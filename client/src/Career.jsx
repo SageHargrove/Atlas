@@ -1454,7 +1454,31 @@ export default function Career({ d, setD, config, toast }) {
 
       <div className="card">
         <h3>Assumptions</h3>
-        <div className="grid3" style={{ marginTop: 8 }}>
+        {/* The decision isn't "can I get a job" — it's "is anything better than
+            the one I'm already nearly certain of". Everything in the finder gets
+            compared to this. */}
+        <label className="f">Your floor — the offer you're confident of</label>
+        <div className="row">
+          <input className="in" style={{ width: 150 }} placeholder="Company" value={S.floorOffer?.company || ""}
+            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), company: e.target.value.slice(0, 40) } } }))} />
+          <input className="in mono" type="number" style={{ width: 110 }} placeholder="Base $"
+            value={S.floorOffer?.comp ?? ""}
+            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), comp: e.target.value === "" ? null : Number(e.target.value) } } }))} />
+          <input className="in mono" type="number" style={{ width: 92 }} placeholder="Extras %"
+            title="Bonus, 401k match, pension, insurance — what the benefits are worth as a % of base"
+            value={S.floorOffer?.extrasPct ?? ""}
+            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), extrasPct: e.target.value === "" ? null : Number(e.target.value) } } }))} />
+          <input className="in" style={{ width: 130 }} placeholder="City"
+            value={S.floorOffer?.city || ""}
+            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, floorOffer: { ...(c.settings.floorOffer || {}), city: e.target.value.slice(0, 40) } } }))} />
+        </div>
+        <div className="note">
+          Every posting then reads <b>+$18k vs floor</b> instead of a bare number. A utility's benefits are worth real
+          money, so put them in extras — a $70k base with a pension, a match and cheap insurance is closer to $84k, and
+          comparing it to a $78k consultancy without that adjustment would be lying to yourself in the wrong direction.
+        </div>
+
+        <div className="grid3" style={{ marginTop: 14 }}>
           <div><label className="f">Take-home % of gross</label>
             <input className="in mono" type="number" value={S.takeHomePct}
               onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, takeHomePct: Number(e.target.value) || 0 } }))} /></div>

@@ -36,6 +36,16 @@ export const FAMILY_LABELS = [
    click away — this is a default, not a decision. */
 export const DEFAULT_FAMILIES = ["iam", "eng", "analyst"];
 
+/* WHO is hiring, as opposed to what the role is. "Show me the IAM
+   consultancies" was not expressible before — you could filter to IAM work and
+   still get it from a bank, a utility and a trading firm mixed together. These
+   are the same categories the pay bands and selectivity already use, so the
+   filter costs nothing new to maintain. */
+export const CAT_LABELS = [
+  ["consulting", "Consultancies"], ["enterprise", "Vendors / enterprise"], ["utility", "Utilities"],
+  ["financial", "Financial"], ["cleared", "Cleared / defense"], ["bigtech", "Big tech"], ["quant", "Quant"],
+];
+
 /* Postings almost never state pay, so a comp figure has to be an estimate or
    nothing. These are deliberately conservative national midpoints; anything
    shown from them is labelled "est" in the UI and never silently treated as
@@ -129,11 +139,22 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const [boardCo, setBoardCo] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [fams, setFams] = useState(() => new Set(S.jobFamilies || DEFAULT_FAMILIES));
+  const [cats, setCats] = useState(() => new Set(S.jobCats || []));
   const [minPay, setMinPay] = useState(0);
   const [hideStale, setHideStale] = useState(false);
   const [onlyNew, setOnlyNew] = useState(false);
   const [found, setFound] = useState(null);   // discovered boards awaiting your yes
   const [whyId, setWhy] = useState(null);     // which row's city detail is expanded
+  /* The offer you're near-certain of, adjusted the same way every row is, so the
+     comparison is like for like: a $70k utility job in Little Rock is not
+     beaten by an $80k one in Boston. */
+  const floor = S.floorOffer || null;
+  const floorAdj = useMemo(() => {
+    if (!floor?.comp) return 0;
+    const base = Number(floor.comp) * (1 + (Number(floor.extrasPct) || 0) / 100);
+    const col = floor.remote ? (S.remoteCol || 90) : (cityMatch(floor.city, S.cities)?.col || 100);
+    return Math.round(base / (col / 100));
+  }, [floor, S.cities, S.remoteCol]);
 
   const load = async () => {
     try {
@@ -190,6 +211,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
       !dismissed.has(j.id) &&
       (!levels.size || levels.has(j.level) || (wantsUnlabelled && unknown(j))) &&
       (!fams.size || fams.has(j.family)) &&
+      (!cats.size || cats.has(j.cat)) &&
       (!minPay || (j.adj || 0) >= minPay) &&
       (!hideStale || !(j.ageDays > 60)) &&
       (!onlyNew || (j.firstSeen || "") > lastSeen) &&
@@ -206,7 +228,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
       new: (a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""),
     };
     return out.sort(cmp[sort]);
-  }, [scored, levels, showUnlabelled, fams, minPay, hideStale, onlyNew, lastSeen, dismissed,
+  }, [scored, levels, showUnlabelled, fams, cats, minPay, hideStale, onlyNew, lastSeen, dismissed,
       remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
 
   const unlabelled = useMemo(() => scored.filter((j) => j.levelSure === false && !j.levelBasis && (!usOnly || j.us)).length, [scored, usOnly]);
@@ -279,15 +301,20 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
     for (const j of base) if (!fams.size || fams.has(j.family)) m[j.level] = (m[j.level] || 0) + 1;
     return m;
   }, [base, fams]);
+  const inLevel = useMemo(() => {
+    const wantsUnlabelled = showUnlabelled && levels.size && !levels.has("mid");
+    return base.filter((j) => !levels.size || levels.has(j.level) || (wantsUnlabelled && j.levelSure === false && !j.levelBasis));
+  }, [base, levels, showUnlabelled]);
   const famCounts = useMemo(() => {
     const m = {};
-    const wantsUnlabelled = showUnlabelled && levels.size && !levels.has("mid");
-    for (const j of base) {
-      if (levels.size && !levels.has(j.level) && !(wantsUnlabelled && j.levelSure === false && !j.levelBasis)) continue;
-      m[j.family] = (m[j.family] || 0) + 1;
-    }
+    for (const j of inLevel) if (!cats.size || cats.has(j.cat)) m[j.family] = (m[j.family] || 0) + 1;
     return m;
-  }, [base, levels, showUnlabelled]);
+  }, [inLevel, cats]);
+  const catCounts = useMemo(() => {
+    const m = {};
+    for (const j of inLevel) if (!fams.size || fams.has(j.family)) m[j.cat] = (m[j.cat] || 0) + 1;
+    return m;
+  }, [inLevel, fams]);
   const newCount = useMemo(() =>
     lastSeen ? scored.filter((j) => (j.firstSeen || "") > lastSeen && (!usOnly || j.us) && !dismissed.has(j.id)).length : 0,
     [scored, lastSeen, usOnly, dismissed]);
@@ -362,6 +389,20 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
           Every link goes to the employer, never a job aggregator.
         </> : "Loading postings…"}
       </div>
+
+      {floorAdj > 0 && (
+        <div className="note" style={{ marginTop: 8 }}>
+          <b>Your floor: {floor.company || "current offer"} at {money(Number(floor.comp))}{floor.extrasPct ? " +" + floor.extrasPct + "%" : ""}
+          {" "}= {money(floorAdj)} adjusted.</b>{" "}
+          {(() => {
+            const beat = rows.filter((r) => r.adj > floorAdj).length;
+            const good = rows.filter((r) => r.adj > floorAdj && r.odds >= 45).length;
+            return beat === 0
+              ? "Nothing showing beats it — widen the filters, or take the floor and plan to move in two years."
+              : beat + " of these pay more" + (hasResume ? ", and " + good + " of those you'd have a realistic shot at" : "") + ".";
+          })()}
+        </div>
+      )}
 
       {!hasResume && (
         <div className="note bad" style={{ marginTop: 8 }}>
@@ -445,6 +486,28 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
           setFams(new Set());
           setCareer((c) => ({ ...c, settings: { ...c.settings, jobFamilies: [] } }));
         }}>All areas</button>}
+      </div>
+
+      {/* who is hiring, not what the role is */}
+      <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
+        {CAT_LABELS.map(([k, label]) => {
+          const n = catCounts[k] || 0;
+          if (!n && !cats.has(k)) return null;
+          return (
+            <button key={k} className={"btn small" + (cats.has(k) ? " primary" : "")}
+              onClick={() => setCats((p) => {
+                const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k);
+                setCareer((c) => ({ ...c, settings: { ...c.settings, jobCats: [...s] } }));
+                return s;
+              })}>
+              {label} {n}
+            </button>
+          );
+        })}
+        {!!cats.size && <button className="btn small" onClick={() => {
+          setCats(new Set());
+          setCareer((c) => ({ ...c, settings: { ...c.settings, jobCats: [] } }));
+        }}>All employers</button>}
       </div>
 
       <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
@@ -543,6 +606,21 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                 </span>
                 <span style={{ textAlign: "right", flexShrink: 0 }}>
                   <div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{money(j.adj)}</div>
+                  {/* The question isn't "can I get a job" — SPP is nearly
+                      certain. It's "is this better than the one I already
+                      have", so that comparison belongs on every row. */}
+                  {floorAdj > 0 && j.adj > 0 && (() => {
+                    const d = j.adj - floorAdj;
+                    /* rounding to the nearest $1k turned a $104 difference into
+                       "+$0k vs floor", which reads as broken rather than as
+                       "these are the same offer" */
+                    if (Math.abs(d) < 2500) return <div className="note" style={{ margin: 0, fontSize: 11.5 }}>same as your floor</div>;
+                    return (
+                      <div className="mono" style={{ fontSize: 11.5, fontWeight: 600, color: d > 0 ? "var(--up)" : "var(--down)" }}>
+                        {d > 0 ? "+" : "−"}{money(Math.abs(d))} vs floor
+                      </div>
+                    );
+                  })()}
                   {/* where the number came from, on every row — an estimate that
                       looks identical to a published figure is a number you can't use */}
                   <div className="note" style={{ margin: 0, fontSize: 11 }}
