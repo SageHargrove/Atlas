@@ -9,6 +9,7 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
+import { startPolling, initCache, pollAll, getCache, parseBoardUrl, SEED_SOURCES } from "./jobs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
@@ -638,6 +639,86 @@ app.delete("/api/resume/:slot?", auth, (req, res) => {
   catch (e) { console.error("resume delete failed:", e.message); res.status(500).json({ error: "Could not remove the resume" }); }
 });
 
+/* ---------------- job discovery ----------------
+   Postings are public and identical for every user, so the cache is shared and
+   the poll runs once for the whole server rather than once per person. Extra
+   employers a user adds are stored in that user's own file but contribute their
+   board to the shared poll — one person adding Entergy finds it for everyone. */
+const extraSources = () => {
+  const out = [], seen = new Set(SEED_SOURCES.map((s) => s.company.toLowerCase()));
+  try {
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!f.startsWith("data-") || !f.endsWith(".json")) continue;
+      const d = readJSON(path.join(DATA_DIR, f), null);
+      for (const s of d?.career?.settings?.boards || []) {
+        const k = String(s.company || "").toLowerCase();
+        if (!k || seen.has(k) || !s.kind) continue;
+        seen.add(k); out.push(s);
+      }
+    }
+  } catch (e) { console.error("extra job sources unreadable:", e.message); }
+  return out.slice(0, 60); // a bounded poll, whatever anyone adds
+};
+
+app.get("/api/jobs", auth, (req, res) => {
+  const c = getCache();
+  res.json({ jobs: c.jobs || [], lastRun: c.lastRun || null, added: c.added || 0, closed: c.closed || 0,
+    sources: c.sources || {}, seeded: SEED_SOURCES.map((s) => s.company) });
+});
+
+/* Manual refresh is heavily rate limited: it fans out to ~20 third-party APIs,
+   and hammering someone else's board is how you get blocked for everyone. */
+const refreshLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 4, standardHeaders: true, legacyHeaders: false,
+  message: { error: "Refresh is limited to 4 per hour — the boards update a few times a day at most." } });
+app.post("/api/jobs/refresh", auth, refreshLimiter, async (req, res) => {
+  try { res.json(await pollAll(extraSources())); }
+  catch (e) { console.error("manual poll failed:", e.message); res.status(502).json({ error: "Could not reach the job boards right now" }); }
+});
+
+/* Turn a pasted careers link into a board adapter. Guessing a Workday tenant
+   fails ~80% of the time; the URL states it exactly. */
+app.post("/api/jobs/parse-board", auth, (req, res) => {
+  const parsed = parseBoardUrl(String(req.body?.url || ""));
+  if (!parsed) return res.status(400).json({
+    error: "That link isn't a board Atlas can read. It needs to be a Greenhouse, Lever, Ashby or Workday careers URL — open the company's job listings and copy the address bar.",
+  });
+  res.json({ ok: true, board: parsed });
+});
+
+/* Public GitHub repos, proxied. Doing this from the page would mean widening
+   connect-src past 'self' and handing the user's IP to GitHub for a read of
+   public data. No token: unauthenticated is enough for public repos. */
+app.get("/api/github/repos", auth, quoteLimiter, async (req, res) => {
+  const user = String(req.query.user || "").trim();
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(user)) return res.status(400).json({ error: "That isn't a valid GitHub username" });
+  try {
+    const r = await fetch("https://api.github.com/users/" + user + "/repos?sort=pushed&per_page=100", {
+      headers: { accept: "application/vnd.github+json", "user-agent": "atlas-personal-finance/1.0" },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (r.status === 404) return res.status(404).json({ error: "No GitHub user called " + user });
+    if (r.status === 403 || r.status === 429) return res.status(429).json({ error: "GitHub is rate-limiting us — try again in a few minutes" });
+    if (!r.ok) return res.status(502).json({ error: "GitHub returned " + r.status });
+    const raw = await r.json();
+    const repos = (Array.isArray(raw) ? raw : [])
+      .filter((x) => !x.fork && !x.archived && !x.private)
+      .sort((a, b) => (b.stargazers_count || 0) - (a.stargazers_count || 0) || String(b.pushed_at).localeCompare(String(a.pushed_at)))
+      .slice(0, 40)
+      .map((x) => ({
+        name: String(x.name || "").slice(0, 60),
+        url: String(x.html_url || "").slice(0, 200),
+        what: String(x.description || "").slice(0, 180),
+        stack: [x.language, ...(Array.isArray(x.topics) ? x.topics.slice(0, 5) : [])].filter(Boolean).join(", ").slice(0, 120),
+        stars: x.stargazers_count || 0,
+        pushed: String(x.pushed_at || "").slice(0, 10),
+      }));
+    res.json({ repos });
+  } catch (e) {
+    console.error("github import failed:", e.message);
+    res.status(502).json({ error: "Could not reach GitHub" });
+  }
+});
+
 /* ---------------- market quotes (Invest tab) ----------------
    Server-side proxy (CSP blocks third-party calls from the browser) with a short
    cache so a page of tickers doesn't hammer the upstream. Prices are delayed/
@@ -1142,6 +1223,12 @@ app.use((err, req, res, next) => {
   console.error("unhandled:", err?.message);
   res.status(500).json({ error: "Something went wrong on the server" });
 });
+
+/* The cache is always readable; only the scheduled poll is optional. Set
+   JOB_POLL=0 for local dev — it has no business hitting forty third-party APIs
+   on every restart — and the last poll's results are still served. */
+initCache(DATA_DIR);
+if (process.env.JOB_POLL !== "0") startPolling(DATA_DIR, extraSources);
 
 /* bind to loopback only — Caddy (same host) is the sole ingress; never listen on a public interface */
 const HOST = process.env.HOST || "127.0.0.1";

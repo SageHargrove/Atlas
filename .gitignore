@@ -30,3 +30,5 @@ SETUP.local.md
 
 # deploy artifact
 atlas.tar.gz
+jobs-cache.json
+jobs-cache.json.tmp

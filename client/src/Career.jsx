@@ -1,4 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
+import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityMatch } from "./careerData.js";
+import JobFinder, { guessMyLevel, LEVELS } from "./JobFinder.jsx";
+import Projects, { projectsBrief } from "./Projects.jsx";
 
 /* ------------------------------------------------------------------
    Career tab — the IAM job tracker, moved into Atlas.
@@ -47,85 +50,6 @@ const STATUSES = ["Target", "Applied", "Interviewing", "Offer", "Rejected", "Wit
 const CLEARANCES = ["Not required", "Required", "Preferred", "Unsure"];
 const LOC_TYPES = ["Remote", "Hybrid", "Onsite"];
 const TIERS = ["1", "2", "3"];
-
-/* ---------------- the Habitat half ----------------
-   This tracker started life as "Habitat": it ranked cities by whether a partner
-   could work in zoos / aquariums / conservation, not just by what the security
-   job paid. That reason survived the port only as an accident — San Antonio,
-   Tampa, Omaha, Columbus, Toledo and Fort Wayne are already tier S/A here and
-   all of them are top-tier zoo cities, which is not a coincidence, it's the
-   original list with its reasoning stripped off.
-
-   `partner` puts the reasoning back: 3 = a nationally significant institution
-   or a cluster of them, 2 = a solid accredited zoo/aquarium, 1 = something but
-   thin, 0 = nothing meaningful. `orgs` names them, because "Omaha: 3" is
-   useless and "Omaha: Henry Doorly Zoo & Aquarium" is an actual lead.
-
-   AZA accreditation is the line used for "solid" — it's the credential that
-   industry actually hires against. */
-const DEFAULT_CITIES = [
-  { name: "San Antonio", tier: "S", col: 91, partner: 3, orgs: "San Antonio Zoo · SeaWorld · Natural Bridge Wildlife Ranch" },
-  { name: "Tampa", tier: "S", col: 97, partner: 3, orgs: "ZooTampa at Lowry Park · Florida Aquarium · Busch Gardens" },
-  { name: "Dallas", tier: "A", col: 99, partner: 3, orgs: "Dallas Zoo · Dallas World Aquarium · Perot Museum" },
-  { name: "Fort Worth", tier: "A", col: 96, partner: 3, orgs: "Fort Worth Zoo (consistently top-5 nationally) · Botanic Garden" },
-  { name: "DFW", tier: "A", col: 98, partner: 3, orgs: "Both Dallas and Fort Worth institutions in commuting range" },
-  { name: "Orlando", tier: "A", col: 99, partner: 3, orgs: "Disney's Animal Kingdom · SeaWorld · Central Florida Zoo" },
-  { name: "Houston", tier: "A", col: 94, partner: 3, orgs: "Houston Zoo · Downtown Aquarium · Moody Gardens (Galveston)" },
-  { name: "Little Rock", tier: "A", col: 86, partner: 2, orgs: "Little Rock Zoo (AZA)" },
-  { name: "Washington DC", tier: "B", col: 140, partner: 3, orgs: "Smithsonian National Zoo & Conservation Biology Institute · WWF · NatGeo" },
-  { name: "Arlington VA", tier: "B", col: 145, partner: 3, orgs: "Same DC institutions · Conservation International · NFWF" },
-  { name: "Columbus", tier: "B", col: 92, partner: 3, orgs: "Columbus Zoo & Aquarium (national profile) · The Wilds" },
-  { name: "St. Louis", tier: "B", col: 88, partner: 3, orgs: "Saint Louis Zoo (free admission, world-class) · Missouri Botanical Garden" },
-  { name: "Jacksonville", tier: "B", col: 93, partner: 2, orgs: "Jacksonville Zoo & Gardens (AZA)" },
-  { name: "Atlanta", tier: "C", col: 99, partner: 3, orgs: "Zoo Atlanta · Georgia Aquarium (largest in the US)" },
-  { name: "Cincinnati", tier: "C", col: 91, partner: 3, orgs: "Cincinnati Zoo & Botanical Garden (CREW research center)" },
-  { name: "Omaha", tier: "C", col: 90, partner: 3, orgs: "Henry Doorly Zoo & Aquarium — often ranked #1 in the US" },
-  { name: "Miami", tier: "C", col: 117, partner: 3, orgs: "Zoo Miami · Frost Science · Everglades restoration work" },
-  { name: "Seattle", tier: "C", col: 150, partner: 3, orgs: "Woodland Park Zoo · Seattle Aquarium · NOAA Fisheries" },
-  { name: "Bay Area", tier: "C", col: 180, partner: 3, orgs: "Monterey Bay Aquarium · SF Zoo · Oakland Zoo · CA Academy of Sciences" },
-  { name: "New York", tier: "C", col: 168, partner: 3, orgs: "Bronx Zoo / WCS HQ · NY Aquarium · AMNH" },
-  { name: "San Diego", tier: "A", col: 144, partner: 3, orgs: "San Diego Zoo Wildlife Alliance · Safari Park · Birch Aquarium" },
-  { name: "Chicago", tier: "A", col: 107, partner: 3, orgs: "Lincoln Park Zoo · Brookfield Zoo · Shedd Aquarium · Field Museum" },
-  { name: "Oklahoma City", tier: "A", col: 86, partner: 2, orgs: "OKC Zoo & Botanical Garden (AZA)" },
-  { name: "Wichita", tier: "A", col: 84, partner: 2, orgs: "Sedgwick County Zoo (AZA, strong for its market size)" },
-  { name: "Indianapolis", tier: "A", col: 92, partner: 3, orgs: "Indianapolis Zoo (only US zoo accredited as zoo + aquarium + garden)" },
-  { name: "Minneapolis", tier: "A", col: 100, partner: 2, orgs: "Minnesota Zoo · Como Park Zoo" },
-  { name: "Toledo", tier: "A", col: 84, partner: 3, orgs: "Toledo Zoo & Aquarium — repeatedly top-ranked, very low cost of living" },
-  { name: "Colorado Springs", tier: "B", col: 102, partner: 2, orgs: "Cheyenne Mountain Zoo (AZA)" },
-  { name: "Denver", tier: "B", col: 111, partner: 3, orgs: "Denver Zoo · Downtown Aquarium · Butterfly Pavilion" },
-  { name: "Phoenix", tier: "B", col: 104, partner: 2, orgs: "Phoenix Zoo · Desert Botanical Garden" },
-  { name: "Tucson", tier: "B", col: 93, partner: 3, orgs: "Arizona-Sonora Desert Museum (nationally regarded) · Reid Park Zoo" },
-  { name: "Albuquerque", tier: "B", col: 92, partner: 2, orgs: "ABQ BioPark — zoo, aquarium and botanic garden in one employer" },
-  { name: "Tulsa", tier: "B", col: 85, partner: 2, orgs: "Tulsa Zoo (AZA)" },
-  { name: "Kansas City", tier: "B", col: 92, partner: 2, orgs: "Kansas City Zoo & Aquarium (AZA)" },
-  { name: "Memphis", tier: "B", col: 85, partner: 3, orgs: "Memphis Zoo (AZA, giant panda program history)" },
-  { name: "Nashville", tier: "B", col: 100, partner: 2, orgs: "Nashville Zoo at Grassmere (AZA)" },
-  { name: "Knoxville", tier: "B", col: 89, partner: 2, orgs: "Zoo Knoxville · Ripley's Aquarium (Gatlinburg)" },
-  { name: "Louisville", tier: "B", col: 91, partner: 2, orgs: "Louisville Zoo (AZA)" },
-  { name: "Cleveland", tier: "B", col: 89, partner: 3, orgs: "Cleveland Metroparks Zoo · Greater Cleveland Aquarium" },
-  { name: "Detroit", tier: "B", col: 91, partner: 3, orgs: "Detroit Zoo (AZA, strong welfare-science reputation) · Belle Isle Aquarium" },
-  { name: "Pittsburgh", tier: "B", col: 93, partner: 3, orgs: "Pittsburgh Zoo & Aquarium · National Aviary" },
-  { name: "Philadelphia", tier: "B", col: 104, partner: 3, orgs: "Philadelphia Zoo (oldest in the US) · Adventure Aquarium · Academy of Natural Sciences" },
-  { name: "Baltimore", tier: "B", col: 106, partner: 3, orgs: "National Aquarium · Maryland Zoo" },
-  { name: "Greensboro", tier: "B", col: 90, partner: 2, orgs: "NC Zoo (Asheboro, ~30 min) — one of the largest natural-habitat zoos" },
-  { name: "Columbia SC", tier: "B", col: 89, partner: 3, orgs: "Riverbanks Zoo & Garden (AZA, consistently well-rated)" },
-  { name: "Salt Lake City", tier: "B", col: 108, partner: 2, orgs: "Hogle Zoo · Loveland Living Planet Aquarium" },
-  { name: "Portland", tier: "B", col: 116, partner: 2, orgs: "Oregon Zoo (AZA)" },
-  { name: "Milwaukee", tier: "B", col: 95, partner: 2, orgs: "Milwaukee County Zoo (AZA)" },
-  { name: "Providence", tier: "B", col: 112, partner: 1, orgs: "Roger Williams Park Zoo · Mystic Aquarium is ~1 hr" },
-  { name: "Fort Wayne", tier: "B", col: 84, partner: 3, orgs: "Fort Wayne Children's Zoo — top-ranked, and the cheapest city on this list" },
-  { name: "Fresno", tier: "B", col: 100, partner: 2, orgs: "Fresno Chaffee Zoo (AZA)" },
-  { name: "Boston", tier: "B", col: 148, partner: 3, orgs: "New England Aquarium · Franklin Park Zoo · NOAA / WHOI nearby" },
-  { name: "Los Angeles", tier: "B", col: 148, partner: 3, orgs: "LA Zoo · Aquarium of the Pacific · Natural History Museum" },
-  { name: "Austin", tier: "A", col: 103, partner: 1, orgs: "Austin Zoo (rescue, small) · Austin Aquarium — thin market" },
-  { name: "Ruston", tier: "A", col: 84, partner: 0, orgs: "Nothing local — nearest is Shreveport or Monroe" },
-];
-
-/* AZA members hire from a national pool and post to one board, so this is the
-   single most useful link for the other half of the search. */
-const AZA_JOBS = "https://www.aza.org/jobs";
-const partnerLabel = (n) => (n >= 3 ? "Excellent" : n === 2 ? "Solid" : n === 1 ? "Thin" : "None");
-const partnerColor = (n) => (n >= 3 ? "var(--up)" : n === 2 ? "var(--acc)" : n === 1 ? "var(--gold)" : "var(--down)");
 
 /* [company, tier, clearance, expected comp, city, locType?] */
 const SEED = [
@@ -237,15 +161,6 @@ const QUANT = new Set(["jane street", "hudson river trading", "citadel", "jump t
   "two sigma", "drw", "imc trading", "sig (susquehanna)", "akuna capital"]);
 const CAT_EXTRAS = { utility: 14, cleared: 6, financial: 10, consulting: 6, enterprise: 7, bigtech: 0, quant: 0 };
 const SEED_EXTRAS = { "spp (southwest power pool)": 18, mitre: 8, "nsa development programs": 12, "af civilian cyber (jbsa)": 12 };
-const CAT_GROWTH = {
-  consulting: [5, "Up-or-out promo culture — fastest comp compounding"],
-  bigtech: [4, "Structured ladders; entry→next level typically ~2 yrs"],
-  quant: [5, "Flat titles — comp compounds through bonus, not ladder"],
-  financial: [3, "Steady ladders, VP-track pacing"],
-  cleared: [3, "Clearance depth + program moves drive growth"],
-  enterprise: [3, "Slower ladders; lateral moves common"],
-  utility: [2, "Stable and seniority-paced; low churn, slower climbs"],
-};
 const SEED_ROW = Object.fromEntries(SEED.map(([c, tier, clearance, comp, city, locType]) => {
   const cat =
     QUANT.has(c.toLowerCase()) ? "quant" :
@@ -288,19 +203,6 @@ const DEFAULT_CAREER = {
 
 /* ---------------- domain math (unchanged from the original) ---------------- */
 
-/* Substring matching both ways is how "LA" used to resolve to Dal-LA-s and "York"
-   to New York. Exact first, then whole-word containment with a length floor. */
-function cityMatch(city, cities) {
-  if (!city) return null;
-  const c = city.trim().toLowerCase();
-  if (c.length < 3) return null;
-  const exact = cities.find((x) => x.name.toLowerCase() === c);
-  if (exact) return exact;
-  /* Only "what you typed contains the city name" — so "Dallas, TX" resolves, but
-     a fragment like "York" no longer claims New York (nor "LA" → Dal-LA-s). */
-  const word = (hay, needle) => new RegExp("(^|[^a-z])" + needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([^a-z]|$)").test(hay);
-  return cities.find((x) => x.name.length >= 4 && word(c, x.name.toLowerCase())) || null;
-}
 function computeFit(app, cities) {
   if (app.fitOverride === true) return { fit: true, cityTier: null };
   if (app.fitOverride === false) return { fit: false, cityTier: null };
@@ -352,7 +254,12 @@ function findDest(a) {
     return { label: "USAJOBS", url: "https://www.usajobs.gov/Search/Results?k=cybersecurity&l=San%20Antonio%2C%20Texas" };
   if (a.cat === "cleared" || a.clearance === "Required")
     return { label: "ClearanceJobs", url: "https://www.clearancejobs.com/jobs?keywords=" + encodeURIComponent(a.company + " " + kw) };
-  return { label: "LinkedIn", url: "https://www.linkedin.com/jobs/search/?f_E=2%2C3&f_TPR=r2592000&geoId=103644278&keywords=" + encodeURIComponent('"' + a.company + '" ' + kw) };
+  /* Straight at the employer rather than through an aggregator: it's where the
+     application actually happens, the listings are always current, and no third
+     party gets to log that you looked. */
+  if (a.link) return { label: "the posting", url: a.link };
+  return { label: "their careers page", url: "https://duckduckgo.com/?q=" +
+    encodeURIComponent(a.company + " careers " + kw + " site:(*.myworkdayjobs.com OR job-boards.greenhouse.io OR jobs.lever.co OR jobs.ashbyhq.com) OR " + a.company + " official careers " + kw) };
 }
 
 /* ---------------- AI through Atlas's proxy ---------------- */
@@ -675,7 +582,7 @@ function readResumes(S) {
   return [];
 }
 
-function ResumeCard({ S, setCareer, config, toast, apps }) {
+function ResumeCard({ S, setCareer, config, toast, apps, myLevel, levelSource }) {
   const resumes = readResumes(S);
   const [active, setActive] = useState(0);
   const idx = Math.min(active, Math.max(0, resumes.length - 1));
@@ -744,6 +651,7 @@ function ResumeCard({ S, setCareer, config, toast, apps }) {
       const aim = target ? target.role + " at " + target.company + (target.city ? " in " + target.city : "") : instr.trim();
       const out = (await callClaude(
         "Here is the plain text of a resume:\n\n" + text.slice(0, 9000) +
+        projectsBrief(S, aim) +
         "\n\nProduce a version of this SAME resume aimed at: " + aim +
         "\n\nRules: every claim must stay truthful to the original — reorder, reword, cut, and re-emphasise, but never invent a job, " +
         "date, tool or number. Put the most relevant experience first and drop what doesn't serve this target. Keep the same overall " +
@@ -772,6 +680,32 @@ function ResumeCard({ S, setCareer, config, toast, apps }) {
       await store(cur.slot, buf, base + " (edited).pdf", doc.getNumberOfPages(), null);
       toast("Your edits are now the stored PDF — preview and download both use it.");
     } catch (e) { toast("Couldn't rebuild the PDF — " + e.message, "err"); }
+    setBusy("");
+  };
+
+  /* Which rung the resume actually reads at — the thing that decides whether
+     "senior" postings are a stretch or your next move. Stored with a date, so
+     when it shifts you can see that it shifted rather than guessing. */
+  const estimateLevel = async () => {
+    if (!text.trim()) return toast("Upload a resume first.", "err");
+    setBusy("level");
+    try {
+      const out = (await callClaude(
+        "Resume:\n" + text.slice(0, 7000) +
+        "\n\nWhich rung of a security/IT career ladder does this person read at TODAY to a hiring manager? " +
+        'Respond with ONLY JSON (no fences): {"level": one of "intern"|"entry"|"mid"|"senior"|"lead"|"principal"|"executive", ' +
+        '"why": string under 18 words, "next": what would move them up one rung, under 18 words}. ' +
+        "Judge from scope, ownership and years actually shown, not from job titles or confidence of tone. Be realistic, not kind."
+      )).trim();
+      const j = extractJSON(out);
+      const lv = LEVELS.map(([k]) => k);
+      if (!j || !lv.includes(j.level)) throw new Error("no usable level came back");
+      setCareer((c) => ({ ...c, settings: { ...c.settings, levelAI: {
+        level: j.level, why: String(j.why || "").slice(0, 140), next: String(j.next || "").slice(0, 140),
+        at: new Date().toISOString().slice(0, 10),
+      } } }));
+      toast("Reads as " + j.level + " — " + (j.why || "") + (j.next ? " To move up: " + j.next : ""));
+    } catch (e) { toast("Couldn't estimate your level — " + e.message, "err"); }
     setBusy("");
   };
 
@@ -884,6 +818,16 @@ function ResumeCard({ S, setCareer, config, toast, apps }) {
                 <input className="in" style={{ flex: 1, minWidth: 180 }} placeholder="Tell the AI how to edit it — e.g. 'make it IAM-focused, cut to one page'"
                   value={instr} onChange={(e) => setInstr(e.target.value)} onKeyDown={(e) => e.key === "Enter" && aiEdit()} />
                 <button className="btn small" disabled={!!busy} onClick={aiEdit}>{busy === "ai" ? "Rewriting…" : "Edit with AI"}</button>
+              </div>
+              <div className="row" style={{ marginTop: 8 }}>
+                <span className="note" style={{ margin: 0 }}>
+                  Reads as <b style={{ color: "var(--acc)" }}>{(LEVELS.find(([k]) => k === myLevel) || [, myLevel])[1]}</b>
+                  {levelSource === "ai" ? " (AI)" : " (from keywords)"} — the finder defaults to this rung and the one above.
+                  {S.levelAI?.why ? " " + S.levelAI.why : ""}
+                </span>
+                <button className="btn small" disabled={!!busy} onClick={estimateLevel}>
+                  {busy === "level" ? "Reading…" : "Re-check my level"}
+                </button>
               </div>
               <div className="row" style={{ marginTop: 8 }}>
                 <span className="note" style={{ margin: 0 }}>Make a tailored copy for</span>
@@ -1090,6 +1034,9 @@ export default function Career({ d, setD, config, toast }) {
   const S0 = { ...DEFAULT_CAREER.settings, ...(career.settings || {}) };
   const S = { ...S0, cities: withPartnerData(S0.cities) };
   const apps = career.apps || [];
+  /* Where you sit on the ladder, read off the resume — the AI estimate wins if
+     you've run one, since it can read scope and impact that a regex can't. */
+  const myLevel = S.levelAI?.level || guessMyLevel(S.resume) || "entry";
 
   const [editing, setEditing] = useState(null);
   const [impact, setImpact] = useState(null);
@@ -1140,6 +1087,7 @@ export default function Career({ d, setD, config, toast }) {
     try {
       const out = (await callClaude(
         "Resume:\n" + S.resume.slice(0, 8000) +
+        projectsBrief(S, a.company + " " + a.role + " " + (a.cat || "")) +
         "\n\nTarget role: " + a.role + " at " + a.company + (a.city ? " in " + a.city : "") +
         (a.clearance === "Required" ? " (requires a security clearance)" : "") +
         "\n\nRewrite the 5–7 resume bullets that matter most for THIS role. Keep every claim truthful to the resume — " +
@@ -1171,6 +1119,7 @@ export default function Career({ d, setD, config, toast }) {
     try {
       const out = (await callClaude(
         "Resume:\n" + base.slice(0, 7000) +
+        projectsBrief(S, a.company + " " + a.role + " " + (a.cat || "")) +
         "\n\nTarget: " + a.role + " at " + a.company + (a.city ? " in " + a.city : "") +
         (a.notes ? "\nWhat I know about this role: " + String(a.notes).slice(0, 600) : "") +
         "\n\nWrite a cover letter draft in the FIRST PERSON as this candidate. Rules: 200–260 words, four short paragraphs, " +
@@ -1296,9 +1245,14 @@ export default function Career({ d, setD, config, toast }) {
         </div>
       )}
 
+      <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel} />
+
       <TwoCareerCities S={S} apps={apps} setCareer={setCareer} />
 
-      <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps} />
+      <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
+        myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
+
+      <Projects S={S} setCareer={setCareer} toast={toast} />
 
       <div className="card">
         <h3>Assumptions</h3>
