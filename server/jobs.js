@@ -377,6 +377,29 @@ const US_STATES = /\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|M
 const US_WORDS = /\b(united states|usa|u\.s\.|remote - us|us remote|america)\b/i;
 const NON_US = /\b(india|bengaluru|bangalore|ireland|dublin|spain|barcelona|madrid|germany|berlin|munich|france|paris|netherlands|amsterdam|poland|krakow|warsaw|romania|bucharest|israel|tel aviv|japan|tokyo|singapore|australia|sydney|melbourne|canada|toronto|vancouver|ontario|london|united kingdom|uk\b|scotland|switzerland|zurich|sweden|stockholm|brazil|sao paulo|mexico|costa rica|philippines|manila|china|shanghai|korea|seoul|hong kong|taiwan|dubai|uae|south africa|argentina|chile|colombia|portugal|lisbon|italy|milan|czech|prague|hungary|budapest|denmark|copenhagen|norway|oslo|finland|helsinki|austria|vienna|belgium|brussels|greece|athens|turkey|istanbul|vietnam|thailand|malaysia|indonesia|new zealand)\b/i;
 
+/* "Security" covers a dozen jobs that share almost nothing day to day. 500 rows
+   of mixed SOC, GRC, appsec and identity work is not a job feed, it's a wall —
+   the family is what makes it filterable into something a person can read.
+   Ordered most-specific first: a "Cloud IAM Engineer" is IAM work that happens
+   to be in cloud, not cloud work. */
+export const FAMILIES = [
+  /* \w* on every stem: a trailing \b after "penetration test" refuses to match
+     "Penetration Tester", and after "threat intel" refuses "Threat
+     Intelligence". Same bug that let "Recruiter" past the block list. */
+  ["iam", "IAM / identity", /\b(iam|identit\w*|iga|pam\b|privileged access|sso\b|saml|oidc|scim|okta|sailpoint|saviynt|cyberark|ping identity|entra|active directory|ldap|directory services|access manag\w*|access review\w*|provision\w*|entitlement\w*|zero trust)\b/i],
+  ["offsec", "Offensive / red team", /\b(penetration test\w*|pen test\w*|pentest\w*|red team\w*|offensive security|exploit\w*|adversary emulation|vulnerability assessment|bug bounty|purple team)\b/i],
+  ["soc", "SOC / detection & response", /\b(soc\b|security operations|detection\w*|incident response|threat\s*(hunt\w*|intel\w*|research\w*|detect\w*)|hunting|siem|soar|forensic\w*|malware|triage|blue team|csirt|monitoring)\b/i],
+  ["grc", "GRC / compliance", /\b(grc\b|governance|\brisk\b|complian\w*|audit\w*|policy|privacy|assurance|isso\b|isse\b|issm\b|system security officer|information system\w* security|nist|fedramp|cmmc|iso 27001|soc 2|controls|third[- ]party risk|vendor risk)\b/i],
+  ["appsec", "Application / product security", /\b(appsec|application security|product security|secure (cod\w*|development)|sdlc|devsecops|code review|sast|dast|supply chain security|psirt)\b/i],
+  ["cloud", "Cloud & infrastructure security", /\b(cloud security|aws|azure|gcp|kubernetes|container\w*|infrastructure security|network security|firewall\w*|platform security|cspm|cnapp)\b/i],
+  ["eng", "Security engineering", /\b(security engineer\w*|software engineer\w*|developer|platform|automation|tooling|data scientist|machine learning)\b/i],
+];
+export function familyOf(title, desc) {
+  for (const [key, , re] of FAMILIES) if (re.test(title)) return key;
+  for (const [key, , re] of FAMILIES) if (re.test(desc || "")) return key;
+  return "other";
+}
+
 export function classifyPosting(p, cat) {
   const title = p.title || "";
   const loc = p.location || "";
@@ -406,6 +429,7 @@ export function classifyPosting(p, cat) {
   return {
     ...rest,
     comp,
+    family: familyOf(title, full),
     level,
     levelSure: stated.sure,
     levelBasis: stated.sure ? "stated" : guess ? guess.basis : null,
@@ -437,6 +461,29 @@ const writeCache = (v) => {
    was disabled, which looked like "no jobs found" rather than a misconfiguration. */
 export function initCache(dataDir) { CACHE_PATH = path.join(dataDir, "jobs-cache.json"); }
 export function getCache() { return CACHE_PATH ? readCache() : { jobs: [], sources: {}, lastRun: null }; }
+
+/* An estimate learned from this corpus beats a table I typed from memory: it's
+   this industry, these employers, this year, and it improves every poll as more
+   states force pay disclosure. Median, not mean — one $450k quant posting should
+   not drag a whole band upward. Needs 3 real samples before it will speak. */
+const MIN_SAMPLES = 3;
+function buildPayStats(jobs) {
+  const buckets = {};
+  for (const j of jobs) {
+    if (!(j.comp > 0) || j.compEst) continue;
+    (buckets[j.cat + "|" + j.level] ||= []).push(j.comp);
+    (buckets["*|" + j.level] ||= []).push(j.comp);
+  }
+  const out = {};
+  for (const [k, vals] of Object.entries(buckets)) {
+    if (vals.length < MIN_SAMPLES) continue;
+    vals.sort((a, b) => a - b);
+    const mid = Math.floor(vals.length / 2);
+    out[k] = Math.round((vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2) / 500) * 500;
+    out[k + "|n"] = vals.length;
+  }
+  return out;
+}
 
 export async function pollAll(extraSources = []) {
   if (running) return { skipped: "already running" };
@@ -480,13 +527,23 @@ export async function pollAll(extraSources = []) {
   /* newest first, then trim — a cache that grows forever is a disk leak */
   kept.sort((a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""));
   const jobs = kept.slice(0, MAX_KEEP);
+  const payStats = buildPayStats(jobs);
+  /* Fill in what the posting didn't say, from what comparable postings DID say.
+     Marked estimated so the UI can label it — but every row having a number
+     beats most rows having a dash, because a dash can't be sorted or filtered. */
+  for (const j of jobs) {
+    if (j.comp > 0) continue;
+    const est = payStats[j.cat + "|" + j.level] ?? payStats["*|" + j.level];
+    if (est) { j.comp = est; j.compEst = true; }
+  }
   const seen = new Set(jobs.map((j) => j.id));
   const added = jobs.filter((j) => !prevById.has(j.id)).length;
   const closed = (prev.jobs || []).filter((j) => !seen.has(j.id)).length;
 
-  writeCache({ jobs, sources: report, lastRun: new Date().toISOString(), took: Date.now() - started, added, closed });
+  writeCache({ jobs, sources: report, payStats, lastRun: new Date().toISOString(), took: Date.now() - started, added, closed });
   running = false;
-  return { total: jobs.length, added, closed, took: Date.now() - started };
+  return { total: jobs.length, added, closed, took: Date.now() - started,
+    withRealPay: jobs.filter((j) => j.comp > 0 && !j.compEst).length };
 }
 
 export function startPolling(dataDir, extraSourcesFn) {

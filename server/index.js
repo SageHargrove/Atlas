@@ -685,6 +685,83 @@ app.post("/api/jobs/parse-board", auth, (req, res) => {
   res.json({ ok: true, board: parsed });
 });
 
+/* Coverage is the real ceiling on this whole feature: 40 boards against 100+
+   tracked companies. Guessing tokens by hand found 3 of 15 Workday tenants.
+   This tries the cheap deterministic guesses first and only spends an AI call
+   on what's left — and every candidate is PROVEN by fetching it before being
+   offered, so a hallucinated tenant can't enter the registry. */
+const slugs = (name) => {
+  const base = String(name).toLowerCase().replace(/\([^)]*\)/g, " ").replace(/&/g, "and")
+    .replace(/\b(inc|llc|corp|corporation|company|co|group|technologies|technology|systems|solutions|security|identity)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ").trim();
+  const words = base.split(" ").filter(Boolean);
+  if (!words.length) return [];
+  return [...new Set([words.join(""), words.join("-"), words[0], words.slice(0, 2).join("")])].filter((s) => s.length >= 3);
+};
+const proveBoard = async (b) => {
+  try {
+    const { kind, token, tenant, wd, site } = b;
+    let url, opts = { headers: { accept: "application/json", "user-agent": "atlas-job-finder/1.0" }, signal: AbortSignal.timeout(9000) };
+    if (kind === "greenhouse") url = "https://boards-api.greenhouse.io/v1/boards/" + token + "/jobs";
+    else if (kind === "lever") url = "https://api.lever.co/v0/postings/" + token + "?mode=json";
+    else if (kind === "ashby") url = "https://api.ashbyhq.com/posting-api/job-board/" + token;
+    else if (kind === "workday") {
+      url = "https://" + tenant + "." + (wd || "wd1") + ".myworkdayjobs.com/wday/cxs/" + tenant + "/" + site + "/jobs";
+      opts = { ...opts, method: "POST", headers: { ...opts.headers, "content-type": "application/json" },
+        body: JSON.stringify({ appliedFacets: {}, limit: 5, offset: 0, searchText: "security" }) };
+    } else return 0;
+    const r = await fetch(url, opts);
+    if (!r.ok) return 0;
+    const j = await r.json();
+    const arr = Array.isArray(j) ? j : j.jobs || j.jobPostings || [];
+    return Array.isArray(arr) ? arr.length : 0;
+  } catch { return 0; }
+};
+
+app.post("/api/jobs/discover", auth, refreshLimiter, async (req, res) => {
+  const names = (Array.isArray(req.body?.companies) ? req.body.companies : [])
+    .map((s) => String(s || "").slice(0, 60).trim()).filter(Boolean).slice(0, 12);
+  if (!names.length) return res.status(400).json({ error: "No companies given" });
+
+  const found = [], unresolved = [];
+  for (const name of names) {
+    let hit = null;
+    for (const s of slugs(name)) {
+      for (const kind of ["greenhouse", "lever", "ashby"]) {
+        const n = await proveBoard({ kind, token: s });
+        if (n > 0) { hit = { company: name, kind, token: s, postings: n }; break; }
+      }
+      if (hit) break;
+    }
+    (hit ? found : unresolved).push(hit || name);
+  }
+
+  /* Only the leftovers cost a model call, and its answer is still verified. */
+  let asked = 0;
+  if (unresolved.length && process.env.ANTHROPIC_API_KEY) {
+    try {
+      const text = await callAnthropic(
+        "For each company, find the URL of its PUBLIC job board if it uses Greenhouse, Lever, Ashby or Workday. " +
+        "Companies: " + unresolved.join("; ") +
+        '\n\nRespond with ONLY JSON, no fences: [{"company": string, "url": string}]. ' +
+        "The url must be the careers/job-listings page (e.g. https://job-boards.greenhouse.io/token, https://jobs.lever.co/token, " +
+        "https://jobs.ashbyhq.com/token, or https://TENANT.wdN.myworkdayjobs.com/en-US/SITE). " +
+        "Omit any company you cannot find one for. Do not guess.", true, req.userId);
+      asked = unresolved.length;
+      const arr = JSON.parse(String(text).replace(/```json|```/g, "").trim().match(/\[[\s\S]*\]/)?.[0] || "[]");
+      for (const row of Array.isArray(arr) ? arr.slice(0, 12) : []) {
+        const b = parseBoardUrl(String(row?.url || ""));
+        if (!b) continue;
+        const n = await proveBoard(b);
+        if (n > 0) found.push({ company: String(row.company || "").slice(0, 60) || "Unknown", ...b, postings: n });
+      }
+    } catch (e) { console.error("board discovery AI step failed:", e.message); }
+  }
+
+  const gotNames = new Set(found.map((f) => f.company.toLowerCase()));
+  res.json({ found, stillMissing: names.filter((n) => !gotNames.has(n.toLowerCase())), aiTried: asked });
+});
+
 /* Public GitHub repos, proxied. Doing this from the page would mean widening
    connect-src past 'self' and handing the user's IP to GitHub for a read of
    public data. No token: unauthenticated is enough for public repos. */
@@ -773,29 +850,38 @@ function reserveAi(uid) {
   });
 }
 
-app.post("/api/ai", auth, aiLimiter, async (req, res) => {
+/* One place that talks to Anthropic, so every caller goes through the same daily
+   cap. A second code path with its own fetch would be a second way to spend the
+   owner's API budget without the counter noticing. */
+async function callAnthropic(prompt, search, uid) {
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return res.status(400).json({ error: "AI disabled — no ANTHROPIC_API_KEY in .env" });
-  const prompt = String(req.body.prompt || "");
-  if (prompt.length > 24000) return res.status(400).json({ error: "Prompt too long" }); // cap runs on the owner's API bill (24k chars ≈ 6k tokens; the assistant sends a compact data summary)
-  const gate = await reserveAi(req.userId);
-  if (!gate.ok) return res.status(429).json({ error: gate.error });
+  if (!key) throw Object.assign(new Error("AI disabled — no ANTHROPIC_API_KEY in .env"), { status: 400 });
+  if (String(prompt).length > 24000) throw Object.assign(new Error("Prompt too long"), { status: 400 });
+  const gate = await reserveAi(uid);
+  if (!gate.ok) throw Object.assign(new Error(gate.error), { status: 429 });
+  /* Sonnet 5 thinks adaptively by default and max_tokens caps thinking + answer
+     together, so give headroom; effort:low keeps categorization calls cheap. */
+  const body = { model: "claude-sonnet-5", max_tokens: 2000, output_config: { effort: "low" }, messages: [{ role: "user", content: String(prompt) }] };
+  if (search) body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }];
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  if (j.error) throw Object.assign(new Error(j.error.message), { status: 502 });
+  const text = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  if (!text && j.stop_reason === "refusal") throw Object.assign(new Error("The AI declined this request — try rephrasing."), { status: 502 });
+  return text;
+}
+
+app.post("/api/ai", auth, aiLimiter, async (req, res) => {
   try {
-    /* Sonnet 5 thinks adaptively by default and max_tokens caps thinking + answer
-       together, so give headroom; effort:low keeps categorization calls cheap. */
-    const body = { model: "claude-sonnet-5", max_tokens: 2000, output_config: { effort: "low" }, messages: [{ role: "user", content: prompt }] };
-    if (req.body.search) body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }];
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify(body),
-    });
-    const j = await r.json();
-    if (j.error) return res.status(502).json({ error: j.error.message });
-    const text = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    if (!text && j.stop_reason === "refusal") return res.status(502).json({ error: "The AI declined this request — try rephrasing." });
-    res.json({ text });
-  } catch (e) { console.error("AI proxy error:", e.message); res.status(500).json({ error: "AI request failed" }); }
+    res.json({ text: await callAnthropic(req.body.prompt || "", req.body.search, req.userId) });
+  } catch (e) {
+    if (!e.status) console.error("AI proxy error:", e.message);
+    res.status(e.status || 500).json({ error: e.status ? e.message : "AI request failed" });
+  }
 });
 
 /* ---------------- Teller ---------------- */

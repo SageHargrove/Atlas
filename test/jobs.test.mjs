@@ -1,7 +1,7 @@
 /* The classifier decides what reaches the finder at all, so a mistake here is
    invisible — a job you never see looks identical to a job that doesn't exist.
    Every case below came from a real posting in an actual poll. Run: npm test */
-import { classifyPosting, parseBoardUrl, careersUrl, payFromText } from "../server/jobs.js";
+import { classifyPosting, parseBoardUrl, careersUrl, payFromText, familyOf } from "../server/jobs.js";
 
 let pass = 0, fail = 0;
 const eq = (label, got, want) => {
@@ -165,6 +165,32 @@ eq("clearance detected", f("ISSO", { desc: "Requires an active TS/SCI with polyg
 eq("no clearance by default", f("Security Engineer").clearance, false);
 eq("IAM flagged", f("Identity Engineer").iam, true);
 eq("SOC work is not IAM", f("SOC Analyst").iam, false);
+
+/* "Security" covers a dozen jobs that share almost nothing day to day. Without
+   this, 500 rows of mixed SOC, GRC, appsec and identity work is a wall. */
+console.log("\nrole families:");
+const fam = (t, d) => familyOf(t, d || "");
+eq("IAM engineer", fam("Identity and Access Management Engineer"), "iam");
+eq("SailPoint work is IAM", fam("SailPoint Developer"), "iam");
+eq("a cloud IAM role is IAM, not cloud", fam("Cloud IAM Engineer, AWS"), "iam");
+eq("SOC analyst", fam("SOC Analyst"), "soc");
+eq("detection engineering", fam("Detection and Response Engineer"), "soc");
+eq("threat intel", fam("Threat Intelligence Analyst"), "soc");
+eq("GRC", fam("GRC Analyst"), "grc");
+eq("ISSO is GRC", fam("Information System Security Officer"), "grc");
+eq("compliance", fam("Compliance Analyst, FedRAMP"), "grc");
+eq("product security is appsec", fam("Product Security Engineer"), "appsec");
+eq("devsecops is appsec", fam("DevSecOps Engineer"), "appsec");
+eq("pentest is offensive", fam("Penetration Tester"), "offsec");
+eq("red team is offensive", fam("Red Team Operator"), "offsec");
+/* a vulnerability ASSESSMENT is offensive work; vulnerability MANAGEMENT is not,
+   and the ordering has to keep them apart */
+eq("vulnerability assessment is offensive", fam("Associate, Vulnerability Assessment"), "offsec");
+eq("cloud security", fam("Cloud Security Engineer"), "cloud");
+eq("a bare security engineer is engineering", fam("Security Engineer"), "eng");
+eq("the title beats the body", fam("GRC Analyst", "You will use Splunk and hunt threats daily"), "grc");
+eq("the body is the fallback", fam("Cyber Specialist", "Own our SailPoint IGA platform and access reviews"), "iam");
+eq("nothing matches", fam("Cyber Specialist"), "other");
 
 console.log("\nboard URLs:");
 eq("greenhouse", parseBoardUrl("https://boards.greenhouse.io/guidepointsecurity"), { kind: "greenhouse", token: "guidepointsecurity" });

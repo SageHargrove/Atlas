@@ -22,6 +22,14 @@ export const LEVELS = [
 ];
 const LEVEL_ORDER = LEVELS.map(([k]) => k);
 
+/* Mirrors the server's families. Kept short here because these are buttons in a
+   wrapping row, not prose. */
+export const FAMILY_LABELS = [
+  ["iam", "IAM / identity"], ["soc", "SOC / detection"], ["grc", "GRC / compliance"],
+  ["appsec", "AppSec"], ["offsec", "Offensive"], ["cloud", "Cloud / infra"],
+  ["eng", "Security eng"], ["other", "Other"],
+];
+
 /* Postings almost never state pay, so a comp figure has to be an estimate or
    nothing. These are deliberately conservative national midpoints; anything
    shown from them is labelled "est" in the UI and never silently treated as
@@ -76,6 +84,8 @@ export function guessMyLevel(resume) {
 function scoreJob(j, ctx) {
   const { S, myLevel, resumeTokens, hasClearance } = ctx;
   const city = cityMatch(j.location, S.cities);
+  /* The server now fills most gaps from what comparable postings actually pay;
+     the static table is only the floor for a band with too few real samples. */
   const comp = j.comp || estComp(j.cat, j.level);
   const col = j.remote ? (S.remoteCol || 90) : (city?.col || 100);
   const adj = comp ? Math.round(comp / (col / 100)) : null;
@@ -106,7 +116,7 @@ function scoreJob(j, ctx) {
   const yearsPts = j.yearsReq == null ? 5 : j.yearsReq <= 2 ? 5 : j.yearsReq <= 4 ? 2 : -6;
   const odds = Math.max(1, Math.min(100, levelPts + overlapPts + clearPts + yearsPts));
 
-  return { ...j, city, comp, adj, estimated: !j.comp, fit, odds, gap, shared, place, growth, money_ };
+  return { ...j, city, comp, adj, estimated: !j.comp || !!j.compEst, fit, odds, gap, shared, place, growth, money_ };
 }
 
 const oddsWord = (n) => (n >= 70 ? "Strong" : n >= 52 ? "Realistic" : n >= 34 ? "Stretch" : "Long shot");
@@ -134,6 +144,11 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const [boardUrl, setBoardUrl] = useState("");
   const [boardCo, setBoardCo] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [fams, setFams] = useState(() => new Set());
+  const [minPay, setMinPay] = useState(0);
+  const [hideStale, setHideStale] = useState(false);
+  const [onlyNew, setOnlyNew] = useState(false);
+  const [found, setFound] = useState(null);   // discovered boards awaiting your yes
 
   const load = async () => {
     try {
@@ -143,6 +158,9 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
     } catch (e) { setErr(e.message); }
   };
   useEffect(() => { load(); }, []);
+  /* Stamp the visit AFTER the first render, so this session still sees its own
+     "New" badges and only the next visit resets them. */
+  useEffect(() => { if (data) { const t = setTimeout(markSeen, 2500); return () => clearTimeout(t); } }, [data]);
 
   /* default the ladder filter to where you are and the rung above — the rest
      stay one click away rather than being thrown out */
@@ -154,6 +172,14 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
 
   const resumeTokens = useMemo(() => tokensOf(S.resume), [S.resume]);
   const hasClearance = !!S.hasClearance;
+  const dismissed = useMemo(() => new Set(S.dismissed || []), [S.dismissed]);
+  /* Frozen on mount: if this tracked live, every row would stop being new the
+     instant you looked at the page and the badge would be useless. */
+  const [lastSeen] = useState(() => S.jobsSeenAt || "");
+  const markSeen = () => setCareer((c) => ({ ...c, settings: { ...c.settings, jobsSeenAt: new Date().toISOString().slice(0, 10) } }));
+  const dismiss = (id) => setCareer((c) => ({ ...c, settings: { ...c.settings,
+    /* bounded: this is a permanent list in a file that autosaves on every keystroke */
+    dismissed: [...new Set([...(c.settings.dismissed || []), id])].slice(-400) } }));
   const tracked = useMemo(() => new Set(apps.map((a) => (a.company + "|" + a.role).toLowerCase())), [apps]);
 
   const scored = useMemo(() => {
@@ -173,7 +199,12 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
     const wantsUnlabelled = showUnlabelled && levels.size && !levels.has("mid");
     const unknown = (j) => j.levelSure === false && !j.levelBasis;
     let out = scored.filter((j) =>
+      !dismissed.has(j.id) &&
       (!levels.size || levels.has(j.level) || (wantsUnlabelled && unknown(j))) &&
+      (!fams.size || fams.has(j.family)) &&
+      (!minPay || (j.adj || 0) >= minPay) &&
+      (!hideStale || !(j.ageDays > 60)) &&
+      (!onlyNew || (j.firstSeen || "") > lastSeen) &&
       (!remoteOnly || j.remote) &&
       (!usOnly || j.us) &&
       (!iamOnly || j.iam) &&
@@ -187,7 +218,8 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
       new: (a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""),
     };
     return out.sort(cmp[sort]);
-  }, [scored, levels, showUnlabelled, remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
+  }, [scored, levels, showUnlabelled, fams, minPay, hideStale, onlyNew, lastSeen, dismissed,
+      remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
 
   const unlabelled = useMemo(() => scored.filter((j) => j.levelSure === false && !j.levelBasis && (!usOnly || j.us)).length, [scored, usOnly]);
 
@@ -246,9 +278,38 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
 
   const counts = useMemo(() => {
     const m = {};
-    for (const j of scored) if ((!usOnly || j.us)) m[j.level] = (m[j.level] || 0) + 1;
+    for (const j of scored) if ((!usOnly || j.us) && !dismissed.has(j.id)) m[j.level] = (m[j.level] || 0) + 1;
     return m;
-  }, [scored, usOnly]);
+  }, [scored, usOnly, dismissed]);
+  const famCounts = useMemo(() => {
+    const m = {};
+    for (const j of scored) if ((!usOnly || j.us) && !dismissed.has(j.id) && (!levels.size || levels.has(j.level))) m[j.family] = (m[j.family] || 0) + 1;
+    return m;
+  }, [scored, usOnly, dismissed, levels]);
+  const newCount = useMemo(() =>
+    lastSeen ? scored.filter((j) => (j.firstSeen || "") > lastSeen && (!usOnly || j.us) && !dismissed.has(j.id)).length : 0,
+    [scored, lastSeen, usOnly, dismissed]);
+
+  /* Coverage is the ceiling on the whole feature — 40 boards against 100+
+     tracked companies. Every candidate is fetched and proven server-side before
+     it's offered, so nothing enters the registry on a model's say-so. */
+  const discover = async () => {
+    const missing = [...new Set(apps.map((a) => a.company))]
+      .filter((c) => !(data?.seeded || []).includes(c) && !(S.boards || []).some((b) => b.company === c))
+      .slice(0, 12);
+    if (!missing.length) return toast("Every company you track already has a board.", "err");
+    setBusy("discover");
+    try {
+      const r = await fetch("/api/jobs/discover", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companies: missing }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "discovery failed");
+      if (!j.found?.length) { toast("No public boards found for those " + missing.length + " — they're likely on iCIMS or Taleo, which have no open API.", "err"); setBusy(""); return; }
+      setFound(j);
+    } catch (e) { toast(e.message, "err"); }
+    setBusy("");
+  };
 
   if (err) return <div className="card"><h3>Job finder</h3><div className="note bad">Couldn't load postings — {err}</div></div>;
 
@@ -257,10 +318,40 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h3>Find jobs</h3>
         <span className="row" style={{ gap: 6 }}>
+          {apps.length > 0 && <button className="btn small" disabled={!!busy} onClick={discover}
+            title="Look up public job boards for the companies you track">{busy === "discover" ? "Looking…" : "Find boards"}</button>}
           <button className="btn small" disabled={!!busy} onClick={() => setAddOpen((v) => !v)}>+ Employer</button>
           <button className="btn small primary" disabled={!!busy} onClick={refresh}>{busy === "refresh" ? "Checking…" : "Check now"}</button>
         </span>
       </div>
+
+      {found && (
+        <div className="card" style={{ marginTop: 8, borderColor: "var(--acc)" }}>
+          <div className="note" style={{ marginTop: 0 }}>
+            Found {found.found.length} board{found.found.length === 1 ? "" : "s"} — each one was fetched and confirmed to return
+            postings before being offered, so nothing here is a guess.
+            {found.stillMissing?.length ? " No public board for: " + found.stillMissing.join(", ") + " (likely iCIMS or Taleo, which have no open API)." : ""}
+          </div>
+          {found.found.map((b) => (
+            <div className="kv" key={b.company + b.kind}>
+              <span className="k">{b.company} <span className="note" style={{ margin: 0, fontSize: 11.5 }}>· {b.kind} · {b.postings} postings</span></span>
+            </div>
+          ))}
+          <div className="mrow">
+            <button className="btn" onClick={() => setFound(null)}>Not now</button>
+            <button className="btn primary" onClick={() => {
+              setCareer((c) => {
+                const have = new Set((c.settings.boards || []).map((x) => x.company.toLowerCase()));
+                const add = found.found.filter((b) => !have.has(b.company.toLowerCase()))
+                  .map(({ postings, ...b }) => ({ ...b, cat: "enterprise" }));
+                return { ...c, settings: { ...c.settings, boards: [...(c.settings.boards || []), ...add].slice(0, 40) } };
+              });
+              setFound(null);
+              toast("Added — hit Check now to pull their postings in.");
+            }}>Add all {found.found.length}</button>
+          </div>
+        </div>
+      )}
       <div className="note" style={{ marginTop: 0 }}>
         {data ? <>
           <b>{data.jobs.length}</b> security and identity postings pulled straight from {Object.keys(data.sources || {}).length} employers'
@@ -318,13 +409,47 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
           <option value="new">Sort: newest</option>
         </select>
       </div>
+      {/* "Security" covers a dozen jobs that share almost nothing day to day.
+          This is the filter that turns 500 rows into something readable. */}
+      <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
+        {FAMILY_LABELS.map(([k, label]) => {
+          const n = famCounts[k] || 0;
+          if (!n) return null;
+          return (
+            <button key={k} className={"btn small" + (fams.has(k) ? " primary" : "")}
+              onClick={() => setFams((p) => { const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k); return s; })}>
+              {label} {n}
+            </button>
+          );
+        })}
+        {!!fams.size && <button className="btn small" onClick={() => setFams(new Set())}>All areas</button>}
+      </div>
+
       <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
         <button className={"btn small" + (remoteOnly ? " primary" : "")} onClick={() => setRemoteOnly((v) => !v)}>Remote only</button>
         <button className={"btn small" + (usOnly ? " primary" : "")} onClick={() => setUsOnly((v) => !v)}>US only</button>
         <button className={"btn small" + (iamOnly ? " primary" : "")} onClick={() => setIamOnly((v) => !v)}>IAM / identity only</button>
         <button className={"btn small" + (fitCities ? " primary" : "")} onClick={() => setFitCities((v) => !v)}>My cities or remote</button>
         <button className={"btn small" + (hideCleared ? " primary" : "")} onClick={() => setHideCleared((v) => !v)}>Hide clearance-required</button>
-        <span className="note" style={{ margin: 0 }}>{rows.length} match</span>
+        <button className={"btn small" + (hideStale ? " primary" : "")} onClick={() => setHideStale((v) => !v)}
+          title="Reqs open 60+ days are often filled, frozen, or evergreen pipeline postings">Hide stale</button>
+        {newCount > 0 && (
+          <button className={"btn small" + (onlyNew ? " primary" : "")} onClick={() => setOnlyNew((v) => !v)}>New since last visit {newCount}</button>
+        )}
+        <select className="in" style={{ width: 130 }} value={minPay} onChange={(e) => setMinPay(Number(e.target.value))}>
+          <option value={0}>Any pay</option>
+          <option value={70000}>$70k+ adjusted</option>
+          <option value={90000}>$90k+ adjusted</option>
+          <option value={110000}>$110k+ adjusted</option>
+          <option value={140000}>$140k+ adjusted</option>
+        </select>
+        <span className="note" style={{ margin: 0 }}>
+          {rows.length} match{dismissed.size ? " · " + dismissed.size + " hidden" : ""}
+        </span>
+        {!!dismissed.size && (
+          <a href="#" className="note" style={{ margin: 0, color: "var(--acc)" }}
+            onClick={(e) => { e.preventDefault(); setCareer((c) => ({ ...c, settings: { ...c.settings, dismissed: [] } })); }}>bring back</a>
+        )}
       </div>
 
       {!rows.length && data && (
@@ -343,6 +468,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span className="row" style={{ gap: 6, flexWrap: "wrap" }}>
                     <b>{j.title}</b>
+                    {lastSeen && (j.firstSeen || "") > lastSeen && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>New</span>}
                     {j.iam && <span className="tag" style={{ color: "var(--acc)", borderColor: "var(--acc)" }}>IAM</span>}
                     {j.remote && <span className="tag" style={{ color: "var(--up)", borderColor: "var(--up)" }}>Remote</span>}
                     {j.clearance && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>Clearance</span>}
@@ -386,6 +512,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
               <div className="row" style={{ gap: 6, marginTop: 6 }}>
                 <a className="btn small primary" href={j.url} target="_blank" rel="noreferrer noopener">Open posting</a>
                 <button className="btn small" disabled={already} onClick={() => track(j)}>{already ? "Tracked ✓" : "Track this"}</button>
+                <button className="x" title="Not interested — hide this one" onClick={() => dismiss(j.id)}>✕</button>
                 <span className="note" style={{ margin: 0, fontSize: 11 }}>
                   fit {j.fit}/100{j.gap > 0 ? " · " + j.gap + " rung" + (j.gap > 1 ? "s" : "") + " above you" : j.gap < 0 ? " · below your level" : ""}
                 </span>
