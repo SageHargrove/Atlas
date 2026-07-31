@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
     "build": "npm run build -w client",
-    "start": "npm run start -w server"
+    "start": "npm run start -w server",
+    "test": "node test/classify.test.mjs && node test/city.test.mjs"
   },
   "workspaces": ["server", "client"],
   "devDependencies": { "concurrently": "^9.0.0" }

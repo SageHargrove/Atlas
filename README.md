@@ -85,6 +85,13 @@ The server reads `.env` once at startup, so restart it after editing.
 Minimum .env to test: set `SESSION_SECRET` and `INVITE_CODE` to anything.
 Leave bank sync and AI unconfigured if you just want to click around.
 
+`npm test` runs the logic suite — 62 assertions, no server or browser needed.
+It pulls the real functions out of `server/index.js` and `client/src/Career.jsx`
+rather than testing a copy, so it fails if the source drifts. It covers the two
+bugs that were hardest to see: credit-card payments being counted as both
+spending and income (which inflated every total), and short city names
+false-matching (`"LA"` matching Dallas, `"York"` matching New York).
+
 1. Open the app → **Create account** — the FIRST account on a fresh server
    needs no invite code. Everyone after that needs `INVITE_CODE`.
 2. Add accounts/budgets manually, or connect real banks: sign up at
