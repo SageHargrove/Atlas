@@ -266,6 +266,9 @@ const CSS = `
 .fh .ov{ position:fixed; inset:0; background:rgba(4,7,14,.65); display:flex; align-items:flex-start; justify-content:center; padding:44px 16px; z-index:50; overflow-y:auto; backdrop-filter:blur(5px); animation:fadeIn .2s ease both; }
 @keyframes fadeIn{ from{ opacity:0; } to{ opacity:1; } }
 .fh .modal{ background:var(--panel); border:1px solid var(--line2); border-radius:20px; width:100%; max-width:540px; padding:24px 26px; box-shadow:var(--shadow); animation:rise .3s cubic-bezier(.2,.7,.3,1) both; }
+/* a resume PDF at 540px is unreadable — the profile workspace gets real room */
+.fh .modal.wide{ max-width:1100px; }
+.fh .modal.wide .card{ border:none; padding:0; margin-top:18px; background:none; }
 .fh .modal h2{ font-family:'Sora',sans-serif; font-weight:600; font-size:18px; letter-spacing:-.01em; }
 .fh .modal h3{ font-family:'Sora',sans-serif; font-weight:600; font-size:14.5px; margin-top:18px; }
 .fh .mh{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
@@ -986,26 +989,46 @@ function Budget({ d, setD, config }) {
             </div>
           </div>
         )}
+        {/* Two bare numbers with a slash made you do the arithmetic yourself.
+            What you actually want to know is "how much is left" — so that's the
+            number, the bar is the glance, and the limit input hides until you
+            reach for it. */}
         {d.cats.map((c, ci) => {
           const spent = spentBy[c.id] || 0;
           const lim = Number(c.limit) || 0;
           const p = lim > 0 ? Math.min(100, (spent / lim) * 100) : 0;
+          const left = lim - spent;
+          const state = lim <= 0 ? "none" : spent > lim ? "over" : spent >= lim * 0.8 ? "near" : "ok";
+          const color = state === "over" ? "var(--down)" : state === "near" ? "var(--gold)" : seriesColor(ci);
           return (
-            <div key={c.id} style={{ padding: "7px 0", borderBottom: "1px solid var(--line)" }}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <span className="row" style={{ gap: 8, flexWrap: "nowrap" }}><Icon k={catIconKey(c.name)} size={14} color={seriesColor(ci)} />{c.name}</span>
-                <span className="row" style={{ gap: 6 }}>
-                  <span className="mono" style={{ fontSize: 13 }}>
-                    <span className={lim > 0 && spent > lim ? "bad" : lim > 0 && spent >= lim * 0.8 ? "warn" : ""}>{fmt(spent)}</span>
-                    <span style={{ color: "var(--faint)" }}> / </span>
-                  </span>
-                  <input className="in mono" type="number" style={{ width: 90, textAlign: "right", padding: "3px 8px" }}
-                    value={c.limit} title="Monthly budget"
+            <div key={c.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
+              <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+                <span className="row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
+                  <Icon k={catIconKey(c.name)} size={14} color={seriesColor(ci)} />
+                  <b style={{ fontSize: 13.5 }}>{c.name}</b>
+                </span>
+                <span className="row" style={{ gap: 8, flexShrink: 0 }}>
+                  {lim > 0 ? (
+                    <span className="mono" style={{ fontSize: 13.5, color, fontWeight: 600 }}>
+                      {left >= 0 ? fmt(left) + " left" : fmt(-left) + " over"}
+                    </span>
+                  ) : (
+                    <span className="note mono" style={{ margin: 0, fontSize: 12.5 }}>{fmt(spent)} spent · no budget set</span>
+                  )}
+                  <input className="in mono" type="number" style={{ width: 78, textAlign: "right", padding: "3px 7px", fontSize: 12 }}
+                    value={c.limit} title="Monthly budget" placeholder="—"
                     onChange={(e) => setD((p2) => ({ ...p2, cats: p2.cats.map((x) => (x.id === c.id ? { ...x, limit: e.target.value === "" ? 0 : Number(e.target.value) } : x)) }))} />
                   <button className="x" onClick={() => setD((p2) => ({ ...p2, cats: p2.cats.filter((x) => x.id !== c.id) }))}>✕</button>
                 </span>
               </div>
-              {lim > 0 && <div className="bar"><i className={spent > lim ? "over" : spent >= lim * 0.8 ? "near" : ""} style={{ width: p + "%" }} /></div>}
+              <div className="row" style={{ gap: 8, marginTop: 5 }}>
+                <div className="bar" style={{ flex: 1, height: 7 }}>
+                  <i style={{ width: (lim > 0 ? p : 0) + "%", background: color }} />
+                </div>
+                <span className="note mono" style={{ margin: 0, fontSize: 11, width: 96, textAlign: "right", flexShrink: 0 }}>
+                  {lim > 0 ? fmt(spent) + " of " + fmt(lim) : ""}
+                </span>
+              </div>
             </div>
           );
         })}
@@ -1889,7 +1912,12 @@ const CAT_RULES = [
   /* Walmart's own merchant string is "WM SUPERCENTER #124", which no amount of
      matching on "walmart" will ever catch. */
   [/kroger|trader joe|aldi|wal-?mart|\bwm supercenter|\bwm superc|neighborhood market|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
-  [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
+  /* Brand names alone are a losing game — there are more restaurants than any
+     list can hold. These generic words carry the meaning: "In-N-Out Donuts",
+     "Tst* Bb.q Chicken Usa" and "Genesis Health Clubs" matched nothing at all
+     while being completely obvious to a human. "Tst*" is Toast's card-processor
+     prefix and appears on a huge number of independent restaurants. */
+  [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|café|coffee|doordash|uber ?eats|grubhub|postmates|seamless|caviar|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike|\btst\*|\btoast\b ?\*|\bsq \*|donut|doughnut|chicken|\bbbq\b|bb\.?q|barbecue|taco|sushi|ramen|noodle|deli\b|bistro|brewing|brewery|taproom|pub\b|tavern|bar & grill|steakhouse|buffet|creamery|ice cream|frozen yogurt|smoothie|juice bar|boba|tea house|sandwich|burrito|wings\b|kitchen\b|eatery|food ?truck|catering|snack|bagel|pretzel|cupcake|\bpho\b|\bwok\b|hibachi|teriyaki|cantina|taqueria|trattoria|pizzeria/, "Eating out"],
   [/exxon|shell oil|chevron|texaco|citgo|valero|racetrac|quiktrip|\bqt\b|speedway|murphy usa|circle k|7-?eleven fuel|uber(?! ?eats)|lyft|parking|toll|jiffy lube|autozone|o'?reilly|discount tire|car wash/, "Transport"],
   /* Utilities before Subscriptions: a cable/internet bill is a utility, and
      lumping it in with Netflix made "cut your subscriptions" advice nonsense —
@@ -1902,7 +1930,7 @@ const CAT_RULES = [
   [/netflix|spotify|hulu|disney ?\+|hbo ?max|paramount|peacock|crunchyroll|youtube ?(premium|tv)|apple\.com\/bill|apple ?one|icloud|google ?(one|storage)|dropbox|adobe|microsoft 365|xbox game|playstation|nintendo|patreon|twitch|discord|cloudflare|github|godaddy|namecheap|\bvpn\b|audible|kindle unltd|anthropic|openai|chatgpt|claude/, "Subscriptions"],
   [/amazon|amzn|target\b|best buy|ebay|etsy|dollar (general|tree)|five below|ross store|tj ?maxx|marshalls|old navy|h&m\b|zara|nike|shein|temu|home depot|lowe'?s|ikea|j\.? ?crew|gap\b|banana republic|american eagle|hollister|abercrombie|urban outfitters|forever 21|uniqlo|lululemon|dick'?s sporting|academy sports|belk\b|dillard|macy'?s|nordstrom|kohl'?s|jcpenney|sephora|ulta|bath ?& ?body/, "Shopping"],
   [/rent\b|apartment|property (mgmt|management)|landlord/, "Rent"],
-  [/gym|planet fitness|la fitness|ymca|crunch fitness|walgreens|cvs\b|rite aid|pharmacy|clinic|dental|doctor|hospital|urgent care|optical|optometr/, "Health"],
+  [/\bgym\b|planet fitness|la fitness|ymca|crunch fitness|health club|fitness|athletic club|wellness|orangetheory|f45|crossfit|pilates|yoga|peloton|walgreens|cvs\b|rite aid|pharmacy|drug ?store|clinic|dental|dentist|orthodon|doctor|\bmd\b ?office|physician|hospital|urgent care|optical|optometr|vision center|therapy|therapist|chiroprac|dermatolog|lab ?corp|quest diagnostic|medical|health ?care|\brx\b/, "Health"],
   [/cinema|cinemark|\bamc\b|regal|steam(games| purchase)|steampowered|epic games|riot|blizzard|ticketmaster|stubhub|bowling|arcade|spotify concert|eventbrite/, "Fun"],
 ];
 /* p2p sends share one merchant key ("venmo payment web id") but mean something
@@ -2240,27 +2268,85 @@ function SubscriptionRadar({ d, setD }) {
    transaction from that merchant at once — the fastest way to clear a backlog
    and the easiest way to see what a budget needs to cover. */
 
+/* One transfer that was really two things. Without this, a $750 payment that is
+   $475 rent and $275 car has to be filed as one or the other, and every budget
+   line downstream inherits that lie. */
+function SplitSheet({ txn, cats, onClose, onSave }) {
+  const total = Number(txn.amount) || 0;
+  const [parts, setParts] = useState([
+    { id: 1, amount: "", catId: cats[0]?.id || "" },
+    { id: 2, amount: "", catId: cats[1]?.id || "" },
+  ]);
+  const sum = parts.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const left = Math.round((total - sum) * 100) / 100;
+  const ok = parts.every((p) => Number(p.amount) > 0 && p.catId) && Math.abs(left) < 0.01;
+
+  return (
+    <Modal title={"Split " + fmt2(total)} onClose={onClose}>
+      <div className="note" style={{ marginTop: 0 }}>
+        {txn.date} · {txn.note}
+      </div>
+      {parts.map((p, i) => (
+        <div className="row" key={p.id} style={{ marginTop: 6 }}>
+          <input className="in mono" type="number" step="0.01" style={{ width: 120 }} placeholder="0.00" value={p.amount}
+            onChange={(e) => setParts((v) => v.map((x) => (x.id === p.id ? { ...x, amount: e.target.value } : x)))} />
+          <select className="in" style={{ flex: 1, minWidth: 130 }} value={p.catId}
+            onChange={(e) => setParts((v) => v.map((x) => (x.id === p.id ? { ...x, catId: e.target.value } : x)))}>
+            <option value="">— category —</option>
+            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {parts.length > 2 && <button className="x" onClick={() => setParts((v) => v.filter((x) => x.id !== p.id))}>✕</button>}
+        </div>
+      ))}
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="btn small" onClick={() => setParts((v) => [...v, { id: Date.now(), amount: "", catId: "" }])}>+ Part</button>
+        {/* the last part is usually "whatever's left", so offer it */}
+        {Math.abs(left) >= 0.01 && (
+          <button className="btn small" onClick={() => setParts((v) => {
+            const i = v.findIndex((x) => !Number(x.amount));
+            const at = i === -1 ? v.length - 1 : i;
+            return v.map((x, k) => (k === at ? { ...x, amount: String(Math.round((Number(x.amount) || 0) + left) ) } : x));
+          })}>Put the remaining {fmt2(Math.abs(left))} on {left > 0 ? "an empty" : "the last"} part</button>
+        )}
+        <span className="note" style={{ margin: 0, color: Math.abs(left) < 0.01 ? "var(--up)" : "var(--down)" }}>
+          {Math.abs(left) < 0.01 ? "Balances exactly" : fmt2(Math.abs(left)) + (left > 0 ? " left to assign" : " over the total")}
+        </span>
+      </div>
+      <div className="mrow">
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn primary" disabled={!ok} onClick={() => onSave(parts)}>Split into {parts.length}</button>
+      </div>
+    </Modal>
+  );
+}
+
 function Merchants({ d, setD }) {
   const [range, setRange] = useState("3m");
   const [sort, setSort] = useState("total");
   const [q, setQ] = useState("");
+  const [openKey, setOpenKey] = useState(null);
+  const [split, setSplit] = useState(null);
 
   const rows = useMemo(() => {
     const start = rangeStart(range);
     const groups = {};
+    /* Transfers are counted but not totalled. Excluding them outright made a
+       mis-detected transfer unreachable: a $750 Venmo that is really rent gets
+       auto-marked a transfer, vanishes from this page, and then there is
+       nowhere in the app to change it back. They belong in the list; they just
+       don't belong in the spending total. */
     d.txns.forEach((t) => {
-      if (t.kind !== "out" || !(t.date >= start)) return;
+      if ((t.kind !== "out" && t.kind !== "xfer") || !(t.date >= start)) return;
       const key = normMerchant(t.note) || "(no description)";
-      const g = (groups[key] = groups[key] || { key, total: 0, count: 0, last: "", label: "", cats: {}, ids: [] });
-      g.total += Number(t.amount) || 0;
-      g.count++;
+      const g = (groups[key] = groups[key] || { key, total: 0, count: 0, xfers: 0, last: "", label: "", cats: {}, ids: [] });
+      if (t.kind === "xfer") g.xfers++;
+      else { g.total += Number(t.amount) || 0; g.count++; if (t.catId) g.cats[t.catId] = (g.cats[t.catId] || 0) + 1; }
       g.ids.push(t.id);
       if (t.date > g.last) { g.last = t.date; g.label = t.note || key; }
-      if (t.catId) g.cats[t.catId] = (g.cats[t.catId] || 0) + 1;
     });
     let list = Object.values(groups).map((g) => ({
       ...g,
-      avg: g.total / g.count,
+      avg: g.count ? g.total / g.count : 0,
       catId: Object.entries(g.cats).sort((a, b) => b[1] - a[1])[0]?.[0] || "",
       uncatted: g.count - Object.values(g.cats).reduce((s, v) => s + v, 0),
       mixed: P2P_RE.test(g.label),
@@ -2275,7 +2361,7 @@ function Merchants({ d, setD }) {
   /* The card promises "all of that merchant's transactions", so match on the
      merchant key across the whole ledger — not just the rows the range filter
      happens to be showing. */
-  const allFor = (r, txns) => txns.filter((t) => t.kind === "out" && (normMerchant(t.note) || "(no description)") === r.key);
+  const allFor = (r, txns) => txns.filter((t) => (t.kind === "out" || t.kind === "xfer") && (normMerchant(t.note) || "(no description)") === r.key);
   const setCat = (r, catId) => {
     if (!catId) return; // the blank option would otherwise silently un-file everything
     let n = 0;
@@ -2371,6 +2457,7 @@ function Merchants({ d, setD }) {
                     <span className="note" style={{ margin: 0, fontSize: 11.5 }}>
                       {r.count}× · avg {fmt2(r.avg)} · last {r.last}
                       {r.uncatted > 0 && <span className="warn"> · {r.uncatted} uncategorized</span>}
+                      {r.xfers > 0 && <span className="warn" title="Detected as account-to-account moves and left out of spending. Open this merchant to change any that were really a purchase."> · {r.xfers} marked transfer</span>}
                     </span>
                   </span>
                 </span>
@@ -2385,13 +2472,76 @@ function Merchants({ d, setD }) {
                   </select>
                 </span>
               </div>
-              <div className="bar" style={{ marginTop: 6, height: 5 }}>
-                <i style={{ width: (grand > 0 ? (r.total / grand) * 100 : 0) + "%", background: r.catId ? seriesColor(ci) : "var(--faint)" }} />
+              <div className="row" style={{ gap: 8, marginTop: 5 }}>
+                <div className="bar" style={{ flex: 1, height: 5 }}>
+                  <i style={{ width: (grand > 0 ? (r.total / grand) * 100 : 0) + "%", background: r.catId ? seriesColor(ci) : "var(--faint)" }} />
+                </div>
+                {/* Setting a category merchant-wide is wrong for anything mixed:
+                    one Venmo name can be rent, a car payment and splitting a
+                    dinner. Open it and each payment stands on its own. */}
+                <button className="btn small" style={{ padding: "2px 8px", fontSize: 11 }}
+                  onClick={() => setOpenKey(openKey === r.key ? null : r.key)}>
+                  {openKey === r.key ? "Hide" : r.count === 1 ? "Show it" : "Show all " + r.count}
+                </button>
               </div>
+
+              {openKey === r.key && (
+                <div style={{ marginTop: 6, paddingLeft: 8, borderLeft: "2px solid var(--line2)" }}>
+                  {r.mixed && (
+                    <div className="note" style={{ marginTop: 0, fontSize: 11.5 }}>
+                      These share one merchant name but not one meaning — file them individually here, and
+                      <b> Split</b> anything that was two things at once (rent plus a car payment in a single transfer).
+                    </div>
+                  )}
+                  {allFor(r, d.txns).sort((a, b) => String(b.date).localeCompare(String(a.date))).map((t) => (
+                    <div className="row" key={t.id} style={{ gap: 6, padding: "3px 0" }}>
+                      <span className="note mono" style={{ margin: 0, width: 86, flexShrink: 0, fontSize: 11.5 }}>{t.date}</span>
+                      <span className="mono" style={{ width: 76, textAlign: "right", flexShrink: 0 }}>{fmt2(t.amount)}</span>
+                      <select className="in" style={{ width: 130, padding: "3px 6px", fontSize: 11.5 }} value={t.catId || ""}
+                        onChange={(e) => setD((p) => ({ ...p, txns: p.txns.map((x) => x.id === t.id
+                          ? { ...x, catId: e.target.value, kind: "out", kindSet: true } : x) }))}>
+                        <option value="">— uncategorized —</option>
+                        {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                      {t.kind === "xfer" && <span className="tag" title="Excluded from spending entirely">transfer</span>}
+                      <button className="btn small" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => setSplit(t)}>Split</button>
+                      <span className="note" style={{ margin: 0, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.note}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         }) : <div className="note">No spending in this range yet — sync or log some transactions.</div>}
       </div>
+
+      {split && (
+        <SplitSheet txn={split} cats={d.cats} onClose={() => setSplit(null)} onSave={(parts) => {
+          setD((p) => ({
+            ...p,
+            /* the original is replaced, not kept alongside — leaving it would
+               double-count the whole amount in every total */
+            txns: p.txns.flatMap((t) => t.id !== split.id ? [t] : parts.map((part, i) => ({
+              ...t,
+              id: t.id + "-s" + (i + 1),
+              /* a split part is real spending even if the parent was a transfer */
+              kind: "out", kindSet: true,
+              amount: Math.round(Number(part.amount) * 100) / 100,
+              catId: part.catId,
+              note: t.note + " (split " + (i + 1) + "/" + parts.length + ")",
+              /* The sync key stays on exactly one part. Dropping it entirely
+                 would make the next sync think this transaction was never
+                 imported and add the original back on top of the split parts —
+                 double-counting the whole amount. Keeping it on all of them is
+                 also wrong the moment anything looks the key up expecting one row. */
+              tellerId: i === 0 ? t.tellerId : undefined,
+              splitOf: t.tellerId || t.id,
+            }))),
+          }));
+          setSplit(null);
+          toast("Split into " + parts.length + " — each part is its own transaction now.");
+        }} />
+      )}
     </>
   );
 }

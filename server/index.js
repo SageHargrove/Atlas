@@ -977,7 +977,12 @@ const CAT_RULES = [
   /* Walmart's own merchant string is "WM SUPERCENTER #124", which no amount of
      matching on "walmart" will ever catch. */
   [/kroger|trader joe|aldi|wal-?mart|\bwm supercenter|\bwm superc|neighborhood market|h-?e-?b\b|publix|safeway|whole ?foods|wholefds|costco|sam'?s club|food lion|winn-?dixie|meijer|sprouts|wegmans|grocery|supermarket/, "Groceries"],
-  [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|coffee|doordash|uber ?eats|grubhub|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike/, "Eating out"],
+  /* Brand names alone are a losing game — there are more restaurants than any
+     list can hold. These generic words carry the meaning: "In-N-Out Donuts",
+     "Tst* Bb.q Chicken Usa" and "Genesis Health Clubs" matched nothing at all
+     while being completely obvious to a human. "Tst*" is Toast's card-processor
+     prefix and appears on a huge number of independent restaurants. */
+  [/mcdonald|five guys|chipotle|taco bell|burger|wendy|chick.?fil|kfc|popeyes|starbucks|dunkin|subway\b|domino|pizza|panera|sonic drive|whataburger|panda express|raising cane|grill|restaur|cafe|café|coffee|doordash|uber ?eats|grubhub|postmates|seamless|caviar|bakery|diner|ihop|waffle house|bon appetit|culver|zaxby|wingstop|jimmy john|jersey mike|\btst\*|\btoast\b ?\*|\bsq \*|donut|doughnut|chicken|\bbbq\b|bb\.?q|barbecue|taco|sushi|ramen|noodle|deli\b|bistro|brewing|brewery|taproom|pub\b|tavern|bar & grill|steakhouse|buffet|creamery|ice cream|frozen yogurt|smoothie|juice bar|boba|tea house|sandwich|burrito|wings\b|kitchen\b|eatery|food ?truck|catering|snack|bagel|pretzel|cupcake|\bpho\b|\bwok\b|hibachi|teriyaki|cantina|taqueria|trattoria|pizzeria/, "Eating out"],
   [/exxon|shell oil|chevron|texaco|citgo|valero|racetrac|quiktrip|\bqt\b|speedway|murphy usa|circle k|7-?eleven fuel|uber(?! ?eats)|lyft|parking|toll|jiffy lube|autozone|o'?reilly|discount tire|car wash/, "Transport"],
   /* Utilities before Subscriptions: a cable/internet bill is a utility, and
      lumping it in with Netflix made "cut your subscriptions" advice nonsense —
@@ -990,7 +995,7 @@ const CAT_RULES = [
   [/netflix|spotify|hulu|disney ?\+|hbo ?max|paramount|peacock|crunchyroll|youtube ?(premium|tv)|apple\.com\/bill|apple ?one|icloud|google ?(one|storage)|dropbox|adobe|microsoft 365|xbox game|playstation|nintendo|patreon|twitch|discord|cloudflare|github|godaddy|namecheap|\bvpn\b|audible|kindle unltd|anthropic|openai|chatgpt|claude/, "Subscriptions"],
   [/amazon|amzn|target\b|best buy|ebay|etsy|dollar (general|tree)|five below|ross store|tj ?maxx|marshalls|old navy|h&m\b|zara|nike|shein|temu|home depot|lowe'?s|ikea|j\.? ?crew|gap\b|banana republic|american eagle|hollister|abercrombie|urban outfitters|forever 21|uniqlo|lululemon|dick'?s sporting|academy sports|belk\b|dillard|macy'?s|nordstrom|kohl'?s|jcpenney|sephora|ulta|bath ?& ?body/, "Shopping"],
   [/rent\b|apartment|property (mgmt|management)|landlord/, "Rent"],
-  [/gym|planet fitness|la fitness|ymca|crunch fitness|walgreens|cvs\b|rite aid|pharmacy|clinic|dental|doctor|hospital|urgent care|optical|optometr/, "Health"],
+  [/\bgym\b|planet fitness|la fitness|ymca|crunch fitness|health club|fitness|athletic club|wellness|orangetheory|f45|crossfit|pilates|yoga|peloton|walgreens|cvs\b|rite aid|pharmacy|drug ?store|clinic|dental|dentist|orthodon|doctor|\bmd\b ?office|physician|hospital|urgent care|optical|optometr|vision center|therapy|therapist|chiroprac|dermatolog|lab ?corp|quest diagnostic|medical|health ?care|\brx\b/, "Health"],
   [/cinema|cinemark|\bamc\b|regal|steam(games| purchase)|steampowered|epic games|riot|blizzard|ticketmaster|stubhub|bowling|arcade|spotify concert|eventbrite/, "Fun"],
 ];
 /* p2p sends share one merchant key ("venmo payment web id") but mean something

@@ -286,10 +286,12 @@ function extractJSON(text) {
 
 /* ---------------- UI ---------------- */
 
-function Sheet({ title, onClose, children }) {
+/* `wide` is for the profile workspace: a resume PDF at 540px is unreadable, and
+   the whole point of moving it off the page was to get room to actually work. */
+function Sheet({ title, onClose, children, wide }) {
   return (
     <div className="ov" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
+      <div className={"modal" + (wide ? " wide" : "")}>
         <div className="mh"><h2>{title}</h2><button className="x" onClick={onClose}>✕</button></div>
         {children}
       </div>
@@ -1081,6 +1083,7 @@ export default function Career({ d, setD, config, toast }) {
   const [letterFor, setLetterFor] = useState(null);
   const [letterOut, setLetterOut] = useState("");
   const [letterBusy, setLetterBusy] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [prepFor, setPrepFor] = useState(null);
   const [prepOut, setPrepOut] = useState("");
   const [prepBusy, setPrepBusy] = useState(false);
@@ -1212,6 +1215,9 @@ export default function Career({ d, setD, config, toast }) {
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h3>Career</h3>
           <span className="row" style={{ gap: 6 }}>
+            <button className={"btn small" + (S.resume ? "" : " primary")} onClick={() => setProfileOpen(true)}>
+              {S.resume ? "Your profile" : "Add your resume"}
+            </button>
             {!apps.length && <button className="btn small" onClick={() => { setCareer((c) => ({ ...c, apps: seedApps() })); toast("Loaded " + SEED.length + " starter targets — tiers recomputed from cost-of-living."); }}>Load starter targets</button>}
             <button className="btn small primary" onClick={() => setEditing({})}>+ Add</button>
           </span>
@@ -1323,10 +1329,19 @@ export default function Career({ d, setD, config, toast }) {
 
       <TwoCareerCities S={S} apps={apps} setCareer={setCareer} />
 
-      <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
-        myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
-
-      <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
+      {/* Resume and Projects used to sit inline and made this page endless. They
+          are a workspace, not a feed item — you open them to work, then close. */}
+      {profileOpen && (
+        <Sheet title="Your profile — resume, projects, level" onClose={() => setProfileOpen(false)} wide>
+          <div className="note" style={{ marginTop: 0 }}>
+            Everything the AI reads about you lives here. The resume feeds fit scoring, tailoring, cover letters and
+            interview prep; projects get pulled into whichever application they suit.
+          </div>
+          <ResumeCard S={S} setCareer={setCareer} config={config} toast={toast} apps={apps}
+            myLevel={myLevel} levelSource={S.levelAI?.level ? "ai" : S.resume ? "resume" : null} />
+          <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
+        </Sheet>
+      )}
 
       <div className="card">
         <h3>Assumptions</h3>

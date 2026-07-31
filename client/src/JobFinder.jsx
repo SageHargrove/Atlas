@@ -156,10 +156,13 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
   const [iamOnly, setIamOnly] = useState(false);
   const [hideCleared, setHideCleared] = useState(false);
   const [fitCities, setFitCities] = useState(false);
-  const [showUnlabelled, setShowUnlabelled] = useState(true);
+  /* Off by default now. Rows wearing "Level not stated" read as noise when most
+     of the list has a real rung — they're opt-in, not a permanent tax. */
+  const [showUnlabelled, setShowUnlabelled] = useState(false);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("fit");
-  const [limit, setLimit] = useState(25);
+  /* 25 rows made the page endless. Ten is a screenful you can actually read. */
+  const [limit, setLimit] = useState(10);
   const [boardUrl, setBoardUrl] = useState("");
   const [boardCo, setBoardCo] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -524,12 +527,22 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel }) {
                   {/* the employer is what you actually scan for, so it leads */}
                   <span className="row" style={{ gap: 7, flexWrap: "wrap", alignItems: "baseline" }}>
                     <b style={{ fontSize: 15 }}>{j.company}</b>
-                    {j.city && !j.remote && (
+                    {/* every row gets a location chip — a blank where the others
+                        have a tier reads as a bug, not as "no data" */}
+                    {j.remote ? (
+                      <span className="tag" style={{ color: "var(--up)", borderColor: "var(--up)" }}
+                        title="Remote is the best location outcome here: the city question disappears and she picks where you live">
+                        Remote · S-tier
+                      </span>
+                    ) : j.city ? (
                       <button className="tag" title="Click for what's there for a partner"
                         style={{ cursor: "pointer", color: partnerColor(j.city.partner), borderColor: partnerColor(j.city.partner), background: "none" }}
                         onClick={() => setWhy(whyId === j.id ? null : j.id)}>
                         {j.city.name} · {j.city.tier}-tier ▾
                       </button>
+                    ) : (
+                      <span className="tag" style={{ color: "var(--faint)" }}
+                        title="Not on your city list — add it in Assumptions if you'd move there">Unranked city</span>
                     )}
                     {lastSeen && (j.firstSeen || "") > lastSeen && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>New</span>}
                     {j.iam && <span className="tag" style={{ color: "var(--acc)", borderColor: "var(--acc)" }}>IAM</span>}

@@ -11,74 +11,74 @@ export { money };
 
 /* ---------------- the Habitat half ----------------
    This tracker started life as "Habitat": it ranked cities by whether a partner
-   could work in zoos / aquariums / conservation, not just by what the security
+   could work in zoos, wildlife and conservation, not just by what the security
    job paid. That reason survived the port only as an accident — San Antonio,
    Tampa, Omaha, Columbus, Toledo and Fort Wayne are already tier S/A here and
    all of them are top-tier zoo cities, which is not a coincidence, it's the
    original list with its reasoning stripped off.
 
    `partner` puts the reasoning back: 3 = a nationally significant institution
-   or a cluster of them, 2 = a solid accredited zoo/aquarium, 1 = something but
+   or a cluster of them, 2 = a solid accredited zoo or wildlife org, 1 = something but
    thin, 0 = nothing meaningful. `orgs` names them, because "Omaha: 3" is
-   useless and "Omaha: Henry Doorly Zoo & Aquarium" is an actual lead.
+   useless and "Omaha: Henry Doorly Zoo" is an actual lead.
 
    AZA accreditation is the line used for "solid" — it's the credential that
    industry actually hires against. */
 export const DEFAULT_CITIES = [
-  { name: "San Antonio", tier: "S", col: 91, partner: 3, orgs: "San Antonio Zoo · SeaWorld · Natural Bridge Wildlife Ranch" },
-  { name: "Tampa", tier: "S", col: 97, partner: 3, orgs: "ZooTampa at Lowry Park · Florida Aquarium · Busch Gardens" },
-  { name: "Dallas", tier: "A", col: 99, partner: 3, orgs: "Dallas Zoo · Dallas World Aquarium · Perot Museum" },
+  { name: "San Antonio", tier: "S", col: 91, partner: 3, orgs: "San Antonio Zoo · Natural Bridge Wildlife Ranch · Wildlife Rescue & Rehab" },
+  { name: "Tampa", tier: "S", col: 97, partner: 3, orgs: "ZooTampa at Lowry Park · Busch Gardens · Big Cat Rescue" },
+  { name: "Dallas", tier: "A", col: 99, partner: 3, orgs: "Dallas Zoo · Perot Museum · Texas Discovery Gardens" },
   { name: "Fort Worth", tier: "A", col: 96, partner: 3, orgs: "Fort Worth Zoo (consistently top-5 nationally) · Botanic Garden" },
   { name: "DFW", tier: "A", col: 98, partner: 3, orgs: "Both Dallas and Fort Worth institutions in commuting range" },
   { name: "Orlando", tier: "A", col: 99, partner: 3, orgs: "Disney's Animal Kingdom · SeaWorld · Central Florida Zoo" },
-  { name: "Houston", tier: "A", col: 94, partner: 3, orgs: "Houston Zoo · Downtown Aquarium · Moody Gardens (Galveston)" },
+  { name: "Houston", tier: "A", col: 94, partner: 3, orgs: "Houston Zoo · Moody Gardens (Galveston) · Armand Bayou Nature Center" },
   { name: "Little Rock", tier: "A", col: 86, partner: 2, orgs: "Little Rock Zoo (AZA)" },
   { name: "Washington DC", tier: "B", col: 140, partner: 3, orgs: "Smithsonian National Zoo & Conservation Biology Institute · WWF · NatGeo" },
   { name: "Arlington VA", tier: "B", col: 145, partner: 3, orgs: "Same DC institutions · Conservation International · NFWF" },
-  { name: "Columbus", tier: "B", col: 92, partner: 3, orgs: "Columbus Zoo & Aquarium (national profile) · The Wilds" },
+  { name: "Columbus", tier: "B", col: 92, partner: 3, orgs: "Columbus Zoo (national profile) · The Wilds conservation centre" },
   { name: "St. Louis", tier: "B", col: 88, partner: 3, orgs: "Saint Louis Zoo (free admission, world-class) · Missouri Botanical Garden" },
   { name: "Jacksonville", tier: "B", col: 93, partner: 2, orgs: "Jacksonville Zoo & Gardens (AZA)" },
-  { name: "Atlanta", tier: "C", col: 99, partner: 3, orgs: "Zoo Atlanta · Georgia Aquarium (largest in the US)" },
+  { name: "Atlanta", tier: "C", col: 99, partner: 3, orgs: "Zoo Atlanta · Chattahoochee Nature Center · Amphibian Foundation" },
   { name: "Cincinnati", tier: "C", col: 91, partner: 3, orgs: "Cincinnati Zoo & Botanical Garden (CREW research center)" },
-  { name: "Omaha", tier: "C", col: 90, partner: 3, orgs: "Henry Doorly Zoo & Aquarium — often ranked #1 in the US" },
-  { name: "Miami", tier: "C", col: 117, partner: 3, orgs: "Zoo Miami · Frost Science · Everglades restoration work" },
-  { name: "Seattle", tier: "C", col: 150, partner: 3, orgs: "Woodland Park Zoo · Seattle Aquarium · NOAA Fisheries" },
-  { name: "Bay Area", tier: "C", col: 180, partner: 3, orgs: "Monterey Bay Aquarium · SF Zoo · Oakland Zoo · CA Academy of Sciences" },
-  { name: "New York", tier: "C", col: 168, partner: 3, orgs: "Bronx Zoo / WCS HQ · NY Aquarium · AMNH" },
-  { name: "San Diego", tier: "A", col: 144, partner: 3, orgs: "San Diego Zoo Wildlife Alliance · Safari Park · Birch Aquarium" },
-  { name: "Chicago", tier: "A", col: 107, partner: 3, orgs: "Lincoln Park Zoo · Brookfield Zoo · Shedd Aquarium · Field Museum" },
+  { name: "Omaha", tier: "C", col: 90, partner: 3, orgs: "Henry Doorly Zoo — often ranked #1 in the US · Lee G. Simmons Wildlife Safari" },
+  { name: "Miami", tier: "C", col: 117, partner: 3, orgs: "Zoo Miami · Everglades restoration work · Zoological Wildlife Foundation" },
+  { name: "Seattle", tier: "C", col: 150, partner: 3, orgs: "Woodland Park Zoo · Northwest Trek · Cougar Mountain Zoo" },
+  { name: "Bay Area", tier: "C", col: 180, partner: 3, orgs: "Oakland Zoo · SF Zoo · CA Academy of Sciences · Safari West" },
+  { name: "New York", tier: "C", col: 168, partner: 3, orgs: "Bronx Zoo / Wildlife Conservation Society HQ · AMNH · Queens Zoo" },
+  { name: "San Diego", tier: "A", col: 144, partner: 3, orgs: "San Diego Zoo Wildlife Alliance · Safari Park (major conservation research arm)" },
+  { name: "Chicago", tier: "A", col: 107, partner: 3, orgs: "Lincoln Park Zoo · Brookfield Zoo · Field Museum" },
   { name: "Oklahoma City", tier: "A", col: 86, partner: 2, orgs: "OKC Zoo & Botanical Garden (AZA)" },
   { name: "Wichita", tier: "A", col: 84, partner: 2, orgs: "Sedgwick County Zoo (AZA, strong for its market size)" },
-  { name: "Indianapolis", tier: "A", col: 92, partner: 3, orgs: "Indianapolis Zoo (only US zoo accredited as zoo + aquarium + garden)" },
+  { name: "Indianapolis", tier: "A", col: 92, partner: 3, orgs: "Indianapolis Zoo (runs the global Indianapolis Prize for conservation)" },
   { name: "Minneapolis", tier: "A", col: 100, partner: 2, orgs: "Minnesota Zoo · Como Park Zoo" },
-  { name: "Toledo", tier: "A", col: 84, partner: 3, orgs: "Toledo Zoo & Aquarium — repeatedly top-ranked, very low cost of living" },
+  { name: "Toledo", tier: "A", col: 84, partner: 3, orgs: "Toledo Zoo — repeatedly top-ranked, very low cost of living" },
   { name: "Colorado Springs", tier: "B", col: 102, partner: 2, orgs: "Cheyenne Mountain Zoo (AZA)" },
-  { name: "Denver", tier: "B", col: 111, partner: 3, orgs: "Denver Zoo · Downtown Aquarium · Butterfly Pavilion" },
+  { name: "Denver", tier: "B", col: 111, partner: 3, orgs: "Denver Zoo · Butterfly Pavilion · Wild Animal Sanctuary" },
   { name: "Phoenix", tier: "B", col: 104, partner: 2, orgs: "Phoenix Zoo · Desert Botanical Garden" },
   { name: "Tucson", tier: "B", col: 93, partner: 3, orgs: "Arizona-Sonora Desert Museum (nationally regarded) · Reid Park Zoo" },
-  { name: "Albuquerque", tier: "B", col: 92, partner: 2, orgs: "ABQ BioPark — zoo, aquarium and botanic garden in one employer" },
+  { name: "Albuquerque", tier: "B", col: 92, partner: 2, orgs: "ABQ BioPark — zoo and botanic garden in one employer" },
   { name: "Tulsa", tier: "B", col: 85, partner: 2, orgs: "Tulsa Zoo (AZA)" },
-  { name: "Kansas City", tier: "B", col: 92, partner: 2, orgs: "Kansas City Zoo & Aquarium (AZA)" },
+  { name: "Kansas City", tier: "B", col: 92, partner: 2, orgs: "Kansas City Zoo (AZA)" },
   { name: "Memphis", tier: "B", col: 85, partner: 3, orgs: "Memphis Zoo (AZA, giant panda program history)" },
   { name: "Nashville", tier: "B", col: 100, partner: 2, orgs: "Nashville Zoo at Grassmere (AZA)" },
-  { name: "Knoxville", tier: "B", col: 89, partner: 2, orgs: "Zoo Knoxville · Ripley's Aquarium (Gatlinburg)" },
+  { name: "Knoxville", tier: "B", col: 89, partner: 2, orgs: "Zoo Knoxville · Great Smoky Mountains conservation orgs" },
   { name: "Louisville", tier: "B", col: 91, partner: 2, orgs: "Louisville Zoo (AZA)" },
-  { name: "Cleveland", tier: "B", col: 89, partner: 3, orgs: "Cleveland Metroparks Zoo · Greater Cleveland Aquarium" },
-  { name: "Detroit", tier: "B", col: 91, partner: 3, orgs: "Detroit Zoo (AZA, strong welfare-science reputation) · Belle Isle Aquarium" },
-  { name: "Pittsburgh", tier: "B", col: 93, partner: 3, orgs: "Pittsburgh Zoo & Aquarium · National Aviary" },
-  { name: "Philadelphia", tier: "B", col: 104, partner: 3, orgs: "Philadelphia Zoo (oldest in the US) · Adventure Aquarium · Academy of Natural Sciences" },
-  { name: "Baltimore", tier: "B", col: 106, partner: 3, orgs: "National Aquarium · Maryland Zoo" },
+  { name: "Cleveland", tier: "B", col: 89, partner: 3, orgs: "Cleveland Metroparks Zoo · Lake Erie Nature & Science Center" },
+  { name: "Detroit", tier: "B", col: 91, partner: 3, orgs: "Detroit Zoo (AZA, strong welfare-science reputation) · Howell Nature Center" },
+  { name: "Pittsburgh", tier: "B", col: 93, partner: 3, orgs: "Pittsburgh Zoo · National Aviary" },
+  { name: "Philadelphia", tier: "B", col: 104, partner: 3, orgs: "Philadelphia Zoo (oldest in the US) · Academy of Natural Sciences · Elmwood Park Zoo" },
+  { name: "Baltimore", tier: "B", col: 106, partner: 3, orgs: "Maryland Zoo · Irvine Nature Center" },
   { name: "Greensboro", tier: "B", col: 90, partner: 2, orgs: "NC Zoo (Asheboro, ~30 min) — one of the largest natural-habitat zoos" },
   { name: "Columbia SC", tier: "B", col: 89, partner: 3, orgs: "Riverbanks Zoo & Garden (AZA, consistently well-rated)" },
-  { name: "Salt Lake City", tier: "B", col: 108, partner: 2, orgs: "Hogle Zoo · Loveland Living Planet Aquarium" },
+  { name: "Salt Lake City", tier: "B", col: 108, partner: 2, orgs: "Hogle Zoo · Tracy Aviary" },
   { name: "Portland", tier: "B", col: 116, partner: 2, orgs: "Oregon Zoo (AZA)" },
   { name: "Milwaukee", tier: "B", col: 95, partner: 2, orgs: "Milwaukee County Zoo (AZA)" },
-  { name: "Providence", tier: "B", col: 112, partner: 1, orgs: "Roger Williams Park Zoo · Mystic Aquarium is ~1 hr" },
+  { name: "Providence", tier: "B", col: 112, partner: 1, orgs: "Roger Williams Park Zoo" },
   { name: "Fort Wayne", tier: "B", col: 84, partner: 3, orgs: "Fort Wayne Children's Zoo — top-ranked, and the cheapest city on this list" },
   { name: "Fresno", tier: "B", col: 100, partner: 2, orgs: "Fresno Chaffee Zoo (AZA)" },
-  { name: "Boston", tier: "B", col: 148, partner: 3, orgs: "New England Aquarium · Franklin Park Zoo · NOAA / WHOI nearby" },
-  { name: "Los Angeles", tier: "B", col: 148, partner: 3, orgs: "LA Zoo · Aquarium of the Pacific · Natural History Museum" },
-  { name: "Austin", tier: "A", col: 103, partner: 1, orgs: "Austin Zoo (rescue, small) · Austin Aquarium — thin market" },
+  { name: "Boston", tier: "B", col: 148, partner: 3, orgs: "Franklin Park Zoo · Stone Zoo · Mass Audubon" },
+  { name: "Los Angeles", tier: "B", col: 148, partner: 3, orgs: "LA Zoo · Natural History Museum · Wildlife Learning Center" },
+  { name: "Austin", tier: "A", col: 103, partner: 1, orgs: "Austin Zoo (rescue, small) — thin market" },
   { name: "Ruston", tier: "A", col: 84, partner: 0, orgs: "Nothing local — nearest is Shreveport or Monroe" },
 ];
 

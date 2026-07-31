@@ -11,6 +11,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const src = fs.readFileSync(path.join(ROOT, "server", "index.js"), "utf8");
 const start = src.indexOf("const DEBT =");
 const end = src.indexOf('app.post("/api/teller/sync"');
+/* set below after the module is built */
 if (start === -1 || end === -1) { console.error("extraction markers not found"); process.exit(1); }
 const chunk = src.slice(start, end);
 const mod = new Function(chunk + "\nreturn { XFER_RE, classifyKind, markTransferPairs, normMerchant, buildMerchantMemory, autoCategorize };")();
@@ -104,6 +105,36 @@ eq("Missing category skipped", autoCategorize("Kroger #623", cats.filter((c) => 
 // p2p never enters merchant memory — one venmo's category must not spread to the rest
 const memP2p = buildMerchantMemory([{ kind: "out", catId: "e", note: "Venmo Payment 999 Web Id" }], cats);
 eq("p2p excluded from memory", Object.keys(memP2p).length, 0);
+
+/* Brand-name whitelists lose: there are more restaurants than any list holds.
+   Every case below sat UNCATEGORIZED on a real screen while being obvious to a
+   human — the rules now carry the generic words that actually mean something. */
+console.log("\ngeneric words, not just brand names:");
+const RC = ["Rent", "Groceries", "Eating out", "Transport", "Utilities", "Subscriptions", "Fun", "Shopping", "Health", "Taxes"]
+  .map((name, i) => ({ id: "r" + i, name }));
+const cat = (note, amt) => RC.find((c) => c.id === mod.autoCategorize(note, RC, {}, amt))?.name || null;
+const isCat = (note, want, amt = 50) => eq(note.slice(0, 34), cat(note, amt), want);
+
+isCat("In-N-Out Donuts", "Eating out");
+isCat("Tst* Bb.q Chicken Usa - L", "Eating out");
+isCat("Genesis Health Clubs (102", "Health");
+isCat("Wm Supercenter #124", "Groceries");
+isCat("Southwes 5267497973657", "Transport");
+isCat("Delta Air 0062440300652", "Transport");
+isCat("J. Crew Factory #171", "Shopping");
+isCat("Optimum 7703 Cable Pmnt Ppd Id: 9077030002", "Utilities");
+isCat("Entergy Louisiana Online Pmt", "Utilities");
+isCat("Anthropic* Claude Su Anthropic.com", "Subscriptions");
+isCat("Sq *The Blind Tiger Ruston", "Eating out");
+isCat("Marco's Pizzeria", "Eating out");
+isCat("Ruston Sushi Bar", "Eating out");
+isCat("Planet Fitness Ruston", "Health");
+/* the trap: his employer is Southwest Power Pool, and an outflow to it must not
+   become a plane ticket just because the name starts the same way */
+isCat("Southwest Power Pool Reimbursement", null);
+/* and the amount-gated rule still holds */
+eq("big venmo is rent", cat("Venmo Payment 105175 Web Id", 750), "Rent");
+eq("small venmo is nobody's guess", cat("Venmo Payment 105175 Web Id", 40), null);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
