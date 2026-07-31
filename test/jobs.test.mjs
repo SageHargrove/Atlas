@@ -1,7 +1,7 @@
 /* The classifier decides what reaches the finder at all, so a mistake here is
    invisible — a job you never see looks identical to a job that doesn't exist.
    Every case below came from a real posting in an actual poll. Run: npm test */
-import { classifyPosting, parseBoardUrl, careersUrl } from "../server/jobs.js";
+import { classifyPosting, parseBoardUrl, careersUrl, payFromText } from "../server/jobs.js";
 
 let pass = 0, fail = 0;
 const eq = (label, got, want) => {
@@ -90,6 +90,47 @@ eq("intern is a statement", sure("Security Intern"), true);
 eq("years in the body are a statement", sure("Security Engineer", { desc: "5+ years required" }), true);
 eq("a bare title states nothing", sure("Cyber Security Engineer"), false);
 eq("...and still defaults to mid", lv("Cyber Security Engineer"), "mid");
+
+/* Pay-transparency laws put a real range in a large share of postings, but
+   always in the LAST paragraph — truncating from the top threw all of them away.
+   0 of 497 live postings had a parseable range before this. */
+console.log("\npay extraction:");
+const pay = (s) => { const p = payFromText(s); return p && p.comp; };
+eq("plain range", pay("The salary range for this role is $120,000 - $150,000."), 135000);
+eq("K notation", pay("Base salary: $120K–$150K USD"), 135000);
+eq("'to' as the separator", pay("Compensation of $95,000 to $115,000 annually"), 105000);
+eq("hourly is annualised", pay("Pay range: $45.00 - $55.00 per hour"), 104000);
+eq("the widest band wins across geo tiers", pay("Salary: Zone A $100,000 - $110,000; Zone B $90,000 - $140,000"), 115000);
+/* things that look like money but are not this job's salary */
+eq("equity grant ignored", pay("We raised $50,000,000 - $80,000,000 in Series C"), null);
+eq("a single number is not a range", pay("Salary is competitive, around $130,000"), null);
+eq("no pay context, no match", pay("Save clients $100,000 - $200,000 per year in licensing"), null);
+eq("nothing at all", pay(""), null);
+
+/* When the title says nothing, the body and the pay usually do. Reported as
+   inferred, never as stated. */
+console.log("\nlevel inference for unlabelled roles:");
+const inf = (desc, extra, cat) => {
+  const r = classifyPosting({ title: "Cyber Security Engineer", location: "", desc: "", _full: desc, ...extra }, cat);
+  return r && r.level + "/" + r.levelBasis;
+};
+/* a years-of-experience figure is a statement, not an inference, so scope has to
+   be tested on text that doesn't also state years */
+eq("years in the body count as stated", inf("Requires 0-2 years of experience."), "entry/stated");
+eq("scope language reads low", inf("No prior experience needed; training provided for recent graduates."), "entry/scope");
+eq("mentoring reads high", inf("You will mentor engineers and set the technical strategy for the org."), "lead/scope");
+eq("pay reads the band", inf("The salary range for this role is $95,000 - $105,000."), "mid/pay");
+eq("low pay reads entry", inf("Base salary $70,000 - $80,000 per year."), "entry/pay");
+eq("high pay reads senior", inf("Salary range $150,000 - $175,000 annually."), "senior/pay");
+/* The same $162k midpoint is senior money at a utility and roughly new-grad
+   money at a quant shop. Without the category scale, every quant posting would
+   read as senior and drown out the roles he could actually get. */
+eq("$162k reads senior at default rates", inf("Salary range $150,000 - $175,000 annually."), "senior/pay");
+eq("...but only mid once quant pay is normalised", inf("Salary range $150,000 - $175,000 annually.", {}, "quant"), "mid/pay");
+eq("...and lead at utility rates", inf("Salary range $150,000 - $175,000 annually.", {}, "utility"), "lead/pay");
+eq("nothing to go on stays unknown", inf("We are a great place to work."), "mid/null");
+eq("a stated title is never overridden", (() => { const r = c("Senior Security Engineer", { _full: "Base salary $70,000 - $80,000." }); return r.level + "/" + r.levelBasis; })(), "senior/stated");
+eq("the full text never reaches the cache", c("Security Engineer", { _full: "x".repeat(50) })._full, undefined);
 
 console.log("\nflags:");
 const f = (title, extra) => c(title, extra);

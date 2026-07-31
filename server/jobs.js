@@ -36,39 +36,47 @@ const jget = async (url, opts = {}) => {
 
 const txt = (v) => String(v == null ? "" : v).replace(/<[^>]*>/g, " ").replace(/&[a-z]+;/gi, " ").replace(/\s+/g, " ").trim();
 
+/* Read the pay out of the FULL text, then truncate — the range is always in the
+   last paragraph, so doing this the other way round loses all of it. */
+const withPay = (full, base) => {
+  const clean = txt(full);
+  const p = payFromText(clean);
+  return { ...base, desc: clean.slice(0, DESC_CHARS), _full: clean, ...(p && base.comp == null ? p : {}) };
+};
+
 const ADAPTERS = {
   async greenhouse(src) {
     const j = await jget("https://boards-api.greenhouse.io/v1/boards/" + src.token + "/jobs?content=true");
-    return (j.jobs || []).map((x) => ({
+    return (j.jobs || []).map((x) => withPay(x.content, {
       id: "gh:" + src.token + ":" + x.id,
       title: txt(x.title),
       location: txt(x.location?.name),
       url: x.absolute_url,
       posted: (x.first_published || x.updated_at || "").slice(0, 10),
-      desc: txt(x.content).slice(0, DESC_CHARS),
+      comp: null,
     }));
   },
   async lever(src) {
     const j = await jget("https://api.lever.co/v0/postings/" + src.token + "?mode=json");
-    return (Array.isArray(j) ? j : []).map((x) => ({
+    return (Array.isArray(j) ? j : []).map((x) => withPay(x.descriptionPlain || x.description, {
       id: "lv:" + src.token + ":" + x.id,
       title: txt(x.text),
       location: txt(x.categories?.location),
       url: x.hostedUrl || x.applyUrl,
       posted: x.createdAt ? new Date(x.createdAt).toISOString().slice(0, 10) : "",
-      desc: txt(x.descriptionPlain || x.description).slice(0, DESC_CHARS),
+      comp: (x.salaryRange && Number(x.salaryRange.min) > 0)
+        ? Math.round((Number(x.salaryRange.min) + Number(x.salaryRange.max || x.salaryRange.min)) / 2) : null,
     }));
   },
   async ashby(src) {
     const j = await jget("https://api.ashbyhq.com/posting-api/job-board/" + src.token + "?includeCompensation=true");
-    return (j.jobs || []).filter((x) => x.isListed !== false).map((x) => ({
+    return (j.jobs || []).filter((x) => x.isListed !== false).map((x) => withPay(x.descriptionPlain || x.description, {
       id: "ab:" + src.token + ":" + x.id,
       title: txt(x.title),
       location: txt(x.location),
       url: x.jobUrl || x.applyUrl,
       posted: (x.publishedAt || "").slice(0, 10),
       remoteHint: !!x.isRemote,
-      desc: txt(x.descriptionPlain || x.description).slice(0, DESC_CHARS),
       comp: compFromAshby(x),
     }));
   },
@@ -86,6 +94,10 @@ const ADAPTERS = {
       });
       const rows = j.jobPostings || [];
       for (const x of rows) {
+        /* Workday's list endpoint returns only a one-line subtitle, so there is
+           no pay and no clearance text to read here — noted rather than papered
+           over, because it is why those two fields are unreliable for Workday
+           employers and the UI says so. */
         out.push({
           id: "wd:" + src.tenant + ":" + (x.bulletFields?.[0] || x.externalPath),
           title: txt(x.title),
@@ -93,6 +105,7 @@ const ADAPTERS = {
           url: base + "/en-US/" + src.site + (x.externalPath || ""),
           posted: postedFromWorkday(x.postedOn),
           desc: txt(x.subtitle),
+          thin: true,
         });
       }
       if (rows.length < 20 || out.length >= (j.total || 0)) break;
@@ -102,14 +115,55 @@ const ADAPTERS = {
   },
 };
 
+/* Pay-transparency laws (CO, NY, CA, WA, IL) mean a large share of postings now
+   state a real range — but always in the last paragraph, so truncating the
+   description from the top threw every one of them away. This runs on the FULL
+   text before truncation.
+
+   Deliberately conservative: two amounts, a separator, both landing in a sane
+   annual salary band. A single number is ignored (could be revenue, equity, a
+   bonus cap), and hourly rates are only annualised when the text says hour. */
+const PAY_RANGE = /\$\s?(\d{1,3}(?:[,.]\d{3})*(?:\.\d+)?)\s?([kK])?\s*(?:-|–|—|to|through)\s*\$?\s?(\d{1,3}(?:[,.]\d{3})*(?:\.\d+)?)\s?([kK])?/g;
+const PAY_CONTEXT = /salary|compensation|pay range|base pay|base salary|hiring range|target range|annual(?:ized)? (?:pay|salary|rate)|\bUSD\b|per hour|hourly|\/\s?hr\b/i;
+/* "Save clients $100,000 - $200,000 per year in licensing" is money the JOB
+   saves, not money it pays. Checked in a window around each match rather than
+   across the whole document, because a real posting mentions both. */
+const NOT_PAY = /\b(sav(?:e|ed|ing|ings)|revenue|arr\b|budget|funding|raised|series [a-e]\b|contract value|cost|spend|deal|portfolio|assets under)\b/i;
+export function payFromText(text) {
+  const t = String(text || "");
+  if (!t || !PAY_CONTEXT.test(t)) return null;
+  const hourly = /per hour|hourly|\/\s?hr\b|an hour/i.test(t);
+  const out = [];
+  PAY_RANGE.lastIndex = 0;
+  let m;
+  while ((m = PAY_RANGE.exec(t))) {
+    const near = t.slice(Math.max(0, m.index - 90), m.index + m[0].length + 40);
+    if (NOT_PAY.test(near) || !PAY_CONTEXT.test(near)) continue;
+    const num = (v, k) => {
+      let n = Number(String(v).replace(/,/g, ""));
+      if (k) n *= 1000;
+      /* "$120.5K" and "$120,000" both land right; a bare "120" with a k suffix
+         missing is ambiguous, so anything under 1000 is treated as hourly-ish */
+      return n;
+    };
+    let lo = num(m[1], m[2]), hi = num(m[3], m[4]);
+    if (hourly && lo < 400 && hi < 400) { lo *= 2080; hi *= 2080; }
+    if (!(lo > 0) || !(hi >= lo)) continue;
+    if (lo < 25000 || hi > 900000) continue;   // not a salary: equity, revenue, a cap
+    out.push({ lo, hi });
+  }
+  if (!out.length) return null;
+  /* several ranges usually means multiple geographic tiers — take the widest
+     span's midpoint rather than the first one, which is often the cheapest zone */
+  const best = out.sort((a, b) => (b.hi - b.lo) - (a.hi - a.lo))[0];
+  return { comp: Math.round((best.lo + best.hi) / 2), compLow: Math.round(best.lo), compHigh: Math.round(best.hi) };
+}
+
 function compFromAshby(x) {
   const t = x.compensation?.compensationTierSummary || x.compensation?.summary;
   if (!t) return null;
-  const nums = String(t).replace(/,/g, "").match(/\$?(\d{2,3})(?:\.\d+)?K|\$(\d{5,7})/gi);
-  if (!nums) return null;
-  const vals = nums.map((n) => (/k$/i.test(n) ? Number(n.replace(/[^\d.]/g, "")) * 1000 : Number(n.replace(/[^\d]/g, ""))))
-    .filter((v) => v >= 30000 && v <= 900000);
-  return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+  const p = payFromText(String(t) + " salary");   // the summary is bare, so give the context matcher something
+  return p ? p.comp : null;
 }
 /* Workday says "Posted 3 Days Ago" / "Posted Today", not a date */
 function postedFromWorkday(s) {
@@ -264,6 +318,31 @@ const ENTRY_WORDS = /\b(new ?grad|graduate|entry[- ]level|junior|jr\.?|early car
    it's a role of unknown level that got filed under mid. A new grad who filters
    to entry and sees 4 results is being told something false — most of the market
    simply doesn't label itself, and those are the ones worth reading. */
+/* When the title states nothing, the body and the pay usually do. Scope language
+   is checked first because it's what the role actually IS; pay is a decent proxy
+   but moves with geography and category, so it's the fallback rather than the
+   lead. Both are reported as inferred, never as stated — an estimate that
+   presents itself as a fact is worse than no estimate. */
+const SCOPE_HIGH = /\b(mentor|coach|set (?:the )?(?:technical )?(?:strategy|direction|vision)|define the roadmap|manage a team|lead a team|people manager|direct reports|org[- ]wide|company[- ]wide|drive alignment across|principal[- ]level)\b/i;
+const SCOPE_LOW = /\b(no prior experience|entry[- ]level|recent graduate|new graduate|0[-–]2 years|1[-–]2 years|under (?:the )?(?:direct )?supervision|will learn|training (?:will be )?provided|early[- ]career|rising (?:junior|senior)|pursuing a (?:bachelor|b\.?s\.?))\b/i;
+/* National midpoints for security work, before any category adjustment. Pay is
+   a coarse signal, so the bands are wide and deliberately overlap-free. */
+const PAY_BANDS = [[92000, "entry"], [125000, "mid"], [170000, "senior"], [225000, "lead"], [Infinity, "principal"]];
+const CAT_PAY_SCALE = { quant: 1.7, bigtech: 1.35, financial: 1.05, enterprise: 1, consulting: 0.92, cleared: 0.9, utility: 0.85 };
+
+function inferLevel(text, comp, cat) {
+  const t = String(text || "");
+  if (SCOPE_LOW.test(t)) return { level: "entry", basis: "scope" };
+  if (SCOPE_HIGH.test(t)) return { level: "lead", basis: "scope" };
+  if (comp > 0) {
+    /* normalise out the category so a $150k quant role isn't read as senior
+       when it's the going rate for a new grad there */
+    const norm = comp / (CAT_PAY_SCALE[cat] || 1);
+    for (const [ceiling, level] of PAY_BANDS) if (norm < ceiling) return { level, basis: "pay" };
+  }
+  return null;
+}
+
 function levelOf(title, years) {
   /* an internship is an internship even when titled "Security Engineering Intern,
      Senior Platform Team", so it wins over everything else in the title */
@@ -287,24 +366,39 @@ const US_STATES = /\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|M
 const US_WORDS = /\b(united states|usa|u\.s\.|remote - us|us remote|america)\b/i;
 const NON_US = /\b(india|bengaluru|bangalore|ireland|dublin|spain|barcelona|madrid|germany|berlin|munich|france|paris|netherlands|amsterdam|poland|krakow|warsaw|romania|bucharest|israel|tel aviv|japan|tokyo|singapore|australia|sydney|melbourne|canada|toronto|vancouver|ontario|london|united kingdom|uk\b|scotland|switzerland|zurich|sweden|stockholm|brazil|sao paulo|mexico|costa rica|philippines|manila|china|shanghai|korea|seoul|hong kong|taiwan|dubai|uae|south africa|argentina|chile|colombia|portugal|lisbon|italy|milan|czech|prague|hungary|budapest|denmark|copenhagen|norway|oslo|finland|helsinki|austria|vienna|belgium|brussels|greece|athens|turkey|istanbul|vietnam|thailand|malaysia|indonesia|new zealand)\b/i;
 
-export function classifyPosting(p) {
+export function classifyPosting(p, cat) {
   const title = p.title || "";
   const loc = p.location || "";
-  const hay = title + " " + loc + " " + (p.desc || "");
+  /* _full is the untruncated description, carried only this far — it never
+     reaches the cache, where 500 postings x 20KB would be a 10MB file. */
+  const full = p._full || p.desc || "";
+  const hay = title + " " + loc + " " + full;
   if (TITLE_BLOCK.test(title)) return null;
   /* a body-only mention at a security company is boilerplate — the title decides */
   if (!TITLE_HITS.test(title)) return null;
 
-  const ym = YEARS.exec(p.desc || "");
+  const ym = YEARS.exec(full);
   const years = ym ? Number(ym[1]) : null;
-  const { level, sure: levelSure } = levelOf(title, years);
+  const stated = levelOf(title, years);
+  /* Read the pay here too rather than trusting the adapter to have done it —
+     inference that silently no-ops when a caller skips a step is worse than
+     inference that doesn't exist. */
+  const comp = p.comp != null ? p.comp : (payFromText(full)?.comp ?? null);
+  /* three states, not two: stated in the title, inferred from the body or the
+     pay, or genuinely unknown. Collapsing the last two is what made 87 postings
+     silently claim to be mid-level. */
+  const guess = stated.sure ? null : inferLevel(full, comp, cat);
+  const level = guess ? guess.level : stated.level;
 
   const remote = !!p.remoteHint || REMOTE.test(loc) || REMOTE.test(title);
   const nonUs = NON_US.test(loc);
+  const { _full, ...rest } = p;
   return {
-    ...p,
+    ...rest,
+    comp,
     level,
-    levelSure,
+    levelSure: stated.sure,
+    levelBasis: stated.sure ? "stated" : guess ? guess.basis : null,
     remote,
     /* a remote listing with no country signal is assumed US-eligible rather than
        hidden — being wrong here costs a glance, hiding a real job costs the job */
@@ -351,10 +445,16 @@ export async function pollAll(extraSources = []) {
       const raw = await ADAPTERS[src.kind](src);
       const hits = [];
       for (const p of raw) {
-        const c = classifyPosting(p);
+        const c = classifyPosting(p, src.cat);
         if (!c) continue;
         const was = prevById.get(c.id);
-        hits.push({ ...c, company: src.company, cat: src.cat || "enterprise", source: src.kind, firstSeen: was?.firstSeen || today });
+        /* Age is a real signal: a req that has sat open for months is often
+           filled, frozen, or an evergreen pipeline posting rather than a live
+           opening. Surfaced, not hidden — some of them are genuinely still open. */
+        const seen = c.posted || was?.firstSeen || today;
+        const days = Math.round((Date.parse(today) - Date.parse(seen)) / 86400000);
+        hits.push({ ...c, company: src.company, cat: src.cat || "enterprise", source: src.kind,
+          firstSeen: was?.firstSeen || today, ageDays: Number.isFinite(days) && days >= 0 ? days : null });
       }
       kept.push(...hits);
       report[key] = { ok: true, scanned: raw.length, matched: hits.length };
