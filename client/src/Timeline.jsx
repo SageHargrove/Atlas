@@ -1,17 +1,21 @@
-import React, { useMemo, useState } from "react";
-import { money, parseWindow, compoundGap, MON_FULL, absMonth, monthLabel } from "./careerData.js";
+import React, { useMemo } from "react";
+import { parseWindow, compoundGap, MON_FULL, absMonth, monthLabel } from "./careerData.js";
 export { compoundGap };
 
 /* ------------------------------------------------------------------
    Timeline — when to apply, not just where.
 
-   The seed list already knew that Optiv opens Aug–Oct and the tier-3
-   enterprises open Jan–Apr; that knowledge sat in a free-text string on
-   each row where nothing could act on it. This parses it, anchors it to
-   your graduation date, and sorts the whole list into "this is late",
-   "this is open", "this opens in five weeks".
+   Previously drawn as a horizontal axis with milestone dots alternating
+   above and below it. That shape looked like a plan and read like a
+   decoration: the labels collided, the interesting part of the year
+   occupied a fifth of the width, and "what should I do this week" was
+   nowhere on it.
 
-   Campus recruiting is the reason this matters: full-time new-grad
+   This is the same data as a dated list, nearest first. A timeline you
+   read top to bottom can carry a status and an action per row, which is
+   the entire point — the horizontal version had room for neither.
+
+   Campus recruiting is why any of it matters: full-time new-grad
    pipelines for a May graduate open the PREVIOUS August through October
    and close before Thanksgiving. Miss that quarter and the good ones
    aren't hiring you off-cycle in April, however good your resume is.
@@ -34,19 +38,7 @@ function bucketOf(app, now) {
   return { key: "soon", order: w.from - now <= 2 ? 2 : 3, w };
 }
 
-const BUCKETS = {
-  missed: { title: "Window has closed", color: "var(--down)", note: "Not lost — a rolling req or a referral still works, but the campus pipeline for these has moved on." },
-  closing: { title: "Closing this month", color: "var(--down)", note: "Apply this week. These stop taking new-grad applications at the end of the month." },
-  open: { title: "Open now", color: "var(--up)", note: "Taking applications today. This is where your effort should go." },
-  soon: { title: "Opens within 2 months", color: "var(--gold)", note: "Get the tailored resume and cover letter ready now so you're applying in week one, not week six." },
-  later: { title: "Later in the cycle", color: "var(--faint)", note: "Nothing to do yet. They'll move up as their month arrives." },
-  undated: { title: "No window set", color: "var(--faint)", note: "Add a hiring window on these and they'll sort themselves into the plan." },
-  done: { title: "Already in flight", color: "var(--acc)", note: "" },
-};
-
-export default function Timeline({ S, apps, setCareer, setEditing }) {
-  const [open, setOpen] = useState(true);
-  const [shown, setShown] = useState({});   // per-bucket row cap
+export default function Timeline({ S, apps, setCareer, onShowOpen }) {
   const now = absNow(new Date());
   const grad = S.gradMonth || "2027-05";
   const gradAbs = Number(grad.slice(0, 4)) * 12 + (Number(grad.slice(5, 7)) - 1);
@@ -59,102 +51,118 @@ export default function Timeline({ S, apps, setCareer, setEditing }) {
       const key = b.key === "soon" && b.order === 3 ? "later" : b.key;
       g[key].push({ ...a, w: b.w });
     }
-    for (const k of Object.keys(g)) g[k].sort((x, y) => (x.w?.from ?? 9e9) - (y.w?.from ?? 9e9) || String(x.company).localeCompare(String(y.company)));
     return g;
   }, [apps, now]);
 
-  /* The one number that actually drives urgency: months of campus-recruiting
-     season left before you graduate. */
-  const seasonStart = (gradAbs - 9);            // the August before a May graduation
-  const seasonEnd = (gradAbs - 6);              // through that November
+  const seasonStart = gradAbs - 9;            // the August before a May graduation
+  const seasonEnd = gradAbs - 6;              // through that November
   const inSeason = now >= seasonStart && now <= seasonEnd;
-  const toSeason = seasonStart - now;
-
   const live = groups.open.length + groups.closing.length;
   const applied = apps.filter((a) => a.status !== "Target" && a.status !== "Rejected" && a.status !== "Withdrawn").length;
 
   if (!apps.length) return null;
 
-  /* The window that actually governs a May graduate: pipelines open the
-     previous August and mostly close by Thanksgiving. Everything on the axis is
-     positioned relative to that, because it is the only fixed deadline here. */
-  const from = seasonStart - 2, to = gradAbs + 1;
-  const span = Math.max(1, to - from);
-  const pct = (abs) => Math.max(0, Math.min(100, ((abs - from) / span) * 100));
-
-  /* Milestones you can tick off. Each one derives its "done" from the data
-     rather than from a checkbox, so it can't say you've done something you
-     haven't — and the ones you genuinely can't automate are yours to mark. */
-  const done = S.milestones || {};
+  const doneMap = S.milestones || {};
   const toggle = (k) => setCareer((c) => ({ ...c, settings: { ...c.settings,
     milestones: { ...(c.settings.milestones || {}), [k]: !(c.settings.milestones || {})[k] } } }));
-  const MILES = [
-    { k: "resume", at: seasonStart - 1, label: "Resume finished", auto: (S.resume || "").trim().length > 400 },
-    { k: "projects", at: seasonStart - 1, label: "Projects written up", auto: (S.projects || []).some((p) => (p.pitch || "").trim()) },
-    { k: "open", at: seasonStart, label: "Window opens", auto: now >= seasonStart },
-    { k: "first10", at: seasonStart + 1, label: "10 applications out", auto: applied >= 10 },
-    { k: "close", at: seasonEnd, label: "Most pipelines close", auto: now > seasonEnd },
-    { k: "offer", at: gradAbs - 3, label: "Decision time", auto: apps.some((a) => a.status === "Offer") },
-  ];
+
+  /* Each row derives "done" from the data where it can, so it cannot claim you
+     finished something you haven't. The rest are yours to tick. `at` is the
+     month it belongs to; rows are ordered by it and the current one is called
+     out rather than being one dot among six. */
+  const rows = [
+    { k: "resume", at: seasonStart - 1, label: "Resume finished",
+      auto: (S.resume || "").trim().length > 400,
+      todo: "Paste your resume into your profile — every score in the finder is off until it's there." },
+    { k: "projects", at: seasonStart - 1, label: "Projects written up",
+      auto: (S.projects || []).some((p) => (p.pitch || "").trim()),
+      todo: "Write a one-line pitch for each project. This is what you'll say out loud in an interview." },
+    { k: "open", at: seasonStart, label: "New-grad window opens", auto: now >= seasonStart,
+      todo: "", detail: live ? live + " target" + (live === 1 ? "" : "s") + " taking applications today" : "" },
+    { k: "first10", at: seasonStart + 1, label: "10 applications out", auto: applied >= 10,
+      progress: [applied, 10],
+      todo: "Being in the pile before it closes beats a perfect resume submitted late." },
+    { k: "close", at: seasonEnd, label: "Most pipelines close", auto: now > seasonEnd,
+      todo: "Anything not applied to by here is a rolling-req or referral play." },
+    { k: "offer", at: gradAbs - 3, label: "Decision time", auto: apps.some((a) => a.status === "Offer"),
+      todo: "Compare offers against your SPP floor before answering anyone." },
+    { k: "grad", at: gradAbs, label: "Graduate", auto: now >= gradAbs, todo: "" },
+  ].sort((a, b) => a.at - b.at);
+
+  /* The row you are living in right now — everything above it is history,
+     everything below is upcoming. */
+  const currentIdx = rows.reduce((best, r, i) => (r.at <= now ? i : best), 0);
+
+  const monthsLeft = seasonEnd - now;
 
   return (
     <>
-      <div className="note" style={{ marginTop: 0, color: inSeason ? "var(--gold)" : undefined }}>
-        {inSeason ? (
-          <>
-            <b>You're inside the new-grad window.</b> Full-time pipelines for a {MON_FULL[gradAbs % 12]} {Math.floor(gradAbs / 12)} graduate
-            open the previous August and mostly close by Thanksgiving — {seasonEnd - now === 0 ? "this is the last month" : (seasonEnd - now) + " months left"}.
-          </>
-        ) : toSeason > 0 ? (
-          <>Opens in <b>{toSeason} month{toSeason === 1 ? "" : "s"}</b> ({label(seasonStart)}). Use the time on resumes and
-          projects — once it opens, speed matters more than polish.</>
-        ) : (
-          <>The main campus window for {label(gradAbs)} has passed. Rolling reqs, referrals and smaller employers are the route now.</>
-        )}
-      </div>
-
-      <div className="row" style={{ gap: 8, marginTop: 8 }}>
-        <label className="note" style={{ margin: 0 }}>Graduating</label>
-        <input className="in mono" type="month" style={{ width: 140 }} value={grad}
-          onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, gradMonth: e.target.value } }))} />
-      </div>
-
-      <div className="tlwrap">
-        <div className="tl">
-          <div className="axis" />
-          <div className="season" style={{ left: pct(seasonStart) + "%", width: (pct(seasonEnd + 1) - pct(seasonStart)) + "%" }}
-            title="Full-time new-grad recruiting for your graduation year" />
-          <div className="now" style={{ left: pct(now) + "%" }} title="Today" />
-          {Array.from({ length: span + 1 }, (_, i) => from + i).filter((m) => m % 3 === 0).map((m) => (
-            <span className="tick" key={m} style={{ left: pct(m) + "%" }}>{MON_FULL[((m % 12) + 12) % 12].slice(0, 3)} {String(Math.floor(m / 12)).slice(2)}</span>
-          ))}
-          {MILES.map((m, i) => {
-            const hit = m.auto || done[m.k];
-            const color = hit ? "var(--up)" : m.at < now ? "var(--down)" : "var(--faint)";
-            return (
-              <span className="mile" key={m.k} style={{ left: pct(m.at) + "%", top: i % 2 ? 70 : 4 }}>
-                {i % 2 === 0 && <div className="mlabel" style={{ color, marginBottom: 3 }}>{m.label}</div>}
-                <button className="dot" style={{ background: color, cursor: m.auto ? "default" : "pointer", padding: 0 }}
-                  title={m.auto ? "Done — Atlas can see this" : hit ? "Marked done — click to undo" : "Click when you've done this"}
-                  onClick={() => !m.auto && toggle(m.k)} />
-                {i % 2 === 1 && <div className="mlabel" style={{ color }}>{m.label}</div>}
-              </span>
-            );
-          })}
+      <div className="tlhead">
+        <div className={"tlurgent " + (inSeason ? "on" : "")}>
+          {inSeason ? (
+            <>
+              <b>You're inside the new-grad window.</b> Pipelines for a {MON_FULL[gradAbs % 12]} {Math.floor(gradAbs / 12)} graduate
+              close by Thanksgiving — <b>{monthsLeft <= 0 ? "this is the last month" : monthsLeft + " month" + (monthsLeft === 1 ? "" : "s") + " left"}</b>.
+            </>
+          ) : seasonStart - now > 0 ? (
+            <>Window opens in <b>{seasonStart - now} month{seasonStart - now === 1 ? "" : "s"}</b> ({label(seasonStart)}).
+            Spend it on the resume and projects — once it opens, speed beats polish.</>
+          ) : (
+            <>The main campus window for {label(gradAbs)} has passed. Rolling reqs, referrals and smaller employers are the route now.</>
+          )}
         </div>
+        <label className="row" style={{ gap: 7, margin: 0, flexWrap: "nowrap" }}>
+          <span className="note" style={{ margin: 0, whiteSpace: "nowrap" }}>Graduating</span>
+          <input className="in mono" type="month" style={{ width: 138 }} value={grad}
+            onChange={(e) => setCareer((c) => ({ ...c, settings: { ...c.settings, gradMonth: e.target.value } }))} />
+        </label>
       </div>
 
-      <div className="grid4" style={{ marginTop: 6 }}>
-        <div><div className="sub">Open right now</div><div className="mono" style={{ fontSize: 19, fontWeight: 600, color: live ? "var(--up)" : undefined }}>{live}</div></div>
-        <div><div className="sub">Opens soon</div><div className="mono" style={{ fontSize: 19, fontWeight: 600 }}>{groups.soon.length}</div></div>
-        <div><div className="sub">Applied</div><div className="mono" style={{ fontSize: 19, fontWeight: 600, color: "var(--acc)" }}>{applied}</div></div>
-        <div><div className="sub">Missed window</div><div className="mono" style={{ fontSize: 19, fontWeight: 600, color: groups.missed.length ? "var(--down)" : undefined }}>{groups.missed.length}</div></div>
+      {/* four counts, above the list, because they're the summary of it */}
+      <div className="tlstats">
+        <button className="tlstat" onClick={() => onShowOpen && onShowOpen("open")} title="Show these in the finder">
+          <span className="tlsn" style={{ color: live ? "var(--up)" : "var(--faint)" }}>{live}</span>
+          <span className="tlsl">Open right now</span>
+        </button>
+        <div className="tlstat"><span className="tlsn">{groups.soon.length}</span><span className="tlsl">Opens soon</span></div>
+        <div className="tlstat"><span className="tlsn" style={{ color: applied ? "var(--acc)" : "var(--faint)" }}>{applied}</span><span className="tlsl">Applied</span></div>
+        <div className="tlstat"><span className="tlsn" style={{ color: groups.missed.length ? "var(--down)" : "var(--faint)" }}>{groups.missed.length}</span><span className="tlsl">Missed window</span></div>
       </div>
+
+      <ol className="tline">
+        {rows.map((r, i) => {
+          const hit = r.auto || doneMap[r.k];
+          const isNow = i === currentIdx;
+          const past = r.at < now;
+          const state = hit ? "done" : past ? "late" : "todo";
+          return (
+            <li className={"tli " + state + (isNow ? " now" : "")} key={r.k}>
+              <div className="tlwhen">{isNow ? "NOW" : MON_FULL[((r.at % 12) + 12) % 12].slice(0, 3).toUpperCase()}
+                <span className="tlyr">{r.at === now ? "" : String(Math.floor(r.at / 12)).slice(2)}</span></div>
+              <button className="tlmark" disabled={r.auto}
+                title={r.auto ? "Atlas can see this is done" : hit ? "Marked done — click to undo" : "Click when you've done this"}
+                onClick={() => !r.auto && toggle(r.k)}>{hit ? "✓" : ""}</button>
+              <div className="tlbody">
+                <div className="tlname">{r.label}</div>
+                {r.progress && (
+                  <div className="tlprog" title={r.progress[0] + " of " + r.progress[1]}>
+                    <div className="tlprogf" style={{ width: Math.min(100, (r.progress[0] / r.progress[1]) * 100) + "%" }} />
+                    <span className="tlprogn">{r.progress[0]}/{r.progress[1]}</span>
+                  </div>
+                )}
+                {r.detail && <div className="tlsub">{r.detail}</div>}
+                {!hit && r.todo && <div className="tlsub todo">{r.todo}</div>}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
 
       {live > 0 && applied === 0 && (
         <div className="note bad" style={{ marginTop: 8 }}>
           {live} target{live === 1 ? " is" : "s are"} open today and you haven't applied to anything. That's the whole game —
-          the tailored resume matters far less than being in the pile before it closes. Filter the finder to <b>Open now</b> to see them.
+          the tailored resume matters far less than being in the pile before it closes.
+          {onShowOpen && <> <button className="lnk" onClick={() => onShowOpen("open")}>Show them</button>.</>}
         </div>
       )}
       {!!groups.missed.length && (

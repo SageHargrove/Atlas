@@ -932,7 +932,7 @@ const DEBT = ["Credit card", "Auto loan", "Student loan", "Mortgage", "Other deb
    (which were already imported as spending), and counting the card credit as income
    fabricates income. Same story for checking→savings moves. These are classified
    as kind "xfer" — kept in the ledger, excluded from income/spending math. */
-const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|payment to .{0,28}(?:card|loan|mortgage)|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|automatic payment.{0,6}thank|thank you.*payment|internet payment|jpmorgan chase bank|e-?payment\b|\bepay\b|directpay/i;
+const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|payment to .{0,28}(?:card|loan|mortgage)|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|automatic payment.{0,6}thank|thank you.*payment|internet payment|jpmorgan chase bank|\be-?payment\b|\bepay\b|directpay|fid(?:elity)? bkg|\bmoneyline\b|\bwebull\w*|\brobinhood\w*|\bschwab\w*|\bvanguard\b|e\*trade|\bacorns\b|\bbetterment\b|\bwealthfront\w*|\bcoinbase\w*|m1 ?finance|\btd ameritrade|interactive brokers/i;
 
 /* Classify a synced transaction. Inflows on debt accounts (card/loan payments
    arriving — or the odd refund) are never income. */

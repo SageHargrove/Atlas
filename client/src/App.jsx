@@ -2034,7 +2034,11 @@ function FinanceHQ({ config }) {
    The server classifies NEW transactions at sync time; this covers everything
    already on the books plus CSV imports. */
 
-const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|payment to .{0,28}(?:card|loan|mortgage)|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|automatic payment.{0,6}thank|thank you.*payment|internet payment|jpmorgan chase bank|e-?payment\b|\bepay\b|directpay/i;
+/* Moving money into a brokerage is not spending — it's your net worth changing
+   shape. Counting a $3,000 Fidelity contribution as an expense made March read
+   as a $12k month and poisoned every average built on it. */
+const IMPORT_CAP = 2000;   // a full year of a busy account, not a third of one
+const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|payment to .{0,28}(?:card|loan|mortgage)|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|automatic payment.{0,6}thank|thank you.*payment|internet payment|jpmorgan chase bank|\be-?payment\b|\bepay\b|directpay|fid(?:elity)? bkg|\bmoneyline\b|\bwebull\w*|\brobinhood\w*|\bschwab\w*|\bvanguard\b|e\*trade|\bacorns\b|\bbetterment\b|\bwealthfront\w*|\bcoinbase\w*|m1 ?finance|\btd ameritrade|interactive brokers/i;
 const CAT_RULES = [
   /* big p2p payments are almost always rent/housing — small ones could be anything.
      The third element is a minimum $ amount for the rule to apply. */
@@ -2165,10 +2169,24 @@ function BankImport({ d, setD, onClose }) {
     reader.onload = () => {
       const parsed = bankRows(String(reader.result));
       if (!parsed.length) { setErr("Couldn't find date/description/amount columns — is this a transaction export CSV from your bank?"); return; }
-      const existing = new Set(d.txns.map((t) => t.date + "|" + t.amount + "|" + (t.note || "").toLowerCase()));
+      /* Duplicate detection used to require an EXACT note match, which is the one
+         thing that never survives crossing sources: the same Venmo payment reads
+         "VENMO            PAYMENT    105180" in a Chase CSV and "VENMO PAYMENT
+         105180 WEB ID: 3264" over SimpleFIN. It caught nothing, and importing a
+         CSV over synced months silently doubled every transaction in them.
+         Amount plus a few days' drift is the part that actually holds. */
+      const cents = (n) => Math.round(Math.abs(Number(n) || 0) * 100);
+      const byAmount = new Map();
+      d.txns.forEach((t) => {
+        const k = cents(t.amount);
+        if (!byAmount.has(k)) byAmount.set(k, []);
+        byAmount.get(k).push(t.date);
+      });
+      const isDup = (r) => (byAmount.get(cents(r.amount)) || [])
+        .some((dt) => Math.abs((Date.parse(dt) - Date.parse(r.date)) / 86400000) <= 3);
       const memory = buildMerchantMemory(d.txns, d.cats);
-      setRows(parsed.slice(0, 250).map((r) => {
-        const dup = existing.has(r.date + "|" + r.amount + "|" + r.desc.toLowerCase());
+      setRows(parsed.slice(0, IMPORT_CAP).map((r) => {
+        const dup = isDup(r);
         const xfer = !r.credit && XFER_RE.test(r.desc); // card payments / account moves — not spending
         return {
           ...r, dup, xfer,
