@@ -172,7 +172,7 @@ function appAsRow(a, S) {
   };
 }
 
-export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header, focusCompany, onFocused }) {
+export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header, focusCompany, onFocused, focusSource, onSourceFocused }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -234,6 +234,17 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     onFocused?.();
   }, [focusCompany]);
+  /* The timeline counts targets whose hiring window is open; the finder has no
+     window filter of its own, so "show them" means: clear everything, switch to
+     the tracked targets, and put them on screen. */
+  useEffect(() => {
+    if (!focusSource) return;
+    setQ(""); setSource(focusSource); setLevels(new Set()); setFams(new Set()); setCats(new Set());
+    setMinPay(0); setOnlyNew(false); setRemoteOnly(false); setIamOnly(false); setHideStale(false); setFitCities(false);
+    boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    onSourceFocused?.();
+  }, [focusSource]);
+
   /* Stamp the visit AFTER the first render, so this session still sees its own
      "New" badges and only the next visit resets them. */
   useEffect(() => { if (data) { const t = setTimeout(markSeen, 2500); return () => clearTimeout(t); } }, [data]);

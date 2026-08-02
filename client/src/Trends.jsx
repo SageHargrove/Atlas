@@ -121,12 +121,9 @@ export default function Trends({ d }) {
       first: keys[0], last: keys[keys.length - 1] };
   }, [d.txns, d.cats, thisMonth]);
 
-  if (!model) return (
-    <div className="card">
-      <h3>Trends</h3>
-      <div className="note">Nothing to compare yet — this fills in once there are categorized expenses.</div>
-    </div>
-  );
+  /* No card and no heading of its own: the caller wraps this in a fold that
+     supplies both. Rendering them here too showed the title twice. */
+  if (!model) return <div className="note">Nothing to compare yet — this fills in once there are expenses recorded.</div>;
 
   const { months, complete, avg, median, cur, catRows, years, yoy } = model;
   const shown = months.slice(-14);
@@ -144,15 +141,12 @@ export default function Trends({ d }) {
   const thin = complete.length < 2;
 
   return (
-    <div className="card">
-      <div className="foldhead" style={{ cursor: "default" }}>
-        <h3>Trends</h3>
-        <div className="mrow" style={{ margin: 0 }}>
-          <select className="in" style={{ width: 148 }} value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option value="month">Month by month</option>
-            <option value="year">Year over year</option>
-          </select>
-        </div>
+    <>
+      <div className="mrow" style={{ margin: "0 0 6px", justifyContent: "flex-start" }}>
+        <select className="in" style={{ width: 152 }} value={mode} onChange={(e) => setMode(e.target.value)}>
+          <option value="month">Month by month</option>
+          <option value="year">Year over year</option>
+        </select>
       </div>
 
       {thin && (
@@ -166,13 +160,18 @@ export default function Trends({ d }) {
         <>
           {/* Hero: the one number that answers "is this month normal" */}
           <div className="trow">
-            <Stat label={longLabel(thisMonth) + " so far"} value={money(curTotal)} />
+            {/* On the 1st or 2nd of a month "so far: $0" against "typical:
+                $2,705" reads as a catastrophic drop rather than as "the month
+                just started". Say the day count instead of a scary delta. */}
+            <Stat label={longLabel(thisMonth) + (curTotal ? " so far" : "")}
+              value={curTotal ? money(curTotal) : "—"}
+              sub={curTotal ? "" : "nothing recorded yet this month"} />
             <Stat label={"Typical month" + (complete.length ? " (" + complete.length + " complete)" : "")}
               value={money(median ?? avg)} sub={avg != null && median != null && Math.abs(avg - median) > 1 ? "avg " + money(avg) : ""} />
             <Stat label="Against typical"
-              value={vsAvg == null ? "—" : signed(vsAvg)}
-              tone={vsAvg == null ? null : vsAvg > 0 ? "down" : "up"}
-              sub={vsAvg == null ? "" : vsAvg > 0 ? "more than usual" : "less than usual"} />
+              value={!curTotal || vsAvg == null ? "—" : signed(vsAvg)}
+              tone={!curTotal || vsAvg == null ? null : vsAvg > 0 ? "down" : "up"}
+              sub={!curTotal ? "too early to compare" : vsAvg == null ? "" : vsAvg > 0 ? "more than usual" : "less than usual"} />
           </div>
 
           {/* Single series, so one hue and no legend — the heading names it. */}
@@ -256,7 +255,7 @@ export default function Trends({ d }) {
           come back once there's a full year, or use <b>Backfill history</b> on the Accounts tab to reach further back.
         </div>
       )}
-    </div>
+    </>
   );
 }
 

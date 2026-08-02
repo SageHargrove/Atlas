@@ -4,6 +4,7 @@ import { startRegistration, startAuthentication, browserSupportsWebAuthn } from 
 import Career from "./Career.jsx";
 import TaxCard from "./TaxCard.jsx";
 import Trends from "./Trends.jsx";
+import Fold, { FoldWrap } from "./Fold.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -388,6 +389,18 @@ const CSS = `
 .fh .foldhead{ display:flex; justify-content:space-between; align-items:center; width:100%; background:none;
   border:none; padding:0; cursor:pointer; color:var(--text); font:inherit; text-align:left; }
 .fh .foldhead:hover h3{ color:var(--acc); }
+.fh .foldright{ font-family:'JetBrains Mono',monospace; font-size:12.5px; color:var(--muted); white-space:nowrap; }
+/* a wrapped section's own card chrome and heading are redundant inside a fold */
+.fh .foldwrap > .foldbody{ margin-top:4px; }
+.fh .foldwrap > .foldbody > .card{ background:none; border:none; box-shadow:none; padding:0; margin:0; }
+.fh .foldwrap > .foldbody > .card > h3:first-child{ display:none; }
+.fh .foldwrap > .foldbody > .card + .card{ margin-top:14px; }
+/* the at-a-glance strip above a page of folds, so it doesn't open onto nothing */
+.fh .glance{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:12px; }
+.fh .gtile{ background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:9px 12px; }
+.fh .gtl{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
+.fh .gtv{ font-family:'JetBrains Mono',monospace; font-size:17px; font-weight:600; margin-top:2px; }
+.fh .gts{ font-size:11px; color:var(--muted); margin-top:1px; }
 
 /* ---- Trends: spending over time ----
    One series, so one hue and no legend — the heading names it. The month in
@@ -399,8 +412,10 @@ const CSS = `
 .fh .tstatv{ font-family:'JetBrains Mono',monospace; font-size:21px; font-weight:600; margin-top:3px; letter-spacing:-.02em; }
 .fh .tstats{ font-size:11.5px; color:var(--muted); margin-top:1px; }
 .fh .tlabel{ font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); margin:12px 0 7px; }
-.fh .bars{ display:flex; align-items:flex-end; gap:6px; height:186px; overflow-x:auto; padding-bottom:2px; }
-.fh .bcol{ flex:1 0 42px; display:flex; flex-direction:column; align-items:center; height:100%; }
+/* Three months must not stretch to fill 1400px — a bar's width is not data, and
+   letting it grow implies one. Cap it and left-align instead. */
+.fh .bars{ display:flex; align-items:flex-end; gap:8px; height:186px; overflow-x:auto; padding-bottom:2px; justify-content:flex-start; }
+.fh .bcol{ flex:0 1 78px; max-width:110px; min-width:38px; display:flex; flex-direction:column; align-items:center; height:100%; }
 .fh .bval{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); height:13px; white-space:nowrap; }
 .fh .btrack{ flex:1; width:100%; display:flex; align-items:flex-end; min-height:0; }
 .fh .bfill{ width:100%; background:var(--acc); border-radius:4px 4px 0 0; transition:height .18s ease; }
@@ -416,8 +431,8 @@ const CSS = `
 .fh .ttr:hover{ background:var(--panel2); }
 .fh .tname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .fh .ttx{ border-top:1px solid var(--line); background:var(--panel2); padding:10px 12px; }
-.fh .spark{ display:flex; align-items:flex-end; gap:4px; height:62px; }
-.fh .scol{ flex:1 0 20px; display:flex; flex-direction:column; height:100%; }
+.fh .spark{ display:flex; align-items:flex-end; gap:3px; height:38px; max-width:420px; }
+.fh .scol{ flex:0 1 26px; min-width:10px; display:flex; flex-direction:column; height:100%; }
 .fh .strack{ flex:1; display:flex; align-items:flex-end; min-height:0; }
 .fh .sfill{ width:100%; background:var(--acc); border-radius:3px 3px 0 0; }
 .fh .sfill.partial{ background:var(--acc-soft); border:1px solid var(--acc); border-bottom:none; }
@@ -427,16 +442,42 @@ const CSS = `
   .fh .tth span:nth-child(3),.fh .ttr span:nth-child(3){ display:none; }
 }
 
-/* an actual timeline: months across, your window shaded, milestones on it */
-.fh .tlwrap{ overflow-x:auto; padding-bottom:6px; }
-.fh .tl{ position:relative; min-width:620px; height:112px; margin-top:6px; }
-.fh .tl .axis{ position:absolute; left:0; right:0; top:52px; height:2px; background:var(--line2); }
-.fh .tl .season{ position:absolute; top:40px; height:26px; border-radius:6px; background:var(--acc-soft); border:1px solid var(--acc); }
-.fh .tl .tick{ position:absolute; top:58px; transform:translateX(-50%); font-size:10px; color:var(--faint); white-space:nowrap; }
-.fh .tl .now{ position:absolute; top:26px; bottom:22px; width:2px; background:var(--gold); }
-.fh .tl .mile{ position:absolute; transform:translateX(-50%); text-align:center; width:120px; }
-.fh .tl .dot{ width:13px; height:13px; border-radius:50%; margin:0 auto; border:2px solid var(--panel); }
-.fh .tl .mlabel{ font-size:10.5px; line-height:1.25; margin-top:3px; color:var(--faint); }
+/* The timeline reads top to bottom. The horizontal version spent four fifths
+   of its width on months where nothing happens, and had nowhere to put the one
+   thing that matters per row — what to do about it. */
+.fh .tlhead{ display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap; }
+.fh .tlurgent{ flex:1; min-width:260px; font-size:12.5px; line-height:1.5; color:var(--muted); }
+.fh .tlurgent.on{ color:var(--gold); }
+.fh .tlstats{ display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin:12px 0 4px; }
+.fh .tlstat{ background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:8px 11px;
+  display:flex; flex-direction:column; gap:1px; text-align:left; font:inherit; }
+button.tlstat{ cursor:pointer; }
+button.tlstat:hover{ border-color:var(--acc); }
+.fh .tlsn{ font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:600; line-height:1.1; }
+.fh .tlsl{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
+.fh .tline{ list-style:none; margin:14px 0 0; padding:0; position:relative; }
+/* the spine: one line down the gutter, behind the markers */
+.fh .tline::before{ content:""; position:absolute; left:53px; top:10px; bottom:14px; width:2px; background:var(--line); }
+.fh .tli{ display:grid; grid-template-columns:44px 20px 1fr; gap:0 12px; align-items:start; padding:7px 0; position:relative; }
+.fh .tlwhen{ font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:.04em; color:var(--faint);
+  text-align:right; padding-top:2px; white-space:nowrap; }
+.fh .tlyr{ display:block; font-size:9.5px; opacity:.75; }
+.fh .tli.now .tlwhen{ color:var(--gold); font-weight:700; }
+.fh .tlmark{ width:16px; height:16px; border-radius:50%; border:2px solid var(--line2); background:var(--panel);
+  margin-top:1px; padding:0; cursor:pointer; font-size:10px; line-height:1; color:var(--panel); z-index:1; }
+.fh .tlmark:disabled{ cursor:default; }
+.fh .tli.done .tlmark{ background:var(--up); border-color:var(--up); color:var(--bg); }
+.fh .tli.late .tlmark{ border-color:var(--down); }
+.fh .tli.now .tlmark{ border-color:var(--gold); box-shadow:0 0 0 4px var(--gold-soft); }
+.fh .tlname{ font-size:13.5px; font-weight:600; line-height:1.3; }
+.fh .tli.done .tlname{ color:var(--muted); font-weight:500; }
+.fh .tlsub{ font-size:11.5px; color:var(--faint); line-height:1.45; margin-top:2px; }
+.fh .tlsub.todo{ color:var(--muted); }
+.fh .tlprog{ position:relative; height:14px; border-radius:7px; background:var(--panel2); border:1px solid var(--line);
+  margin-top:5px; max-width:230px; overflow:hidden; }
+.fh .tlprogf{ height:100%; background:var(--acc); border-radius:7px 0 0 7px; }
+.fh .tlprogn{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--text); }
 .fh .tbl{ width:100%; border-collapse:collapse; font-size:13px; }
 .fh .tbl th{ text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); font-weight:600; padding:6px 10px 6px 0; border-bottom:1px solid var(--line); white-space:nowrap; }
 .fh .tbl td{ padding:8px 10px 8px 0; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -1039,6 +1080,8 @@ function Budget({ d, setD, config }) {
   const [q, setQ] = useState("");
   const [fCat, setFCat] = useState("");
   const [showAllTx, setShowAllTx] = useState(false);
+  /* the longest thing on the tab by far — open on demand */
+  const [txOpen, setTxOpen] = useState(false);
 
   const monthTxns = d.txns.filter((t) => (t.date || "").startsWith(month)).sort((a, b) => b.date.localeCompare(a.date));
   /* search spans ALL months (find that one charge from last spring); month view otherwise */
@@ -1167,7 +1210,10 @@ function Budget({ d, setD, config }) {
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>{searching ? "Search — all months" : "Transactions — " + monthLabel(month)}</h3>
+          <button className="foldhead" style={{ width: "auto" }} onClick={() => setTxOpen((v) => !v)}>
+            <h3 style={{ margin: 0 }}>{searching ? "Search — all months" : "Transactions — " + monthLabel(month)}
+              <span className="note" style={{ margin: "0 0 0 8px" }}>{txOpen ? "▴" : "▾"}</span></h3>
+          </button>
           <span className="row" style={{ gap: 6 }}>
             {config?.aiEnabled && monthTxns.some((t) => !t.catId && t.kind === "out") && (
               <button className="btn small" disabled={catBusy} onClick={async () => {
@@ -1190,6 +1236,7 @@ function Budget({ d, setD, config }) {
             <button className="btn small" onClick={() => setShowImport(true)}>Import bank CSV</button>
           </span>
         </div>
+        {txOpen && (<>
         {impMsg && <div className="note good">{impMsg}</div>}
         <div className="row" style={{ margin: "8px 0 4px" }}>
           <input className="in" style={{ flex: 2, minWidth: 140, padding: "5px 9px" }} placeholder="Search notes, amounts, categories…"
@@ -1269,10 +1316,15 @@ function Budget({ d, setD, config }) {
           </div>
         )}
         {!shownTxns.length && <div className="note">{searching ? "Nothing matches this search." : "No transactions this month yet — log spending above as it happens, or import your bank's CSV."}</div>}
+        </>)}
       </div>
 
-      <Recurring d={d} setD={setD} />
-      <SubscriptionRadar d={d} setD={setD} />
+      <FoldWrap title="Recurring" sub="bills and subscriptions you've told Atlas about">
+        <Recurring d={d} setD={setD} />
+      </FoldWrap>
+      <FoldWrap title="Subscription radar" sub="charges that repeat on their own">
+        <SubscriptionRadar d={d} setD={setD} />
+      </FoldWrap>
 
       {showImport && (
         <BankImport d={d} setD={setD} onClose={(n) => {
@@ -1446,12 +1498,40 @@ function Plan({ d, setD }) {
         Set the strategy here, then create the goal there for anything you're actually saving toward.
       </div>
 
-      <OrderOfOps d={d} k401ok={matchCap > 0 && contribPct >= matchCap} />
+      {/* You asked not to open onto a wall of closed dropdowns — this is the
+          answer each fold would have given, so you only open the one you want. */}
+      <div className="glance">
+        <div className="gtile">
+          <div className="gtl">Emergency fund</div>
+          <div className="gtv" style={{ color: efTarget > 0 && liq >= efTarget ? "var(--up)" : undefined }}>{Math.round(efPct)}%</div>
+          <div className="gts">{efTarget > 0 ? fmt(liq) + " of " + fmt(efTarget) : "set your monthly expenses"}</div>
+        </div>
+        <div className="gtile">
+          <div className="gtl">401k match</div>
+          <div className="gtv" style={{ color: missing > 0 ? "var(--down)" : "var(--up)" }}>{missing > 0 ? fmt(missing) : "✓"}</div>
+          <div className="gts">{missing > 0 ? "left on the table each year" : "capturing the full match"}</div>
+        </div>
+        <div className="gtile">
+          <div className="gtl">Debts</div>
+          <div className="gtv">{fmt(d.accounts.filter((a) => DEBT_TYPES.includes(a.type)).reduce((x, a) => x + (Number(a.balance) || 0), 0))}</div>
+          <div className="gts">{d.accounts.filter((a) => DEBT_TYPES.includes(a.type) && Number(a.balance) > 0).length} account(s) carrying a balance</div>
+        </div>
+        <div className="gtile">
+          <div className="gtl">Projected in {projYears}y</div>
+          <div className="gtv">{fmt(projFV)}</div>
+          <div className="gts">at {fmt(Number(projMonthly) || 0)}/mo</div>
+        </div>
+      </div>
 
-      <TaxCard d={d} setD={setD} />
+      <FoldWrap title="Money order of operations" sub="what the next dollar should do" defaultOpen>
+        <OrderOfOps d={d} k401ok={matchCap > 0 && contribPct >= matchCap} />
+      </FoldWrap>
 
-      <div className="card">
-        <h3>Emergency fund</h3>
+      <FoldWrap title="Tax estimate" sub="what to set aside on untaxed income">
+        <TaxCard d={d} setD={setD} />
+      </FoldWrap>
+
+      <Fold title="Emergency fund" right={efTarget > 0 ? Math.round(efPct) + "% funded" : null}>
         <div className="grid3" style={{ marginTop: 8 }}>
           <div>
             <label className="f">Months of expenses</label>
@@ -1477,10 +1557,9 @@ function Plan({ d, setD }) {
             ? <span className="good"> · ✓ fully funded</span>
             : <span> · <b className="warn">{fmt(efTarget - liq)}</b> to go</span>)}
         </div>
-      </div>
+      </Fold>
 
-      <div className="card">
-        <h3>401k match</h3>
+      <Fold title="401k match" right={missing > 0 ? fmt(missing) + " left on the table" : "full match captured"}>
         <div className="grid2" style={{ marginTop: 8 }}>
           <div><label className="f">Gross salary ($/yr)</label><input className="in mono" type="number" value={salary} onChange={(e) => setSalary(Number(e.target.value) || 0)} /></div>
           <div><label className="f">Your contribution (%)</label><input className="in mono" type="number" value={contribPct} onChange={(e) => setContribPct(Number(e.target.value) || 0)} /></div>
@@ -1501,13 +1580,16 @@ function Plan({ d, setD }) {
             <ChartBox data={k401Series.filter((_, i) => i % Math.ceil(k401Series.length / 12) === 0 || i === k401Series.length - 1)} dataKey="value" xKey="year" height={160} />
           </>
         )}
-      </div>
+      </Fold>
 
-      <DebtPayoff d={d} setD={setD} />
-      <PurchasePlanner d={d} setD={setD} />
+      <FoldWrap title="Debt payoff" sub="avalanche vs snowball">
+        <DebtPayoff d={d} setD={setD} />
+      </FoldWrap>
+      <FoldWrap title="Purchase planner" sub="can I afford this, and when">
+        <PurchasePlanner d={d} setD={setD} />
+      </FoldWrap>
 
-      <div className="card">
-        <h3>Compound growth projector</h3>
+      <Fold title="Compound growth projector" right={fmt(projFV) + " in " + projYears + "y"}>
         <div className="grid2" style={{ marginTop: 8 }}>
           <div><label className="f">Starting from ($)</label>
             <input className="in mono" type="number" value={projStart === null ? investedNow : projStart}
@@ -1526,17 +1608,16 @@ function Plan({ d, setD }) {
           <ChartBox data={projSeries.filter((_, i) => i % Math.ceil(projSeries.length / 12) === 0 || i === projSeries.length - 1)} dataKey="value" xKey="year" height={160} />
         )}
         <div className="note">A projection at an assumed rate, not a promise — real returns vary year to year.</div>
-      </div>
+      </Fold>
 
-      <div className="card">
-        <h3>AI review</h3>
+      <Fold title="AI review" sub="a plain-English read on your numbers">
         <div className="note">Sends your numbers (from this app only) to Claude for a plain-language look at gaps and priorities. General education, not personalized investment advice.</div>
         <div className="mrow" style={{ justifyContent: "flex-start" }}>
           <button className="btn primary" disabled={aiBusy} onClick={aiReview}>{aiBusy ? "Reviewing…" : aiOut ? "Review again" : "Review my setup"}</button>
         </div>
         {aiErr && <div className="err">{aiErr}</div>}
         {aiOut && <div className="aiout">{aiOut}</div>}
-      </div>
+      </Fold>
     </>
   );
 }
@@ -1975,7 +2056,7 @@ function FinanceHQ({ config }) {
         {syncNotice && <div className="banner">{syncNotice}</div>}
         {tab === "dash" && <Dashboard d={d} setD={setD} config={config} setTab={setTab} />}
         {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
-        {tab === "budget" && <><Budget d={d} setD={setD} config={config} /><Trends d={d} /></>}
+        {tab === "budget" && <><Budget d={d} setD={setD} config={config} /><FoldWrap title="Trends" sub="month by month, and year over year"><Trends d={d} /></FoldWrap></>}
         {tab === "merchants" && <Merchants d={d} setD={setD} />}
         {tab === "assistant" && <AskAtlas d={d} setD={setD} config={config} />}
         {tab === "career" && <Career d={d} setD={setD} config={config} toast={toast} />}

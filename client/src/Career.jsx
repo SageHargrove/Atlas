@@ -1352,6 +1352,7 @@ export default function Career({ d, setD, config, toast }) {
   /* clicking a company anywhere on the page takes you to it in the finder,
      rather than repeating its details in a second, worse place */
   const [focusCompany, setFocusCompany] = useState(null);
+  const [focusSource, setFocusSource] = useState(null);
   const [prepFor, setPrepFor] = useState(null);
   const [prepOut, setPrepOut] = useState("");
   const [prepBusy, setPrepBusy] = useState(false);
@@ -1498,6 +1499,7 @@ export default function Career({ d, setD, config, toast }) {
       <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel}
         onTailor={tailor} onCoverLetter={coverLetter} onImpact={setImpact} onEdit={setEditing}
         focusCompany={focusCompany} onFocused={() => setFocusCompany(null)}
+        focusSource={focusSource} onSourceFocused={() => setFocusSource(null)}
         header={
           <span className="row" style={{ gap: 6 }}>
             <button className={"btn small" + (S.resume ? "" : " primary")} onClick={() => setProfileOpen(true)}>
@@ -1513,7 +1515,7 @@ export default function Career({ d, setD, config, toast }) {
         } />
 
       <Fold title="Timeline" sub={apps.length ? "when to apply, and what's left to do" : "add targets to see one"}>
-        <Timeline S={S} apps={apps} setCareer={setCareer} setEditing={setEditing} />
+        <Timeline S={S} apps={apps} setCareer={setCareer} onShowOpen={() => setFocusSource("tracked")} />
       </Fold>
 
       <Fold title="Where you could both work" sub="cities that work for both of you">
