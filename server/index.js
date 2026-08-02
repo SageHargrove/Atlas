@@ -1118,6 +1118,9 @@ app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
    a one-time setup token, which we exchange once for a long-lived access URL
    (it embeds basic-auth credentials) and store encrypted, exactly like a token. */
 const SIMPLEFIN_TIMEOUT_MS = 30000;
+const SIMPLEFIN_DEEP_TIMEOUT_MS = 180000;
+const SF_SYNC_DAYS = 120;    // routine sync: comfortably covers any realistic gap
+const SF_MAX_DAYS = 2555;    // backfill: 7 years, past what any consumer bank retains
 /* The claim URL arrives base64'd from the browser, so it is untrusted input and a
    textbook SSRF vector (cloud metadata, localhost admin ports). Pin it to SimpleFIN. */
 const simplefinHostOk = (h) => h === "simplefin.org" || h.endsWith(".simplefin.org");
@@ -1130,9 +1133,12 @@ function simplefinParts(accessUrl) {
 async function simplefinFetch(accessUrl, sinceDays) {
   const { base, auth } = simplefinParts(accessUrl);
   const start = Math.floor(Date.now() / 1000) - sinceDays * 86400;
+  /* A backfill makes SimpleFIN pull years out of the bank; 30s is generous for a
+     routine sync and far too short for that, and a timeout here reads to the user
+     as "sync is broken" rather than "that was a big ask". */
   const r = await fetch(base + "/accounts?start-date=" + start, {
     headers: { authorization: auth, accept: "application/json" },
-    signal: AbortSignal.timeout(SIMPLEFIN_TIMEOUT_MS),
+    signal: AbortSignal.timeout(sinceDays > 400 ? SIMPLEFIN_DEEP_TIMEOUT_MS : SIMPLEFIN_TIMEOUT_MS),
   });
   if (r.status === 402) throw new Error("SimpleFIN says payment is required — check your subscription.");
   if (r.status === 403) throw new Error("SimpleFIN denied access — reconnect this bank.");
@@ -1202,11 +1208,18 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
   /* PHASE 1 — network, no lock held (a slow sync must not block the browser's autosave) */
   const sets = [];
   const warnings = [];
+  /* A routine sync only needs to cover the gap since the last one, and asking for
+     more makes SimpleFIN do real work against the bank every time. A backfill is
+     the opposite: it's a one-off, so it asks for everything and accepts being slow.
+     120 days was neither — it silently capped how far back Atlas could ever see,
+     which meant every average, median and month-over-month figure was computed on
+     a window nobody chose. */
+  const days = Math.min(SF_MAX_DAYS, Math.max(30, Number(req.body?.days) || SF_SYNC_DAYS));
   try {
     for (const c of conns) {
       const url = decSecret(c.accessToken);
       if (!url) continue; // undecryptable (SESSION_SECRET changed) — skip rather than crash
-      const set = await simplefinFetch(url, 120);
+      const set = await simplefinFetch(url, days);
       (set.errors || set.errlist || []).forEach((e) => warnings.push(typeof e === "string" ? e : e.msg || "connection error"));
       sets.push(set);
     }
@@ -1279,7 +1292,14 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
       d._rev = (d._rev || 0) + 1;
       writeData(req.userId, d);
     });
-    res.json({ ok: true, newTx, updAcc, updHold, autoCat, xferPairs, warnings: warnings.slice(0, 3) });
+    /* How deep the bank actually went is a property of the bank, not of Atlas, and
+       it decides how much of the app can be trusted — so report it rather than
+       leaving the user to infer it from a chart that starts abruptly. */
+    const got = sets.flatMap((s) => (s.accounts || []).flatMap((a) => (a.transactions || []).map((t) => Number(t.posted) || 0)))
+      .filter(Boolean).sort((x, y) => x - y);
+    const iso = (u) => new Date(u * 1000).toISOString().slice(0, 10);
+    res.json({ ok: true, newTx, updAcc, updHold, autoCat, xferPairs, warnings: warnings.slice(0, 3),
+      askedDays: days, pulled: got.length, oldest: got.length ? iso(got[0]) : null, newest: got.length ? iso(got[got.length - 1]) : null });
   } catch (e) { console.error("simplefin merge failed:", e.message); res.status(500).json({ error: "Synced but couldn't save — your existing data was left untouched" }); }
 });
 

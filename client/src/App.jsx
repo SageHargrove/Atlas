@@ -3,6 +3,7 @@ import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
 import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import Career from "./Career.jsx";
 import TaxCard from "./TaxCard.jsx";
+import Trends from "./Trends.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -387,6 +388,45 @@ const CSS = `
 .fh .foldhead{ display:flex; justify-content:space-between; align-items:center; width:100%; background:none;
   border:none; padding:0; cursor:pointer; color:var(--text); font:inherit; text-align:left; }
 .fh .foldhead:hover h3{ color:var(--acc); }
+
+/* ---- Trends: spending over time ----
+   One series, so one hue and no legend — the heading names it. The month in
+   progress gets a hatch as well as a lighter fill, so "this one isn't finished"
+   survives greyscale, colour-blindness and forced-colours mode. */
+.fh .trow{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:14px; }
+.fh .tstat{ background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:11px 13px; }
+.fh .tstatl{ font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); }
+.fh .tstatv{ font-family:'JetBrains Mono',monospace; font-size:21px; font-weight:600; margin-top:3px; letter-spacing:-.02em; }
+.fh .tstats{ font-size:11.5px; color:var(--muted); margin-top:1px; }
+.fh .tlabel{ font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); margin:12px 0 7px; }
+.fh .bars{ display:flex; align-items:flex-end; gap:6px; height:186px; overflow-x:auto; padding-bottom:2px; }
+.fh .bcol{ flex:1 0 42px; display:flex; flex-direction:column; align-items:center; height:100%; }
+.fh .bval{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); height:13px; white-space:nowrap; }
+.fh .btrack{ flex:1; width:100%; display:flex; align-items:flex-end; min-height:0; }
+.fh .bfill{ width:100%; background:var(--acc); border-radius:4px 4px 0 0; transition:height .18s ease; }
+.fh .bfill.partial{ background:var(--acc-soft); border:1px solid var(--acc); border-bottom:none;
+  background-image:repeating-linear-gradient(45deg, transparent 0 4px, var(--acc-soft) 4px 8px); }
+.fh .bgap{ width:100%; height:100%; border-bottom:2px dotted var(--line2); }
+.fh .blab{ font-size:10.5px; color:var(--faint); margin-top:5px; white-space:nowrap; }
+.fh .ttable{ border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+.fh .tth,.fh .ttr{ display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:8px; padding:8px 12px; align-items:center; }
+.fh .tth{ background:var(--panel2); font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
+.fh .tth span+span,.fh .ttr span+span{ text-align:right; }
+.fh .ttr{ border-top:1px solid var(--line); cursor:pointer; font-size:13px; }
+.fh .ttr:hover{ background:var(--panel2); }
+.fh .tname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fh .ttx{ border-top:1px solid var(--line); background:var(--panel2); padding:10px 12px; }
+.fh .spark{ display:flex; align-items:flex-end; gap:4px; height:62px; }
+.fh .scol{ flex:1 0 20px; display:flex; flex-direction:column; height:100%; }
+.fh .strack{ flex:1; display:flex; align-items:flex-end; min-height:0; }
+.fh .sfill{ width:100%; background:var(--acc); border-radius:3px 3px 0 0; }
+.fh .sfill.partial{ background:var(--acc-soft); border:1px solid var(--acc); border-bottom:none; }
+.fh .slab{ font-size:9.5px; color:var(--faint); text-align:center; margin-top:3px; }
+@media (max-width:640px){
+  .fh .tth,.fh .ttr{ grid-template-columns:1.4fr 1fr 1fr; }
+  .fh .tth span:nth-child(3),.fh .ttr span:nth-child(3){ display:none; }
+}
+
 /* an actual timeline: months across, your window shaded, milestones on it */
 .fh .tlwrap{ overflow-x:auto; padding-bottom:6px; }
 .fh .tl{ position:relative; min-width:620px; height:112px; margin-top:6px; }
@@ -668,10 +708,11 @@ function BankSync({ d, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
     } catch (e) { setMsg(e.message); }
     setBusy(false);
   };
-  const syncNow = async () => {
-    setSfBusy(true); setSfMsg("");
+  const syncNow = async (days) => {
+    setSfBusy(true); setSfMsg(days ? "Asking your banks for everything they still have — this can take a couple of minutes…" : "");
     try {
-      const r = await fetch("/api/simplefin/sync", { method: "POST" });
+      const r = await fetch("/api/simplefin/sync", { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify(days ? { days } : {}) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Sync failed");
       await onReload();
@@ -680,10 +721,14 @@ function BankSync({ d, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
         + ", " + j.updAcc + " balances updated"
         + (j.updHold ? ", " + j.updHold + " holdings" : "")
         + (j.xferPairs ? ", " + j.xferPairs + " marked as transfers" : "") + "."
+        /* On a backfill the depth reached IS the result — "0 new transactions"
+           alone would read as a failure when it actually means the bank has
+           nothing older, which is the answer the user was asking for. */
+        + (j.oldest ? " Your banks went back to " + j.oldest + "." : "")
         + (j.warnings?.length ? " (" + j.warnings.join("; ") + ")" : ""));
     } catch (e) { setSfMsg("Sync failed — " + e.message); }
     setSfBusy(false);
-    setTimeout(() => setSfMsg(""), 9000);
+    setTimeout(() => setSfMsg(""), 14000);
   };
   const remove = async (id) => {
     if (!confirm("Disconnect this SimpleFIN connection? Your existing transactions stay.")) return;
@@ -711,9 +756,17 @@ function BankSync({ d, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
       ))}
 
       {conns.length > 0 && (
-        <div className="mrow" style={{ justifyContent: "flex-start" }}>
-          <button className="btn primary" disabled={sfBusy} onClick={syncNow}>{sfBusy ? "Syncing…" : "Sync now"}</button>
-        </div>
+        <>
+          <div className="mrow" style={{ justifyContent: "flex-start" }}>
+            {/* not {syncNow} — React would pass the click event as the day count */}
+            <button className="btn primary" disabled={sfBusy} onClick={() => syncNow()}>{sfBusy ? "Syncing…" : "Sync now"}</button>
+            <button className="btn" disabled={sfBusy} title="Ask your banks for their full history, not just recent months"
+              onClick={() => { if (confirm("Pull every transaction your banks still hold?\n\nThis asks for up to 7 years instead of the usual 4 months. It can take a couple of minutes, and nothing already in Atlas is changed or removed — only older transactions are added.")) syncNow(2555); }}>
+              Backfill history
+            </button>
+          </div>
+          <div className="note">Routine syncs look back 4 months. <b>Backfill history</b> asks for everything — how far it reaches is up to each bank, and it will tell you the date it got to.</div>
+        </>
       )}
       {sfMsg && <div className={"note " + (sfMsg.startsWith("Sync failed") ? "bad" : "good")}>{sfMsg}</div>}
 
@@ -1915,7 +1968,7 @@ function FinanceHQ({ config }) {
         {syncNotice && <div className="banner">{syncNotice}</div>}
         {tab === "dash" && <Dashboard d={d} setD={setD} config={config} setTab={setTab} />}
         {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
-        {tab === "budget" && <Budget d={d} setD={setD} config={config} />}
+        {tab === "budget" && <><Budget d={d} setD={setD} config={config} /><Trends d={d} /></>}
         {tab === "merchants" && <Merchants d={d} setD={setD} />}
         {tab === "assistant" && <AskAtlas d={d} setD={setD} config={config} />}
         {tab === "career" && <Career d={d} setD={setD} config={config} toast={toast} />}
