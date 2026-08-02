@@ -174,7 +174,7 @@ const SEED_ROW = Object.fromEntries(SEED.map(([c, tier, clearance, comp, city, l
 }));
 const extrasFor = (company, cat) => SEED_EXTRAS[company.toLowerCase()] ?? CAT_EXTRAS[cat] ?? 0;
 
-const SEED_LINKS = {
+export const SEED_LINKS = {
   "jane street": "https://www.janestreet.com/join-jane-street/open-roles/",
   "hudson river trading": "https://www.hudsonrivertrading.com/careers/",
   citadel: "https://www.citadel.com/careers/open-opportunities/",
@@ -1352,7 +1352,7 @@ export default function Career({ d, setD, config, toast }) {
   /* clicking a company anywhere on the page takes you to it in the finder,
      rather than repeating its details in a second, worse place */
   const [focusCompany, setFocusCompany] = useState(null);
-  const [focusSource, setFocusSource] = useState(null);
+  const [openCompanies, setOpenCompanies] = useState(null);
   const [prepFor, setPrepFor] = useState(null);
   const [prepOut, setPrepOut] = useState("");
   const [prepBusy, setPrepBusy] = useState(false);
@@ -1499,7 +1499,7 @@ export default function Career({ d, setD, config, toast }) {
       <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel}
         onTailor={tailor} onCoverLetter={coverLetter} onImpact={setImpact} onEdit={setEditing}
         focusCompany={focusCompany} onFocused={() => setFocusCompany(null)}
-        focusSource={focusSource} onSourceFocused={() => setFocusSource(null)}
+        onlyCompanies={openCompanies} onOnlyApplied={() => setOpenCompanies(null)}
         header={
           <span className="row" style={{ gap: 6 }}>
             <button className={"btn small" + (S.resume ? "" : " primary")} onClick={() => setProfileOpen(true)}>
@@ -1515,7 +1515,7 @@ export default function Career({ d, setD, config, toast }) {
         } />
 
       <Fold title="Timeline" sub={apps.length ? "when to apply, and what's left to do" : "add targets to see one"}>
-        <Timeline S={S} apps={apps} setCareer={setCareer} onShowOpen={() => setFocusSource("tracked")} />
+        <Timeline S={S} apps={apps} setCareer={setCareer} onShowOpen={(companies) => setOpenCompanies(companies)} />
       </Fold>
 
       <Fold title="Where you could both work" sub="cities that work for both of you">

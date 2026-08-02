@@ -63,30 +63,38 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
   if (!apps.length) return null;
 
   const doneMap = S.milestones || {};
-  const toggle = (k) => setCareer((c) => ({ ...c, settings: { ...c.settings,
-    milestones: { ...(c.settings.milestones || {}), [k]: !(c.settings.milestones || {})[k] } } }));
+  /* Store the NEW state explicitly rather than flipping whatever is in the map:
+     for a row Atlas pre-ticked there is no entry yet, so a plain flip would set
+     it to true — i.e. the first click on an already-ticked row would do nothing
+     visible, which is exactly what "some of these aren't uncheckable" felt like. */
+  const toggle = (k, wasDone) => setCareer((c) => ({ ...c, settings: { ...c.settings,
+    milestones: { ...(c.settings.milestones || {}), [k]: !wasDone } } }));
 
   /* Each row derives "done" from the data where it can, so it cannot claim you
      finished something you haven't. The rest are yours to tick. `at` is the
      month it belongs to; rows are ordered by it and the current one is called
      out rather than being one dot among six. */
+  /* Every row is yours to tick or untick. Atlas can often SEE that something is
+     done and pre-ticks it, but it never locks the box — a resume is never
+     "finished", and an app that argues with you about what you've done is worse
+     than one that just asks. "Resume finished" is gone entirely for that reason,
+     and so is "10 applications out": a fixed target is the wrong shape for a
+     search where the honest answer is "as many good ones as I can". */
   const rows = [
-    { k: "resume", at: seasonStart - 1, label: "Resume finished",
-      auto: (S.resume || "").trim().length > 400,
-      todo: "Paste your resume into your profile — every score in the finder is off until it's there." },
     { k: "projects", at: seasonStart - 1, label: "Projects written up",
       auto: (S.projects || []).some((p) => (p.pitch || "").trim()),
       todo: "Write a one-line pitch for each project. This is what you'll say out loud in an interview." },
     { k: "open", at: seasonStart, label: "New-grad window opens", auto: now >= seasonStart,
-      todo: "", detail: live ? live + " target" + (live === 1 ? "" : "s") + " taking applications today" : "" },
-    { k: "first10", at: seasonStart + 1, label: "10 applications out", auto: applied >= 10,
-      progress: [applied, 10],
+      detail: live ? live + " target" + (live === 1 ? "" : "s") + " taking applications today" : "" },
+    { k: "applying", at: seasonStart + 1, label: "Applications going out",
+      auto: applied > 0,
+      detail: applied ? applied + " out so far" + (groups.done.length ? " · " + groups.done.length + " in flight" : "") : "",
       todo: "Being in the pile before it closes beats a perfect resume submitted late." },
     { k: "close", at: seasonEnd, label: "Most pipelines close", auto: now > seasonEnd,
       todo: "Anything not applied to by here is a rolling-req or referral play." },
     { k: "offer", at: gradAbs - 3, label: "Decision time", auto: apps.some((a) => a.status === "Offer"),
       todo: "Compare offers against your SPP floor before answering anyone." },
-    { k: "grad", at: gradAbs, label: "Graduate", auto: now >= gradAbs, todo: "" },
+    { k: "grad", at: gradAbs, label: "Graduate", auto: now >= gradAbs },
   ].sort((a, b) => a.at - b.at);
 
   /* The row you are living in right now — everything above it is history,
@@ -120,7 +128,8 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
 
       {/* four counts, above the list, because they're the summary of it */}
       <div className="tlstats">
-        <button className="tlstat" onClick={() => onShowOpen && onShowOpen("open")} title="Show these in the finder">
+        <button className="tlstat" title="Show these in the finder"
+          onClick={() => onShowOpen && onShowOpen([...groups.open, ...groups.closing].map((a) => a.company))}>
           <span className="tlsn" style={{ color: live ? "var(--up)" : "var(--faint)" }}>{live}</span>
           <span className="tlsl">Open right now</span>
         </button>
@@ -131,7 +140,9 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
 
       <ol className="tline">
         {rows.map((r, i) => {
-          const hit = r.auto || doneMap[r.k];
+          /* An explicit untick beats what Atlas inferred. Without this, a row it
+             can see is done could never be cleared, which is the complaint. */
+          const hit = r.k in doneMap ? doneMap[r.k] : r.auto;
           const isNow = i === currentIdx;
           const past = r.at < now;
           const state = hit ? "done" : past ? "late" : "todo";
@@ -139,9 +150,9 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
             <li className={"tli " + state + (isNow ? " now" : "")} key={r.k}>
               <div className="tlwhen">{isNow ? "NOW" : MON_FULL[((r.at % 12) + 12) % 12].slice(0, 3).toUpperCase()}
                 <span className="tlyr">{r.at === now ? "" : String(Math.floor(r.at / 12)).slice(2)}</span></div>
-              <button className="tlmark" disabled={r.auto}
-                title={r.auto ? "Atlas can see this is done" : hit ? "Marked done — click to undo" : "Click when you've done this"}
-                onClick={() => !r.auto && toggle(r.k)}>{hit ? "✓" : ""}</button>
+              <button className="tlmark"
+                title={hit ? "Done — click to undo" : "Click when you've done this"}
+                onClick={() => toggle(r.k, hit)}>{hit ? "✓" : ""}</button>
               <div className="tlbody">
                 <div className="tlname">{r.label}</div>
                 {r.progress && (
@@ -159,10 +170,20 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
       </ol>
 
       {live > 0 && applied === 0 && (
-        <div className="note bad" style={{ marginTop: 8 }}>
-          {live} target{live === 1 ? " is" : "s are"} open today and you haven't applied to anything. That's the whole game —
-          the tailored resume matters far less than being in the pile before it closes.
-          {onShowOpen && <> <button className="lnk" onClick={() => onShowOpen("open")}>Show them</button>.</>}
+        <div className="note bad" style={{ marginTop: 10 }}>
+          <div>
+            {live} target{live === 1 ? " is" : "s are"} open today and you haven't applied to anything. That's the whole game —
+            the tailored resume matters far less than being in the pile before it closes.
+          </div>
+          {onShowOpen && (
+            <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 8 }}>
+              {/* passes the actual company list, so the finder filters to the
+                  ones whose window is open rather than just to "my targets" */}
+              <button className="btn small primary" onClick={() => onShowOpen([...groups.open, ...groups.closing].map((a) => a.company))}>
+                Show the {live} that {live === 1 ? "is" : "are"} open
+              </button>
+            </div>
+          )}
         </div>
       )}
       {!!groups.missed.length && (

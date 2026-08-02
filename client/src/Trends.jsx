@@ -31,7 +31,6 @@ const isSpend = (t) => t.kind === "out";
 
 export default function Trends({ d }) {
   const [mode, setMode] = useState("month");   // month | year
-  const [openCat, setOpenCat] = useState("");
 
   const catName = (id) => d.cats.find((c) => c.id === id)?.name || "Uncategorized";
   const thisMonth = monthKey(new Date().toISOString());
@@ -94,8 +93,7 @@ export default function Trends({ d }) {
       const base = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
       const now = cur ? (cur.cats.get(id) || 0) : 0;
       return { id, name: id ? catName(id) : "Uncategorized", now, base,
-        delta: base == null ? null : now - base,
-        series: filled.map((m) => ({ key: m.key, v: m.cats.get(id) || 0 })) };
+        delta: base == null ? null : now - base };
     }).filter((r) => r.now > 0 || (r.base || 0) > 0)
       .sort((a, b) => (b.base ?? b.now) - (a.base ?? a.now));
 
@@ -208,19 +206,14 @@ export default function Trends({ d }) {
             <div className="tth"><span>Category</span><span>This month</span><span>Typical</span><span>Difference</span></div>
             {catRows.map((r) => (
               <React.Fragment key={r.id || "none"}>
-                <div className="ttr" onClick={() => setOpenCat(openCat === r.id ? "" : r.id)}>
-                  <span className="tname">{openCat === r.id ? "▾" : "▸"} {r.name}</span>
+                <div className="ttr" style={{ cursor: "default" }}>
+                  <span className="tname">{r.name}</span>
                   <span className="mono">{money(r.now)}</span>
                   <span className="mono" style={{ color: "var(--faint)" }}>{r.base == null ? "—" : money(r.base)}</span>
                   <span className="mono" style={{ color: r.delta == null ? "var(--faint)" : Math.abs(r.delta) < 1 ? "var(--faint)" : r.delta > 0 ? "var(--down)" : "var(--up)" }}>
                     {r.delta == null ? "—" : Math.abs(r.delta) < 1 ? "level" : signed(r.delta)}
                   </span>
                 </div>
-                {openCat === r.id && (
-                  <div className="ttx">
-                    <Spark series={r.series.slice(-14)} current={thisMonth} />
-                  </div>
-                )}
               </React.Fragment>
             ))}
           </div>
@@ -269,21 +262,3 @@ function Stat({ label, value, sub, tone }) {
   );
 }
 
-/* A sparkline, not a second full chart — it exists to show shape, and a shape
-   with axis furniture around it is just a small bad chart. */
-function Spark({ series, current }) {
-  const peak = Math.max(...series.map((s) => s.v), 1);
-  return (
-    <div className="spark">
-      {series.map((s) => (
-        <div className="scol" key={s.key} title={longLabel(s.key) + " — " + money(s.v)}>
-          <div className="strack">
-            <div className={"sfill" + (s.key === current ? " partial" : "")}
-              style={{ height: Math.max(s.v > 0 ? 4 : 0, Math.round((s.v / peak) * 100)) + "%" }} />
-          </div>
-          <div className="slab">{label(s.key).split(" ")[0]}</div>
-        </div>
-      ))}
-    </div>
-  );
-}

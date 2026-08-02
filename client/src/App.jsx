@@ -5,6 +5,7 @@ import Career from "./Career.jsx";
 import TaxCard from "./TaxCard.jsx";
 import Trends from "./Trends.jsx";
 import Fold, { FoldWrap } from "./Fold.jsx";
+import Retire from "./Retire.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -396,6 +397,15 @@ const CSS = `
 .fh .foldwrap > .foldbody > .card > h3:first-child{ display:none; }
 .fh .foldwrap > .foldbody > .card + .card{ margin-top:14px; }
 /* the at-a-glance strip above a page of folds, so it doesn't open onto nothing */
+/* drilling into a budget category */
+.fh .catopen{ background:none; border:none; padding:0; cursor:pointer; color:var(--text); font:inherit; text-align:left; }
+.fh .catopen:hover b{ color:var(--acc); }
+.fh .catdrill{ margin:8px 0 2px 22px; border-left:2px solid var(--line); padding-left:12px; }
+.fh .cdrow{ display:grid; grid-template-columns:1fr 34px 78px 40px; gap:8px; align-items:baseline; padding:3px 0; }
+.fh .cdname{ font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fh .cdrow span:not(.cdname){ text-align:right; }
+.fh .rng{ width:100%; accent-color:var(--acc); height:22px; cursor:pointer; }
+.fh .budgtot{ margin-top:12px; padding:11px 13px; background:var(--panel2); border:1px solid var(--line2); border-radius:11px; }
 .fh .glance{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:12px; }
 .fh .gtile{ background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:9px 12px; }
 .fh .gtl{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
@@ -1075,6 +1085,7 @@ function Budget({ d, setD, config }) {
   const [month, setMonth] = useState(thisMonth());
   const [nt, setNt] = useState({ date: today(), catId: d.cats[0]?.id || "", amount: "", note: "", kind: "out", accountId: "" });
   const [newCat, setNewCat] = useState("");
+  const [openCat, setOpenCat] = useState("");   // which category is drilled into
   const [showImport, setShowImport] = useState(false);
   const [impMsg, setImpMsg] = useState("");
   const [q, setQ] = useState("");
@@ -1171,10 +1182,16 @@ function Budget({ d, setD, config }) {
           return (
             <div key={c.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
               <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
-                <span className="row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
+                {/* "$183 over" is a verdict without evidence. Opening the row
+                    names the merchants that produced it, biggest first, which is
+                    the actual question — not that you're over, but on what. */}
+                <button className="row catopen" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}
+                  onClick={() => setOpenCat((v) => (v === c.id ? "" : c.id))}
+                  title="See what's in this category this month">
+                  <span className="note" style={{ margin: 0, width: 10 }}>{openCat === c.id ? "▾" : "▸"}</span>
                   <Icon k={catIconKey(c.name)} size={14} color={seriesColor(ci)} />
                   <b style={{ fontSize: 13.5 }}>{c.name}</b>
-                </span>
+                </button>
                 <span className="row" style={{ gap: 8, flexShrink: 0 }}>
                   {lim > 0 ? (
                     <span className="mono" style={{ fontSize: 13.5, color, fontWeight: 600 }}>
@@ -1197,6 +1214,31 @@ function Budget({ d, setD, config }) {
                   {lim > 0 ? fmt(spent) + " of " + fmt(lim) : ""}
                 </span>
               </div>
+              {openCat === c.id && (() => {
+                const mine = monthTxns.filter((t) => t.kind === "out" && t.catId === c.id);
+                if (!mine.length) return <div className="note" style={{ marginTop: 6 }}>Nothing in this category this month.</div>;
+                /* group by merchant so five $12 lunches read as one $60 habit */
+                const by = new Map();
+                for (const t of mine) {
+                  const k = normMerchant(t.note) || "(no description)";
+                  const g = by.get(k) || { name: k, total: 0, n: 0 };
+                  g.total += Number(t.amount) || 0; g.n++; by.set(k, g);
+                }
+                const list = [...by.values()].sort((a, b) => b.total - a.total);
+                return (
+                  <div className="catdrill">
+                    {list.slice(0, 12).map((g) => (
+                      <div className="cdrow" key={g.name}>
+                        <span className="cdname">{g.name}</span>
+                        <span className="note mono" style={{ margin: 0, fontSize: 11 }}>{g.n > 1 ? g.n + "×" : ""}</span>
+                        <span className="mono" style={{ fontSize: 12.5 }}>{fmt(g.total)}</span>
+                        <span className="note mono" style={{ margin: 0, fontSize: 11 }}>{spent > 0 ? Math.round((g.total / spent) * 100) + "%" : ""}</span>
+                      </div>
+                    ))}
+                    {list.length > 12 && <div className="note" style={{ marginTop: 4 }}>+{list.length - 12} more merchants</div>}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
@@ -1204,6 +1246,39 @@ function Budget({ d, setD, config }) {
           <input className="in" style={{ flex: 1 }} placeholder="New category…" value={newCat} onChange={(e) => setNewCat(e.target.value)} />
           <button className="btn small" onClick={() => { if (newCat.trim()) { setD((p) => ({ ...p, cats: [...p.cats, { id: uid(), name: newCat.trim(), limit: 0 }] })); setNewCat(""); } }}>Add</button>
         </div>
+        {/* Per-category over/under is a set of verdicts with no bottom line.
+            Nothing on Shopping offsetting extra on Fun is the normal way a month
+            actually works, and until now the page couldn't say so. */}
+        {(() => {
+          const budgeted = d.cats.filter((c) => Number(c.limit) > 0);
+          if (!budgeted.length) return null;
+          const lim = budgeted.reduce((s, c) => s + Number(c.limit), 0);
+          const spentAll = budgeted.reduce((s, c) => s + (spentBy[c.id] || 0), 0);
+          const diff = lim - spentAll;
+          const over = budgeted.filter((c) => (spentBy[c.id] || 0) > Number(c.limit));
+          const under = budgeted.filter((c) => (spentBy[c.id] || 0) < Number(c.limit));
+          return (
+            <div className="budgtot">
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+                <b style={{ fontSize: 13.5 }}>All budgeted categories</b>
+                <span className="mono" style={{ fontSize: 17, fontWeight: 600, color: diff >= 0 ? "var(--up)" : "var(--down)" }}>
+                  {diff >= 0 ? fmt(diff) + " left" : fmt(-diff) + " over"}
+                </span>
+              </div>
+              <div className="bar" style={{ height: 8, marginTop: 6 }}>
+                <i style={{ width: Math.min(100, lim > 0 ? (spentAll / lim) * 100 : 0) + "%", background: diff >= 0 ? "var(--up)" : "var(--down)" }} />
+              </div>
+              <div className="note" style={{ marginTop: 5 }}>
+                <b className="mono">{fmt(spentAll)}</b> of <b className="mono">{fmt(lim)}</b> across {budgeted.length} categories.
+                {over.length > 0 && under.length > 0 && (
+                  <> Over on {over.length}, under on {under.length} — {diff >= 0
+                    ? "the underspend more than covers it, so the month is fine overall."
+                    : "not quite enough to cover it."}</>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         {(() => { const tot = d.cats.reduce((s, c) => s + (Number(c.limit) || 0), 0);
           return tot > 0 ? <div className="note">Total budgeted: <b className="mono">{fmt(tot)}</b>{income > 0 ? (tot > income ? <span className="bad"> — over your {fmt(income)} income</span> : " of " + fmt(income) + " income") : ""}</div> : null; })()}
       </div>
@@ -1588,6 +1663,10 @@ function Plan({ d, setD }) {
       <FoldWrap title="Purchase planner" sub="can I afford this, and when">
         <PurchasePlanner d={d} setD={setD} />
       </FoldWrap>
+
+      <Fold title="Retire by…" sub="worked backwards from an age you pick" right={"target " + (d.settings.retTarget || 45)}>
+        <Retire d={d} invested={investedNow} monthlySpendNow={avgSpend} />
+      </Fold>
 
       <Fold title="Compound growth projector" right={fmt(projFV) + " in " + projYears + "y"}>
         <div className="grid2" style={{ marginTop: 8 }}>
@@ -2559,6 +2638,7 @@ function SplitSheet({ txn, cats, onClose, onSave }) {
 function Merchants({ d, setD }) {
   const [range, setRange] = useState("3m");
   const [sort, setSort] = useState("total");
+  const [onlyUncat, setOnlyUncat] = useState(false);
   const [q, setQ] = useState("");
   const [openKey, setOpenKey] = useState(null);
   const [split, setSplit] = useState(null);
@@ -2623,6 +2703,8 @@ function Merchants({ d, setD }) {
      Shopping, a Delta ticket is Transport — and touches nothing already filed,
      so a category you set by hand is never overwritten. */
   const uncatted = rows.filter((r) => r.uncatted > 0);
+  /* the unfiled subset, when the toggle above is on */
+  const shownRows = onlyUncat ? uncatted : rows;
   const fileTheObvious = () => {
     let n = 0, hits = {}, added = [];
     setD((p) => {
@@ -2690,17 +2772,27 @@ function Merchants({ d, setD }) {
         )}
         <div className="row" style={{ marginTop: 10 }}>
           <input className="in" style={{ flex: 1, minWidth: 160 }} placeholder="Filter merchants…" value={q} onChange={(e) => setQ(e.target.value)} />
+          {/* The whole point of the warning above is that these need attention;
+              hunting for them down a 130-row list is the opposite of that. */}
+          <button className={"btn small" + (onlyUncat ? " primary" : "")} disabled={!uncatted.length}
+            title={uncatted.length ? "Show only merchants with unfiled transactions" : "Nothing unfiled"}
+            onClick={() => setOnlyUncat((v) => !v)}>
+            {onlyUncat ? "Showing unfiled" : "Unfiled only" + (uncatted.length ? " (" + uncatted.length + ")" : "")}
+          </button>
           <select className="in" style={{ width: 170 }} value={sort} onChange={(e) => setSort(e.target.value)}>
             <option value="total">Sort: most spent</option>
             <option value="count">Sort: most visits</option>
             <option value="recent">Sort: most recent</option>
           </select>
         </div>
-        <div className="note">{rows.length} merchant{rows.length === 1 ? "" : "s"} · <b className="mono">{fmt(grand)}</b> total</div>
+        <div className="note">
+          {shownRows.length} merchant{shownRows.length === 1 ? "" : "s"}
+          {onlyUncat ? " with unfiled transactions" : ""} · <b className="mono">{fmt(onlyUncat ? shownRows.reduce((s, r) => s + r.total, 0) : grand)}</b> total
+        </div>
       </div>
 
       <div className="card">
-        {rows.length ? rows.map((r) => {
+        {shownRows.length ? shownRows.map((r) => {
           const ci = d.cats.findIndex((c) => c.id === r.catId);
           return (
             <div key={r.key} style={{ padding: "9px 0", borderBottom: "1px solid var(--line)" }}>

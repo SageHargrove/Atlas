@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money, yearsFromResume, offerValue } from "./careerData.js";
+import { SEED_LINKS } from "./Career.jsx";
 import { scoreOdds, oddsParts, explainRow, scoreFit, scoreGrowth, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
 export { yearsFromResume };
 
@@ -134,6 +135,11 @@ const STATUS_CLR = { Target: "var(--faint)", Applied: "var(--gold)", Interviewin
 /* If the poll has ever seen a posting from this employer, we know their board
    and can link straight at it instead of guessing via a search engine. */
 function careersFor(company, data) {
+  /* Quant shops and the big enterprises don't use a readable ATS, so they never
+     appear in the polled feed and every one of them fell through to a search.
+     Their real careers pages are already on file — check there first. */
+  const known = SEED_LINKS[String(company || "").toLowerCase()];
+  if (known) return known;
   const hit = (data?.jobs || []).find((j) => j.company === company && j.url);
   if (!hit) return null;
   const m = /^(https:\/\/(?:job-boards|boards)\.greenhouse\.io\/[^/]+|https:\/\/jobs\.lever\.co\/[^/]+|https:\/\/jobs\.ashbyhq\.com\/[^/]+|https:\/\/[^/]+\.myworkdayjobs\.com\/[^/]+\/[^/]+)/.exec(hit.url);
@@ -172,7 +178,7 @@ function appAsRow(a, S) {
   };
 }
 
-export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header, focusCompany, onFocused, focusSource, onSourceFocused }) {
+export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header, focusCompany, onFocused, focusSource, onSourceFocused, onlyCompanies, onOnlyApplied }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -225,6 +231,9 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
      whatever filters would hide it, and scroll it into view. Filtering to a
      company and getting nothing because a level chip excluded it is the kind of
      dead end that makes people stop trusting a link. */
+  /* An explicit set of companies the caller wants shown — the timeline knows
+     which windows are open, and the finder has no window filter of its own. */
+  const [pinned, setPinned] = useState(null);
   const boxRef = React.useRef(null);
   useEffect(() => {
     if (!focusCompany) return;
@@ -238,12 +247,13 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
      window filter of its own, so "show them" means: clear everything, switch to
      the tracked targets, and put them on screen. */
   useEffect(() => {
-    if (!focusSource) return;
-    setQ(""); setSource(focusSource); setLevels(new Set()); setFams(new Set()); setCats(new Set());
+    if (!Array.isArray(onlyCompanies) || !onlyCompanies.length) return;
+    setQ(""); setSource("tracked"); setLevels(new Set()); setFams(new Set()); setCats(new Set());
     setMinPay(0); setOnlyNew(false); setRemoteOnly(false); setIamOnly(false); setHideStale(false); setFitCities(false);
+    setPinned(new Set(onlyCompanies.map((c) => String(c).toLowerCase())));
     boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    onSourceFocused?.();
-  }, [focusSource]);
+    onOnlyApplied?.();
+  }, [onlyCompanies]);
 
   /* Stamp the visit AFTER the first render, so this session still sees its own
      "New" badges and only the next visit resets them. */
@@ -295,6 +305,8 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     const unknown = (j) => j.levelSure === false && !j.levelBasis;
     let out = scored.filter((j) =>
       !dismissed.has(j.id) &&
+      /* an explicit list from the timeline wins over every other filter */
+      (!pinned || pinned.has(String(j.company || "").toLowerCase())) &&
       (source === "all" || (source === "board" ? !j.tracked
         : source === "tracked" ? j.tracked
         : source === "applied" ? j.status && j.status !== "Target"
@@ -318,7 +330,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       new: (a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""),
     };
     return out.sort(cmp[sort]);
-  }, [scored, source, levels, showUnlabelled, fams, cats, minPay, hideStale, onlyNew, lastSeen, dismissed,
+  }, [pinned, scored, source, levels, showUnlabelled, fams, cats, minPay, hideStale, onlyNew, lastSeen, dismissed,
       remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
 
   const unlabelled = useMemo(() => scored.filter((j) => j.levelSure === false && !j.levelBasis && (!usOnly || j.us)).length, [scored, usOnly]);
@@ -442,6 +454,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   ];
   const activeCount = fams.size + cats.size + levels.size + TOGGLES.filter((t) => t.on).length + (minPay ? 1 : 0);
   const clearAll = () => {
+    setPinned(null);
     setFams(new Set()); setCats(new Set()); setLevels(new Set()); setMinPay(0);
     TOGGLES.forEach((t) => t.off());
     setCareer((c) => ({ ...c, settings: { ...c.settings, jobFamilies: [], jobCats: [] } }));
@@ -595,6 +608,16 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
         </span>
       </div>
 
+      {/* A pin narrows the list harder than any other filter, so it must be
+          visible and removable — an invisible filter reads as missing data. */}
+      {pinned && (
+        <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
+          <span className="achip" style={{ borderColor: "var(--gold)", color: "var(--gold)" }}>
+            Windows open now — {pinned.size} employer{pinned.size === 1 ? "" : "s"}
+            <button onClick={() => setPinned(null)} title="Show everything again">×</button>
+          </span>
+        </div>
+      )}
       {/* what's on, at a glance, without opening anything */}
       {!filtersOpen && activeCount > 0 && (
         <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
