@@ -970,6 +970,17 @@ function markTransferPairs(txns) {
 const normMerchant = (note) =>
   String(note || "").toLowerCase().replace(/\(recurring\)/g, "").replace(/[#*\d]+/g, " ").replace(/[^a-z& ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 28);
 const CAT_RULES = [
+  /* Rules run in order and the first match wins, so the specific ones that were
+     getting swallowed by broader rules (or by merchant memory) go first.
+
+     Every entry here comes from a real misfile: a utility whose descriptor is
+     truncated below the word "utility", a fuel brand missing from the transport
+     list, a salon that reads like a building, and Atlas's own SimpleFIN
+     subscription filed as Rent. */
+  [/deltastatesutil|delta states util|\bcpenergy\b|cp energy|\bcleco\b|lus fiber|atmos energy|\bsouthwestern electric|entergy|slemco|demco\b/, "Utilities"],
+  [/conoco|phillips ?66|\bexxon\b|\bmobil\b|\bshell oil|\bchevron\b|\bcitgo\b|\bvalero\b|\bsunoco\b|\bmarathon\b|\bcircle k|\bracetrac\b|\bquiktrip\b|\bqt \d|\bbuc-?ee|\bmurphy usa|\bpilot travel|\bloves? travel|\bwawa\b|\bsheetz\b|\bkwik|\bcasey'?s gen/, "Transport"],
+  [/\bthe loft\b|squire the loft|\bsalon\b|\bbarber|haircut|\bsupercuts\b|great clips|sport ?clips|hair ?(salon|studio|co\b)|\bspa\b|\bnails?\b|massage/, "Health"],
+  [/simplefin|link\.com\*|\blink com simplefin/, "Subscriptions"],
   /* big p2p payments are almost always rent/housing — small ones could be anything.
      The third element is a minimum $ amount for the rule to apply. */
   [/\birs\b|internal revenue|us ?treasury|treas ?tax|tax ?(pmt|payment)|dept? of revenue|state tax|franchise tax|turbotax|h&r block|jackson hewitt|taxact/, "Taxes"],

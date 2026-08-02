@@ -400,6 +400,23 @@ const CSS = `
 /* drilling into a budget category */
 .fh .catopen{ background:none; border:none; padding:0; cursor:pointer; color:var(--text); font:inherit; text-align:left; }
 .fh .catopen:hover b{ color:var(--acc); }
+/* A fold header must be clickable across its whole width — hitting only the
+   words means aiming at text and usually selecting it instead. */
+.fh .foldhead{ width:100%; padding:2px 0; }
+.fh .foldhead:hover{ background:var(--panel2); border-radius:8px; }
+.fh .catopen{ flex:1; padding:3px 4px; border-radius:7px; }
+.fh .catopen:hover{ background:var(--panel2); }
+.fh .cdclick{ cursor:pointer; border-radius:6px; padding-left:5px; margin-left:-5px; }
+.fh .cdclick:hover{ background:var(--panel); }
+.fh .cdclick:hover .cdname{ color:var(--acc); }
+.fh .taxdue{ margin-top:10px; padding:10px 12px; background:var(--panel2); border:1px solid var(--line2); border-radius:11px; }
+.fh .duegrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(84px,1fr)); gap:8px; margin-top:8px; }
+.fh .duecell{ border:1px solid var(--line); border-radius:9px; padding:7px 9px; background:var(--panel); }
+.fh .duecell.past{ opacity:.45; }
+.fh .duecell.next{ border-color:var(--gold); box-shadow:0 0 0 3px var(--gold-soft); }
+.fh .dueq{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
+.fh .duev{ font-size:14.5px; font-weight:600; margin-top:1px; }
+.fh .dued{ font-size:11px; color:var(--muted); }
 .fh .catdrill{ margin:8px 0 2px 22px; border-left:2px solid var(--line); padding-left:12px; }
 .fh .cdrow{ display:grid; grid-template-columns:1fr 34px 78px 40px; gap:8px; align-items:baseline; padding:3px 0; }
 .fh .cdname{ font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1086,6 +1103,8 @@ function Budget({ d, setD, config }) {
   const [nt, setNt] = useState({ date: today(), catId: d.cats[0]?.id || "", amount: "", note: "", kind: "out", accountId: "" });
   const [newCat, setNewCat] = useState("");
   const [openCat, setOpenCat] = useState("");   // which category is drilled into
+  const [adding, setAdding] = useState(false);  // manual entry form, off by default
+  const [txShown, setTxShown] = useState(25);   // grows in steps, never dumps 400 rows
   const [showImport, setShowImport] = useState(false);
   const [impMsg, setImpMsg] = useState("");
   const [q, setQ] = useState("");
@@ -1228,7 +1247,13 @@ function Budget({ d, setD, config }) {
                 return (
                   <div className="catdrill">
                     {list.slice(0, 12).map((g) => (
-                      <div className="cdrow" key={g.name}>
+                      /* clicking a merchant here opens the transaction list
+                         filtered to it, which is where you can actually change
+                         the category — naming the culprit without a way to fix
+                         it is the complaint that produced this row */
+                      <div className="cdrow cdclick" key={g.name} title={"Show " + g.name + " in the transaction list"}
+                        onClick={() => { setQ(g.name); setFCat(""); setTxOpen(true); setTxShown(25);
+                          setTimeout(() => document.querySelector(".trow")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); }}>
                         <span className="cdname">{g.name}</span>
                         <span className="note mono" style={{ margin: 0, fontSize: 11 }}>{g.n > 1 ? g.n + "×" : ""}</span>
                         <span className="mono" style={{ fontSize: 12.5 }}>{fmt(g.total)}</span>
@@ -1285,7 +1310,7 @@ function Budget({ d, setD, config }) {
 
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <button className="foldhead" style={{ width: "auto" }} onClick={() => setTxOpen((v) => !v)}>
+          <button className="foldhead" style={{ flex: 1, minWidth: 0 }} onClick={() => setTxOpen((v) => !v)}>
             <h3 style={{ margin: 0 }}>{searching ? "Search — all months" : "Transactions — " + monthLabel(month)}
               <span className="note" style={{ margin: "0 0 0 8px" }}>{txOpen ? "▴" : "▾"}</span></h3>
           </button>
@@ -1325,7 +1350,16 @@ function Budget({ d, setD, config }) {
         <div className="trow" style={{ borderBottom: "1px solid var(--line2)", fontWeight: 600, color: "var(--faint)", fontSize: 12 }}>
           <span>Date</span><span>Category</span><span>Amount</span><span>Type</span><span className="tacct">Account</span><span className="tnote">Note</span><span />
         </div>
-        <div className="trow">
+        {/* Everything arrives from the bank now, so a permanently-open manual
+            entry form sat above the data looking like a broken filter — the
+            date said 08/02 and changing its category appeared to do nothing,
+            because it was never a filter at all. Still here for cash. */}
+        {!adding && (
+          <div className="mrow" style={{ justifyContent: "flex-start", margin: "8px 0 2px" }}>
+            <button className="btn small" onClick={() => setAdding(true)}>+ Add one by hand</button>
+          </div>
+        )}
+        {adding && <div className="trow">
           <input className="in" type="date" style={{ padding: "4px 6px" }} value={nt.date} onChange={(e) => setNt({ ...nt, date: e.target.value })} />
           <select className="in" style={{ padding: "4px 6px" }} value={nt.catId} onChange={(e) => setNt({ ...nt, catId: e.target.value })}>
             {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1344,8 +1378,9 @@ function Budget({ d, setD, config }) {
             setD((p) => ({ ...p, txns: [...p.txns, { id: uid(), ...nt, catId: nt.kind === "out" ? nt.catId : "", amount: Number(nt.amount), kindSet: true }] }));
             setNt({ date: nt.date, catId: nt.catId, amount: "", note: "", kind: nt.kind, accountId: nt.accountId });
           }}>+</button>
-        </div>
-        {(searching || showAllTx ? shownTxns : shownTxns.slice(0, 12)).map((t) => (
+          <button className="x" title="Done adding" onClick={() => setAdding(false)}>✕</button>
+        </div>}
+        {shownTxns.slice(0, txShown).map((t) => (
           <div className="trow" key={t.id} style={t.kind === "xfer" ? { opacity: 0.62 } : null}>
             {/* A pending charge is real money committed but not settled — the
                 amount can still change, so say so rather than showing it as
@@ -1358,20 +1393,26 @@ function Budget({ d, setD, config }) {
               ? <span className="note" style={{ margin: 0 }}>Income</span>
               : t.kind === "xfer"
               ? <span className="note" style={{ margin: 0 }} title="Between your own accounts — not counted as income or spending">Transfer</span>
-              : t.catId
-              ? (() => {
+              /* Always a control. A categorised row used to render as static
+                 text, so the moment Atlas guessed wrong — SimpleFIN filed under
+                 Rent, a haircut filed as Rent — there was no way to fix it from
+                 the list at all. The icon sits beside it rather than replacing
+                 the affordance. */
+              : (() => {
                   const ci = d.cats.findIndex((c) => c.id === t.catId);
-                  const cn = d.cats[ci]?.name || "?";
-                  return <span className="row" style={{ gap: 7, flexWrap: "nowrap", overflow: "hidden" }}>
-                    <Icon k={catIconKey(cn)} size={13} color={seriesColor(ci)} style={{ flexShrink: 0 }} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cn}</span>
-                  </span>;
-                })()
-              : <select className="in" style={{ padding: "3px 6px", fontSize: 12, borderColor: "var(--gold)" }} value=""
-                  onChange={(e) => setD((p) => ({ ...p, txns: p.txns.map((x) => x.id === t.id ? { ...x, catId: e.target.value } : x) }))}>
-                  <option value="" disabled>— pick —</option>
-                  {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>}
+                  return (
+                    <span className="row catcell" style={{ gap: 5, flexWrap: "nowrap", minWidth: 0 }}>
+                      <Icon k={catIconKey(d.cats[ci]?.name || "")} size={13}
+                        color={t.catId ? seriesColor(ci) : "var(--gold)"} style={{ flexShrink: 0 }} />
+                      <select className="in" value={t.catId || ""}
+                        style={{ padding: "3px 5px", fontSize: 12, minWidth: 0, flex: 1, borderColor: t.catId ? undefined : "var(--gold)" }}
+                        onChange={(e) => setD((p) => ({ ...p, txns: p.txns.map((x) => x.id === t.id ? { ...x, catId: e.target.value } : x) }))}>
+                        <option value="">— none —</option>
+                        {d.cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </span>
+                  );
+                })()}
             <span className="mono" style={t.kind === "in" ? { color: "var(--acc)" } : t.kind === "xfer" ? { color: "var(--faint)" } : null}>{t.kind === "in" ? "+" : t.kind === "xfer" ? "⇄ " : ""}{fmt2(Number(t.amount))}</span>
             <select className="in" style={{ padding: "3px 4px", fontSize: 11.5, color: "var(--muted)" }} value={t.kind || "out"}
               title="Spend counts toward budgets, Income toward earnings, Transfer toward neither"
@@ -1383,11 +1424,19 @@ function Budget({ d, setD, config }) {
             <button className="x" onClick={() => setD((p) => ({ ...p, txns: p.txns.filter((x) => x.id !== t.id) }))}>✕</button>
           </div>
         ))}
-        {!searching && shownTxns.length > 12 && (
+        {/* 25 at a time. "Show all 400" is the thing that made this page a
+            scrolling chore — the point of a show-more is that it stays short. */}
+        {/* Collapse lives OUTSIDE the "more remain" test: once you've shown
+            everything there is nothing more to show, and nesting it here meant
+            the whole row vanished at exactly the point you'd want to fold it. */}
+        {(shownTxns.length > txShown || txShown > 25) && (
           <div className="mrow" style={{ justifyContent: "center", marginTop: 10 }}>
-            <button className="btn small" onClick={() => setShowAllTx((v) => !v)}>
-              {showAllTx ? "Show fewer" : "Show all " + shownTxns.length + " transactions"}
-            </button>
+            {shownTxns.length > txShown && (
+              <button className="btn small" onClick={() => setTxShown((n) => n + 25)}>
+                Show 25 more — {shownTxns.length - txShown} left
+              </button>
+            )}
+            {txShown > 25 && <button className="btn small" onClick={() => setTxShown(25)}>Collapse</button>}
           </div>
         )}
         {!shownTxns.length && <div className="note">{searching ? "Nothing matches this search." : "No transactions this month yet — log spending above as it happens, or import your bank's CSV."}</div>}
@@ -2200,6 +2249,17 @@ function FinanceHQ({ config }) {
 const IMPORT_CAP = 2000;   // a full year of a busy account, not a third of one
 const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|pmt)\b|payment to .{0,28}(?:card|loan|mortgage)|crd (?:pmt|pay)|\bpymt\b|\bpmt\b|payment thank ?you|automatic payment.{0,6}thank|thank you.*payment|internet payment|jpmorgan chase bank|\be-?payment\b|\bepay\b|directpay|fid(?:elity)? bkg|\bmoneyline\b|\bwebull\w*|\brobinhood\w*|\bschwab\w*|\bvanguard\b|e\*trade|\bacorns\b|\bbetterment\b|\bwealthfront\w*|\bcoinbase\w*|m1 ?finance|\btd ameritrade|interactive brokers/i;
 const CAT_RULES = [
+  /* Rules run in order and the first match wins, so the specific ones that were
+     getting swallowed by broader rules (or by merchant memory) go first.
+
+     Every entry here comes from a real misfile: a utility whose descriptor is
+     truncated below the word "utility", a fuel brand missing from the transport
+     list, a salon that reads like a building, and Atlas's own SimpleFIN
+     subscription filed as Rent. */
+  [/deltastatesutil|delta states util|\bcpenergy\b|cp energy|\bcleco\b|lus fiber|atmos energy|\bsouthwestern electric|entergy|slemco|demco\b/, "Utilities"],
+  [/conoco|phillips ?66|\bexxon\b|\bmobil\b|\bshell oil|\bchevron\b|\bcitgo\b|\bvalero\b|\bsunoco\b|\bmarathon\b|\bcircle k|\bracetrac\b|\bquiktrip\b|\bqt \d|\bbuc-?ee|\bmurphy usa|\bpilot travel|\bloves? travel|\bwawa\b|\bsheetz\b|\bkwik|\bcasey'?s gen/, "Transport"],
+  [/\bthe loft\b|squire the loft|\bsalon\b|\bbarber|haircut|\bsupercuts\b|great clips|sport ?clips|hair ?(salon|studio|co\b)|\bspa\b|\bnails?\b|massage/, "Health"],
+  [/simplefin|link\.com\*|\blink com simplefin/, "Subscriptions"],
   /* big p2p payments are almost always rent/housing — small ones could be anything.
      The third element is a minimum $ amount for the rule to apply. */
   [/\birs\b|internal revenue|us ?treasury|treas ?tax|tax ?(pmt|payment)|dept? of revenue|state tax|franchise tax|turbotax|h&r block|jackson hewitt|taxact/, "Taxes"],

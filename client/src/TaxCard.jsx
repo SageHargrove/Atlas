@@ -91,6 +91,62 @@ export default function TaxCard({ d, setD }) {
         </div>
       )}
 
+      {/* Tax isn't a monthly budget line — you don't decide each month how much
+          tax to have. It's a handful of dates with an amount attached, so that's
+          what this shows: what's due, when, and how long you have. */}
+      {seTotal > 0 && (() => {
+        const now = new Date();
+        const y = now.getFullYear();
+        /* IRS estimated-payment dates. Q4 falls in January of the following
+           year, which is exactly the one people forget. */
+        const DUE = [
+          ["Q1", new Date(y, 3, 15), "Jan–Mar income"],
+          ["Q2", new Date(y, 5, 15), "Apr–May income"],
+          ["Q3", new Date(y, 8, 15), "Jun–Aug income"],
+          ["Q4", new Date(y + 1, 0, 15), "Sep–Dec income"],
+          ["Return", new Date(y + 1, 3, 15), "everything, reconciled"],
+        ];
+        /* balance = what you will owe at filing, which is the number these dates split */
+        const owed = Math.max(0, est.balance || 0);
+        const perQ = est.needsQuarterly ? owed / 4 : 0;
+        const next = DUE.find(([, dt]) => dt >= now);
+        const days = next ? Math.ceil((next[1] - now) / 86400000) : null;
+        return (
+          <div className="taxdue">
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <b style={{ fontSize: 13 }}>{est.needsQuarterly ? "Quarterly estimated payments" : "Nothing due until you file"}</b>
+              {next && <span className="note" style={{ margin: 0 }}>
+                next: <b>{next[0]}</b> on {next[1].toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                {days != null && <> · <b style={{ color: days <= 30 ? "var(--gold)" : undefined }}>{days} day{days === 1 ? "" : "s"}</b></>}
+              </span>}
+            </div>
+            {est.needsQuarterly ? (
+              <div className="duegrid">
+                {DUE.slice(0, 4).map(([q, dt, covers]) => {
+                  const past = dt < now;
+                  return (
+                    <div className={"duecell" + (past ? " past" : "") + (next && next[0] === q ? " next" : "")} key={q} title={covers}>
+                      <div className="dueq">{q}</div>
+                      <div className="duev mono">{dollars(perQ)}</div>
+                      <div className="dued">{dt.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="note" style={{ marginTop: 4 }}>
+                Under $1,000 owed, so the IRS doesn't expect instalments — just have {dollars(owed)} ready by
+                April {y + 1}. Keep the {pct(est.setAside)} back as it arrives and that takes care of itself.
+              </div>
+            )}
+            <div className="note" style={{ marginTop: 6 }}>
+              This is the honest shape of tax: a few dates with an amount, not something to budget monthly.
+              Hold {pct(est.setAside)} of each contractor payment as it lands and every one of these is already covered.
+            </div>
+          </div>
+        );
+      })()}
+
       {open && (
         <>
           <label className="f" style={{ marginTop: 12 }}>Where the money came from</label>
