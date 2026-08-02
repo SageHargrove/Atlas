@@ -1102,7 +1102,11 @@ app.post("/api/teller/sync", auth, syncLimiter, async (req, res) => {
       const debts = d.accounts.filter((x) => DEBT.includes(x.type)).reduce((s, x) => s + (+x.balance || 0), 0);
       const today = new Date().toISOString().slice(0, 10);
       d.history = (d.history || []).filter((h) => h.date !== today);
-      d.history.push({ date: today, assets, debts, nw: assets - debts });
+      /* Only record a real reading. A snapshot of 0/0 means the sync ran before
+         any account existed, and later it is indistinguishable from a day you
+         genuinely had nothing — which is how the net-worth chart ended up
+         anchored to zero and drawing June below the axis. */
+      if (assets !== 0 || debts !== 0) d.history.push({ date: today, assets, debts, nw: assets - debts });
       d.history.sort((x, y) => x.date.localeCompare(y.date));
       d.lastSync = new Date().toISOString();
       d._rev = (d._rev || 0) + 1;
@@ -1136,7 +1140,12 @@ async function simplefinFetch(accessUrl, sinceDays) {
   /* A backfill makes SimpleFIN pull years out of the bank; 30s is generous for a
      routine sync and far too short for that, and a timeout here reads to the user
      as "sync is broken" rather than "that was a big ask". */
-  const r = await fetch(base + "/accounts?start-date=" + start, {
+  /* pending=1 matters more than it looks. Card purchases sit pending for one to
+     three business days before they post, so without this a sync run today
+     genuinely cannot see what you bought yesterday — which reads as a broken
+     sync rather than as how card networks work. Pending rows carry real ids, so
+     they dedupe normally and simply firm up when they post. */
+  const r = await fetch(base + "/accounts?pending=1&start-date=" + start, {
     headers: { authorization: auth, accept: "application/json" },
     signal: AbortSignal.timeout(sinceDays > 400 ? SIMPLEFIN_DEEP_TIMEOUT_MS : SIMPLEFIN_TIMEOUT_MS),
   });
@@ -1230,6 +1239,7 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
 
   /* PHASE 2 — merge into current on-disk state under the lock (brief) */
   let newTx = 0, updAcc = 0, updHold = 0, autoCat = 0, xferPairs = 0;
+  const retyped = [];
   try {
     await withLock("data:" + req.userId, () => {
       const d = readData(req.userId);
@@ -1250,19 +1260,55 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
             acc.name = acc.name.trim().slice(0, 60);
             d.accounts.push(acc);
           }
+          /* An account's type is guessed once, at creation, and then never
+             revisited — so a card connected before guessType learned the word
+             "Freedom" stayed filed as Checking forever, sitting in net worth as
+             a negative asset instead of a debt. Re-guess when the stored type
+             still looks like the old default and the name now clearly says
+             otherwise. A type the user picked themselves is never touched. */
+          if (!acc.typeSet && acc.type !== guessType(a.name)) {
+            const g = guessType(a.name);
+            if (DEBT.includes(g) !== DEBT.includes(acc.type)) retyped.push(acc.name + " → " + g);
+            acc.type = g;
+          }
           const bal = Number(a.balance);
           if (Number.isFinite(bal)) { acc.balance = DEBT.includes(acc.type) ? Math.abs(bal) : bal; updAcc++; }
+
+          /* Pending rows are transient: SimpleFIN may hand a transaction a NEW id
+             when it posts, so keeping the pending copy would double-count the
+             purchase. Drop this account's pending rows and take them fresh from
+             the response — but remember any category first, keyed by what the
+             row looks like rather than by its id, so categorising a pending
+             charge isn't undone the moment it clears. */
+          const fp = (t) => [t.accountId, Math.round(Math.abs(Number(t.amount)) * 100), String(t.note || "").slice(0, 40)].join("|");
+          const keptCats = new Map();
+          d.txns = d.txns.filter((x) => {
+            if (!x.pending || x.accountId !== acc.id) return true;
+            if (x.catId) keptCats.set(fp(x), x.catId);
+            return false;
+          });
+
           for (const t of a.transactions || []) {
             const tid = "sf:" + t.id;
             if (d.txns.some((x) => x.tellerId === tid)) continue;
             const amt = Number(t.amount);
             if (!Number.isFinite(amt) || amt === 0) continue;
-            const date = new Date((Number(t.posted) || 0) * 1000).toISOString().slice(0, 10);
+            /* A pending transaction has posted:0 by definition, and 0 is a valid
+               unix timestamp — so trusting it silently dates the row 1970-01-01,
+               which then stretches every chart back fifty years. Fall back to
+               when it was transacted, then to today. */
+            const stamp = Number(t.posted) || Number(t.transacted_at) || Math.floor(Date.now() / 1000);
+            const date = new Date(stamp * 1000).toISOString().slice(0, 10);
             const note = String(t.description || t.payee || "").slice(0, 60);
             const kind = classifyKind(amt, acc.type, note);
-            const catId = kind === "out" ? autoCategorize(note, d.cats, merchantMem, Math.abs(amt)) : "";
-            if (catId) autoCat++;
-            d.txns.push({ id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind, date, amount: Math.round(Math.abs(amt) * 100) / 100, catId, note });
+            const pending = !!t.pending;
+            const row = { id: crypto.randomUUID(), tellerId: tid, accountId: acc.id, kind, date,
+              amount: Math.round(Math.abs(amt) * 100) / 100, catId: "", note };
+            if (pending) row.pending = true;
+            const carried = keptCats.get(fp(row));
+            row.catId = carried || (kind === "out" ? autoCategorize(note, d.cats, merchantMem, Math.abs(amt)) : "");
+            if (row.catId && !carried) autoCat++;
+            d.txns.push(row);
             newTx++;
           }
           /* Brokerage accounts carry a holdings array (undocumented in the spec, but
@@ -1286,7 +1332,11 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
       const debts = d.accounts.filter((x) => DEBT.includes(x.type)).reduce((s, x) => s + (+x.balance || 0), 0);
       const today = new Date().toISOString().slice(0, 10);
       d.history = (d.history || []).filter((h) => h.date !== today);
-      d.history.push({ date: today, assets, debts, nw: assets - debts });
+      /* Only record a real reading. A snapshot of 0/0 means the sync ran before
+         any account existed, and later it is indistinguishable from a day you
+         genuinely had nothing — which is how the net-worth chart ended up
+         anchored to zero and drawing June below the axis. */
+      if (assets !== 0 || debts !== 0) d.history.push({ date: today, assets, debts, nw: assets - debts });
       d.history.sort((x, y) => x.date.localeCompare(y.date));
       d.lastSync = new Date().toISOString();
       d._rev = (d._rev || 0) + 1;
@@ -1298,7 +1348,7 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
     const got = sets.flatMap((s) => (s.accounts || []).flatMap((a) => (a.transactions || []).map((t) => Number(t.posted) || 0)))
       .filter(Boolean).sort((x, y) => x - y);
     const iso = (u) => new Date(u * 1000).toISOString().slice(0, 10);
-    res.json({ ok: true, newTx, updAcc, updHold, autoCat, xferPairs, warnings: warnings.slice(0, 3),
+    res.json({ ok: true, newTx, updAcc, updHold, autoCat, xferPairs, retyped, warnings: warnings.slice(0, 3),
       askedDays: days, pulled: got.length, oldest: got.length ? iso(got[0]) : null, newest: got.length ? iso(got[got.length - 1]) : null });
   } catch (e) { console.error("simplefin merge failed:", e.message); res.status(500).json({ error: "Synced but couldn't save — your existing data was left untouched" }); }
 });

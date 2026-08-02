@@ -725,6 +725,7 @@ function BankSync({ d, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
            alone would read as a failure when it actually means the bank has
            nothing older, which is the answer the user was asking for. */
         + (j.oldest ? " Your banks went back to " + j.oldest + "." : "")
+        + (j.retyped?.length ? " Reclassified " + j.retyped.join(", ") + "." : "")
         + (j.warnings?.length ? " (" + j.warnings.join("; ") + ")" : ""));
     } catch (e) { setSfMsg("Sync failed — " + e.message); }
     setSfBusy(false);
@@ -1224,7 +1225,13 @@ function Budget({ d, setD, config }) {
         </div>
         {(searching || showAllTx ? shownTxns : shownTxns.slice(0, 12)).map((t) => (
           <div className="trow" key={t.id} style={t.kind === "xfer" ? { opacity: 0.62 } : null}>
-            <span className="mono" style={{ fontSize: 12.5 }}>{searching ? t.date : t.date.slice(5)}</span>
+            {/* A pending charge is real money committed but not settled — the
+                amount can still change, so say so rather than showing it as
+                final. The dot carries a title, so it isn't colour alone. */}
+            <span className="mono" style={{ fontSize: 12.5 }}>
+              {t.pending && <span title="Pending — not settled yet; the amount can still change"
+                style={{ color: "var(--gold)", marginRight: 4 }}>●</span>}
+              {searching ? t.date : t.date.slice(5)}</span>
             {t.kind === "in"
               ? <span className="note" style={{ margin: 0 }}>Income</span>
               : t.kind === "xfer"
@@ -3364,7 +3371,12 @@ function Dashboard({ d, setD, config, setTab }) {
      transaction flows backward from the first real snapshot. Transfers are net
      zero across your own accounts, so only in/out move the line. */
   const histFull = useMemo(() => {
-    const recorded = d.history;
+    /* A snapshot with no assets AND no debts is Atlas recording a day before it
+       knew about any account — it is not a day you were worth $0. Anchoring the
+       reconstruction to one drags the entire estimated history down by your whole
+       net worth, which is what put the line below zero through June. It also made
+       the YTD chip claim the year's gain was the entire balance. */
+    const recorded = (d.history || []).filter((h) => Number(h.assets) !== 0 || Number(h.debts) !== 0);
     const firstSnap = recorded[0]?.date;
     const pre = {};
     d.txns.forEach((t) => {
@@ -3382,13 +3394,16 @@ function Dashboard({ d, setD, config, setTab }) {
   const hist = histFull.filter((h) => h.date >= start).map((h) => ({ date: h.date.slice(5), nw: h.nw }));
   const histHasEst = histFull.some((h) => h.est && h.date >= start);
 
-  /* hero chips: change vs last month-end and vs Jan 1 */
-  const baseMonth = [...d.history].reverse().find((h) => h.date < thisMonth() + "-01")?.nw;
+  /* hero chips: change vs last month-end and vs Jan 1. Same filter as the chart —
+     these read from real snapshots only, or "up $7,422 YTD" is just today's
+     balance measured against a day Atlas hadn't been told about any accounts. */
+  const realHist = useMemo(() => (d.history || []).filter((h) => Number(h.assets) !== 0 || Number(h.debts) !== 0), [d.history]);
+  const baseMonth = [...realHist].reverse().find((h) => h.date < thisMonth() + "-01")?.nw;
   const monthDelta = baseMonth != null ? nw - baseMonth : null;
   const monthPct = baseMonth ? (monthDelta / Math.abs(baseMonth)) * 100 : null;
   const jan1 = new Date().getFullYear() + "-01-01";
-  const baseYear = [...d.history].reverse().find((h) => h.date < jan1)?.nw
-    ?? (d.history.length > 1 && d.history[0].date >= jan1 ? d.history[0].nw : null);
+  const baseYear = [...realHist].reverse().find((h) => h.date < jan1)?.nw
+    ?? (realHist.length > 1 && realHist[0].date >= jan1 ? realHist[0].nw : null);
   const ytdDelta = baseYear != null ? nw - baseYear : null;
   const avgSpend = avgMonthlySpend(d.txns);
   const runway = avgSpend > 0 ? liquid(d.accounts) / avgSpend : null;
