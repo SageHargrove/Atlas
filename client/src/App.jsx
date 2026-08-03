@@ -11,6 +11,7 @@ import SplitRules from "./SplitRules.jsx";
 import OfferImpact from "./OfferImpact.jsx";
 import Why from "./Why.jsx";
 import Forecast from "./Forecast.jsx";
+import Life from "./Life.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -236,6 +237,24 @@ const CSS = `
 .fh h1{ font-family:'Sora',sans-serif; font-weight:700; font-size:20px; letter-spacing:-.02em; }
 .fh .sub{ color:var(--muted); font-size:13px; margin-top:2px; }
 .fh .tabs{ display:flex; gap:2px; background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:3px; overflow-x:auto; max-width:100%; }
+/* ---- grouped sidebar (desktop only) ----
+   Same destinations as the tab row, but sectioned: Money / Grow / Atlas. A flat
+   row of eight tabs reads as clutter; three labelled groups read as a map. */
+.fh .snav{ display:none; }
+@media (min-width:1180px){
+  .fh .tabs{ display:none; }
+  .fh .snav{ display:flex; flex-direction:column; gap:16px; position:fixed; left:0; top:57px; bottom:0; width:198px;
+    padding:18px 12px 20px; border-right:1px solid var(--line); background:var(--panel);
+    z-index:30; overflow-y:auto; }
+  .fh main.wrap{ margin-left:198px; max-width:calc(1360px); }
+  .fh .snsec{ display:flex; flex-direction:column; gap:2px; }
+  .fh .snlab{ font-size:10.5px; text-transform:uppercase; letter-spacing:.09em; color:var(--faint); padding:0 10px 4px; }
+  .fh .snitem{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; background:none; border:none;
+    color:var(--muted); font:inherit; font-size:13.5px; font-weight:500; padding:8px 10px; border-radius:9px; cursor:pointer; }
+  .fh .snitem:hover{ background:var(--panel2); color:var(--text); }
+  .fh .snitem.on{ background:var(--acc-soft); color:var(--acc); font-weight:600; }
+  .fh .snico{ width:16px; text-align:center; opacity:.85; }
+}
 .fh .tab{ font:inherit; font-weight:500; background:none; border:none; border-radius:9px; color:var(--muted); padding:7px 15px; cursor:pointer; font-size:13.5px; white-space:nowrap; transition:color .15s, background .15s; }
 .fh .tab:hover{ color:var(--text); }
 .fh .tab.on{ background:var(--panel); color:var(--text); font-weight:600; box-shadow:0 1px 8px rgba(2,6,16,.35); }
@@ -2241,8 +2260,16 @@ function FinanceHQ({ config }) {
 
   /* Merchants lives inside Budget and Goals inside Plan now — a top-level tab
      holding a single card was nav weight without nav value. */
-  const TABS = [["dash", "Dashboard"], ["overview", "Accounts"], ["budget", "Budget"],
+  const TABS = [["dash", "Dashboard"], ["life", "Life"], ["overview", "Accounts"], ["budget", "Budget"],
     ["assistant", "Assistant"], ["career", "Career"], ["invest", "Invest"], ["plan", "Plan"]];
+  /* The same pages, grouped the way you actually think about them — shown as a
+     sidebar at desktop width, where a flat row of eight reads as clutter. */
+  const NAV_SECTIONS = [
+    ["", [["dash", "Dashboard", "◧"], ["life", "Life", "✦"]]],
+    ["Money", [["budget", "Budget", "▤"], ["overview", "Accounts", "⌂"], ["plan", "Plan", "➤"]]],
+    ["Grow", [["invest", "Invest", "↗"], ["career", "Career", "★"]]],
+    ["", [["assistant", "Atlas", "✳"]]],
+  ];
   /* phones get a 4-up bottom bar; the rest live behind More */
   const PRIMARY = [["dash", "Dashboard", "grid"], ["overview", "Accounts", "bank"], ["budget", "Budget", "bars"], ["assistant", "Atlas", "chat"]];
   const SECONDARY = TABS.filter(([id]) => !PRIMARY.some((p) => p[0] === id));
@@ -2258,6 +2285,21 @@ function FinanceHQ({ config }) {
               <button key={id} className={"tab" + (tab === id ? " on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
           </div>
+          {/* Desktop gets a grouped sidebar instead of the flat tab row — the
+              same pages, segmented the way you actually think about them.
+              Phones keep the bottom bar; this only exists at width. */}
+          <nav className="snav">
+            {NAV_SECTIONS.map(([section, items]) => (
+              <div className="snsec" key={section || "top"}>
+                {section && <div className="snlab">{section}</div>}
+                {items.map(([id, label, icon]) => (
+                  <button key={id} className={"snitem" + (tab === id ? " on" : "")} onClick={() => setTab(id)}>
+                    <span className="snico">{icon}</span>{label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
           <div className="row" style={{ flexWrap: "nowrap" }}>
             <button className="btn small" title="Toggle theme" style={{ display: "inline-flex", alignItems: "center" }} onClick={() => setD((p) => ({ ...p, settings: { ...p.settings, theme: p.settings.theme === "dark" ? "light" : "dark" } }))}>
               <ThemeIcon dark={d.settings.theme === "dark"} />
@@ -2278,6 +2320,7 @@ function FinanceHQ({ config }) {
         )}
         {syncNotice && <div className="banner">{syncNotice}</div>}
         {tab === "dash" && <Dashboard d={d} setD={setD} config={config} setTab={setTab} />}
+        {tab === "life" && <Life d={d} setD={setD} />}
         {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
         {tab === "budget" && <><Budget d={d} setD={setD} config={config} /><FoldWrap title="Trends" sub="month by month, and year over year"><Trends d={d} /></FoldWrap></>}
         {tab === "assistant" && <AskAtlas d={d} setD={setD} config={config} />}

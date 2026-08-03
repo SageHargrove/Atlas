@@ -1324,9 +1324,17 @@ function withPartnerData(cities) {
 
 export default function Career({ d, setD, config, toast }) {
   const career = d.career || DEFAULT_CAREER;
-  const S0 = { ...DEFAULT_CAREER.settings, ...(career.settings || {}) };
-  const S = { ...S0, cities: withPartnerData(S0.cities) };
-  const apps = career.apps || [];
+  /* S must be REFERENTIALLY STABLE across renders. As a plain object literal it
+     was rebuilt every render, which busted every downstream memo keyed on it —
+     and once the finder started reporting stats upward (setJobStats → re-render
+     → new S → full 600-job rescore → new stats object → setJobStats…) that
+     became an infinite render loop burning ~1.2s per lap. The whole app queued
+     behind it; "the site is just really slow" was this line. */
+  const S = useMemo(() => {
+    const S0 = { ...DEFAULT_CAREER.settings, ...(career.settings || {}) };
+    return { ...S0, cities: withPartnerData(S0.cities) };
+  }, [career.settings]);
+  const apps = useMemo(() => career.apps || [], [career.apps]);
   /* Where you sit on the ladder, read off the resume — the AI estimate wins if
      you've run one, since it can read scope and impact that a regex can't. */
   const myLevel = S.levelAI?.level || guessMyLevel(S.resume) || "entry";
@@ -1356,6 +1364,8 @@ export default function Career({ d, setD, config, toast }) {
   const [focusCompany, setFocusCompany] = useState(null);
   const [openCompanies, setOpenCompanies] = useState(null);
   const [jobStats, setJobStats] = useState(null);   // verified-live counts, reported up by the finder
+  const acceptStats = (s) => setJobStats((p) => (p && p.liveRoles === s.liveRoles && p.liveCos === s.liveCos
+    && p.watchedNone === s.watchedNone && p.unverifiable === s.unverifiable ? p : s));
   const [prepFor, setPrepFor] = useState(null);
   const [prepOut, setPrepOut] = useState("");
   const [prepBusy, setPrepBusy] = useState(false);
@@ -1502,7 +1512,7 @@ export default function Career({ d, setD, config, toast }) {
       <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel}
         onTailor={tailor} onCoverLetter={coverLetter} onImpact={setImpact} onEdit={setEditing}
         focusCompany={focusCompany} onFocused={() => setFocusCompany(null)}
-        onlyCompanies={openCompanies} onOnlyApplied={() => setOpenCompanies(null)} onStats={setJobStats}
+        onlyCompanies={openCompanies} onOnlyApplied={() => setOpenCompanies(null)} onStats={acceptStats}
         header={
           <span className="row" style={{ gap: 6 }}>
             <button className={"btn small" + (S.resume ? "" : " primary")} onClick={() => setProfileOpen(true)}>

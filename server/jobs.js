@@ -483,6 +483,16 @@ export function classifyPosting(p, cat) {
        hidden — being wrong here costs a glance, hiding a real job costs the job */
     us: !nonUs && (US_STATES.test(loc) || US_WORDS.test(loc) || remote || !loc),
     clearance: CLEARED.test(hay),
+    /* "Needs a clearance" splits into two very different facts for someone who
+       doesn't hold one. "Able to obtain" means the employer sponsors the
+       investigation — routine for junior defense roles, and a wait rather than
+       a wall. "Active/current required" means they need someone cleared TODAY
+       and won't wait 6-18 months for an SSBI. The distinction decides whether
+       applying is reasonable, so it can't stay collapsed into one boolean. */
+    clearanceNeed: !CLEARED.test(hay) ? null
+      : /\b(?:able|ability|eligib\w+)\s+to\s+obtain|obtain\s+and\s+maintain|sponsor\w*\s+(?:a\s+|for\s+)?(?:security\s+)?clearance|clearance\s+sponsor|willing(?:ness)?\s+to\s+(?:undergo|obtain)/i.test(hay) ? "sponsor"
+      : /\bactive\s+(?:ts|secret|top.secret|dod|sci)|current(?:ly)?\s+(?:hold|possess|active)|must\s+(?:hold|have|possess)\s+(?:an?\s+)?(?:active|current)|clearance\s+(?:is\s+)?required\s+(?:at|prior|upon)/i.test(hay) ? "active"
+      : "unclear",
     yearsReq: years,
     iam: /\b(iam|identity|access manag|iga|pam|privileged|sso|okta|sailpoint|saviynt|cyberark|ping identity|zero trust)\b/i.test(title + " " + (p.desc || "")),
   };

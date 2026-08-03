@@ -346,7 +346,8 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     }
     return { liveRoles, liveCos, watchedNone, unverifiable };
   }, [scored, data, fams, usOnly, exclRes, dismissed]);
-  useEffect(() => { onStats?.(targetStats); }, [targetStats]);
+  useEffect(() => { onStats?.(targetStats); },
+    [targetStats.liveRoles, targetStats.liveCos, targetStats.watchedNone, targetStats.unverifiable]);
 
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -466,17 +467,33 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
      worse than no count: both of those internships were SOC roles, filtered out
      by the area chips above. Each chip counts what you'd get if you clicked it —
      every OTHER filter applied, its own dimension left open. */
-  const base = useMemo(() => scored.filter((j) =>
-    !dismissed.has(j.id) && (!usOnly || j.us) && (!remoteOnly || j.remote) && (!iamOnly || j.iam) &&
-    (!hideCleared || !j.clearance) && (!hideStale || !(j.ageDays > 60)) &&
-    (!fitCities || j.remote || !!j.city) && (!minPay || (j.adj || 0) >= minPay)),
-    [scored, dismissed, usOnly, remoteOnly, iamOnly, hideCleared, hideStale, fitCities, minPay]);
+  /* The chip counts must run through the SAME terms as the visible list, minus
+     only the dimension each chip controls — "Entry 108" over a list showing 3
+     was this memo missing source, pin, search, never-show and new-only. A chip
+     count is a promise about what clicking it shows. */
+  const base = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    return scored.filter((j) =>
+      !dismissed.has(j.id) &&
+      (!pinned || pinned.has(String(j.company || "").toLowerCase())) &&
+      (source === "all" || (source === "board" ? !j.tracked
+        : source === "tracked" ? j.tracked
+        : source === "applied" ? j.status && j.status !== "Target"
+        : true)) &&
+      !exclRes.some((re) => re.test(j.title || "")) &&
+      (!onlyNew || (j.firstSeen || "") > lastSeen) &&
+      (!usOnly || j.us) && (!remoteOnly || j.remote) && (!iamOnly || j.iam) &&
+      (!hideCleared || !j.clearance) && (!hideStale || !(j.ageDays > 60)) &&
+      (!fitCities || j.remote || !!j.city) && (!minPay || (j.adj || 0) >= minPay) &&
+      (!ql || (j.company + " " + j.title + " " + (j.location || "")).toLowerCase().includes(ql)));
+  }, [scored, dismissed, pinned, source, exclRes, onlyNew, lastSeen, q,
+      usOnly, remoteOnly, iamOnly, hideCleared, hideStale, fitCities, minPay]);
 
   const counts = useMemo(() => {
     const m = {};
-    for (const j of base) if (!fams.size || fams.has(j.family)) m[j.level] = (m[j.level] || 0) + 1;
+    for (const j of base) if ((!fams.size || fams.has(j.family)) && (!cats.size || cats.has(j.cat))) m[j.level] = (m[j.level] || 0) + 1;
     return m;
-  }, [base, fams]);
+  }, [base, fams, cats]);
   const inLevel = useMemo(() => {
     const wantsUnlabelled = showUnlabelled && levels.size && !levels.has("mid");
     return base.filter((j) => !levels.size || levels.has(j.level) || (wantsUnlabelled && j.levelSure === false && !j.levelBasis));
@@ -869,7 +886,14 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                   </button>
                 ) : <span className="tag" style={{ color: "var(--faint)" }}>Unranked city</span>}
                 {j.iam && <span className="tag" style={{ color: "var(--acc)", borderColor: "var(--acc)" }}>IAM</span>}
-                {j.clearance && <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}>Clearance</span>}
+                {j.clearance && (j.clearanceNeed === "sponsor"
+  ? <span className="tag" style={{ color: "var(--acc)", borderColor: "var(--acc)" }}
+      title="The posting says eligible/able to OBTAIN - the employer sponsors the investigation. Routine for junior defense roles; budget 6-18 months of interim work while it processes.">Clearance · sponsored</span>
+  : j.clearanceNeed === "active"
+  ? <span className="tag" style={{ color: "var(--down)", borderColor: "var(--down)" }}
+      title="Requires an ACTIVE clearance held today - they will not wait for an investigation. Without one this is close to a hard gate.">Active clearance req.</span>
+  : <span className="tag" style={{ color: "var(--gold)", borderColor: "var(--gold)" }}
+      title="Mentions a clearance without saying whether they sponsor - the posting itself is the place to check.">Clearance</span>)}
                 <span className="tag" style={j.levelBasis && j.levelBasis !== "stated" ? { borderStyle: "dashed" } : undefined}
                   title={j.levelBasis === "pay" ? "Estimated from the salary the posting lists"
                     : j.levelBasis === "scope" ? "Estimated from what the posting asks you to do"

@@ -37,9 +37,20 @@ const SKILLS = [
   "risk", "audit", "compliance", "grc", "governance", "access review", "provisioning", "deprovisioning",
   "security+", "cissp", "cisa", "cism", "gsec", "gcih", "gcia", "ceh", "oscp", "az-500", "sc-200",
 ];
+/* Memoized: scoring calls this twice per job with the SAME resume string — 600
+   jobs meant 1,200 identical scans of a 3,000-character resume per pass, which
+   the profiler measured as 8 seconds of a 2-keystroke interaction. Keyed by the
+   string itself; capped so a long session can't hoard descriptions forever. */
+const _tokCache = new Map();
 export const tokensOf = (text) => {
-  const lc = " " + String(text || "").toLowerCase().replace(/[^a-z0-9+\-./ ]/g, " ").replace(/\s+/g, " ") + " ";
-  return new Set(SKILLS.filter((s) => lc.includes(" " + s + " ") || lc.includes(" " + s + ",") || lc.includes(" " + s + ".")));
+  const key = String(text || "");
+  const hit = _tokCache.get(key);
+  if (hit) return hit;
+  const lc = " " + key.toLowerCase().replace(/[^a-z0-9+\-./ ]/g, " ").replace(/\s+/g, " ") + " ";
+  const out = new Set(SKILLS.filter((s) => lc.includes(" " + s + " ") || lc.includes(" " + s + ",") || lc.includes(" " + s + ".")));
+  if (_tokCache.size > 2000) _tokCache.clear();
+  _tokCache.set(key, out);
+  return out;
 };
 
 /* Keyword overlap cannot tell "administers an identity platform" from "writes
@@ -84,14 +95,27 @@ export function scoreOdds(job, me) {
   const shared = [...jt].filter((t) => mine.has(t));
   const overlapPts = jt.size ? Math.round(Math.min(1, shared.length / Math.min(8, Math.max(3, jt.size))) * 35) : 12;
 
-  const clearPts = job.clearance ? (hasClearance ? 10 : -22) : 10;
+  const clearPts = !job.clearance ? 10 : hasClearance ? 10
+    : job.clearanceNeed === "sponsor" ? 2      // they pay for the investigation; a wait, not a wall
+    : -22;
   const raw = levelPts + overlapPts + clearPts;
 
+  /* ceil, not round: a posting asking 4 years of someone with 2.9 is a gap the
+     recruiter reads as "over a year short", not "basically there". Rounding
+     1.1 down to 1 was half of how a senior req scored 45 for a student. */
   const shortfall = job.yearsReq == null ? 0 : Math.max(0, job.yearsReq - myYears);
-  const yearsMult = [1, 0.82, 0.55, 0.36, 0.24][Math.min(Math.round(shortfall), 4)] ?? 0.18;
+  const yearsMult = [1, 0.82, 0.55, 0.36, 0.24][Math.min(Math.ceil(shortfall), 4)] ?? 0.18;
   const sel = SELECTIVITY[job.cat] ?? 0.85;
+  /* Two or more rungs up is not a harder version of the same application — it
+     is a different pipeline that resume-keyword overlap cannot bridge. Additive
+     level points let 35 overlap points carry a senior req to 46 for someone at
+     entry; a multiplier is the honest shape. Seniority gaps are gates. */
+  const gapMult = gap >= 3 ? 0.1 : gap === 2 ? 0.3 : 1;
+  /* an ACTIVE clearance you do not hold cannot be fixed by applying harder —
+     the employer needs someone cleared today and will not wait 6-18 months */
+  const clearMult = job.clearance && !hasClearance && job.clearanceNeed === "active" ? 0.2 : 1;
 
-  return Math.max(1, Math.min(100, Math.round(raw * sel * yearsMult * buildGap(job, resume))));
+  return Math.max(1, Math.min(100, Math.round(raw * sel * yearsMult * gapMult * clearMult * buildGap(job, resume))));
 }
 
 /* The same inputs the score used, for the UI to explain itself with. */
