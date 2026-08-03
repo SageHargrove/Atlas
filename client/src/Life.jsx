@@ -23,18 +23,18 @@ const monthOf = (d) => { const [y, m] = String(d || "").split("-"); return m ? M
 /* Everything Atlas can already prove happened, as {date, icon, text, kind}. */
 export function deriveEvents(d) {
   const ev = [];
-  const push = (date, icon, text, kind) => date && ev.push({ id: kind + "|" + date + "|" + text.slice(0, 30), date: String(date).slice(0, 10), icon, text, kind });
+  const push = (date, text, kind) => date && ev.push({ id: kind + "|" + date + "|" + text.slice(0, 30), date: String(date).slice(0, 10), text, kind });
 
   /* loans: origination is a life event; so is every oversized payment */
   for (const a of d.accounts || []) {
     if (a.type === "Auto loan" && a.startDate && Number(a.principal) > 0)
-      push(a.startDate, "🚗", "Financed " + (a.name || "a vehicle") + " — " + money(a.principal) + " at " + (a.rate || "?") + "%", "loan");
+      push(a.startDate, "Financed " + (a.name || "a vehicle") + " — " + money(a.principal) + " at " + (a.rate || "?") + "%", "loan");
     if (a.payCatId) {
       const typical = Number(a.minPay) || 0;
       for (const t of d.txns || []) {
         if (t.kind !== "out" || t.catId !== a.payCatId) continue;
         if (typical > 0 && Number(t.amount) >= Math.max(typical * 2.5, 1000))
-          push(t.date, "💥", money(t.amount) + " extra onto " + (a.name || "the loan") + " — ahead of schedule", "lump");
+          push(t.date, money(t.amount) + " extra onto " + (a.name || "the loan") + " — ahead of schedule", "lump");
       }
     }
   }
@@ -43,29 +43,34 @@ export function deriveEvents(d) {
   for (const t of outs) {
     const cat = (d.cats || []).find((c) => c.id === t.catId)?.name || "";
     if (/car ?\/ ?loan/i.test(cat)) continue;   // already covered above
-    push(t.date, /tax/i.test(cat) ? "🏛️" : "💸", money(t.amount) + (cat ? " — " + cat : "") + " (" + String(t.note || "").slice(0, 34) + ")", "big");
+    push(t.date, money(t.amount) + (cat ? " — " + cat : "") + " (" + String(t.note || "").slice(0, 34) + ")", "big");
   }
   /* career, from the tracker and the brag doc */
   for (const a of d.career?.apps || []) {
-    if (a.status === "Offer") push(a.updatedOn || a.appliedOn, "🎉", "Offer from " + a.company, "career");
-    else if (a.status === "Interviewing" && a.appliedOn) push(a.appliedOn, "🗣️", "Interviewing at " + a.company, "career");
+    if (a.status === "Offer") push(a.updatedOn || a.appliedOn, "Offer from " + a.company, "career");
+    else if (a.status === "Interviewing" && a.appliedOn) push(a.appliedOn, "Interviewing at " + a.company, "career");
   }
-  for (const w of d.career?.settings?.wins || []) push(w.date, "🏆", w.text, "win");
+  for (const w of d.career?.settings?.wins || []) push(w.date, w.text, "win");
   /* accounts connected */
-  for (const c of d.simplefin || []) push(c.added, "🏦", "Connected " + (c.institution || "a bank"), "bank");
+  for (const c of d.simplefin || []) push(c.added, "Connected " + (c.institution || "a bank"), "bank");
   /* goals reached */
   for (const g of d.goals || []) {
     if (Number(g.saved) >= Number(g.target) && Number(g.target) > 0)
-      push(g.reachedOn || g.updatedOn, "🎯", "Goal reached: " + g.name + " (" + money(g.target) + ")", "goal");
+      push(g.reachedOn || g.updatedOn, "Goal reached: " + g.name + " (" + money(g.target) + ")", "goal");
   }
   /* net worth crossing zero — from reconstructed history, a real milestone */
   const h = d.history || [];
   for (let i = 1; i < h.length; i++) {
-    if (h[i - 1].nw < 0 && h[i].nw >= 0) push(h[i].date, "📈", "Net worth crossed zero — " + money(h[i].nw) + " and climbing", "nw");
-    if (h[i - 1].nw >= 0 && h[i].nw < 0) push(h[i].date, "📉", "Net worth went negative — usually a car loan arriving, not a crisis", "nw");
+    if (h[i - 1].nw < 0 && h[i].nw >= 0) push(h[i].date, "Net worth crossed zero — " + money(h[i].nw) + " and climbing", "nw");
+    if (h[i - 1].nw >= 0 && h[i].nw < 0) push(h[i].date, "Net worth went negative — usually a car loan arriving, not a crisis", "nw");
   }
   return ev;
 }
+
+/* One color per event type; text carries the content, the dot carries the
+   category. No emoji anywhere - house style. */
+const KIND_CLR = { loan: "var(--acc)", lump: "var(--up)", big: "var(--gold)", career: "var(--acc)",
+  win: "var(--up)", bank: "var(--faint)", goal: "var(--up)", nw: "var(--acc)", manual: "var(--gold)" };
 
 export default function Life({ d, setD }) {
   const [text, setText] = useState("");
@@ -75,7 +80,7 @@ export default function Life({ d, setD }) {
   const manual = d.settings?.lifeEvents || [];
   const events = useMemo(() => {
     const auto = deriveEvents(d);
-    const all = [...auto, ...manual.map((m) => ({ ...m, icon: m.icon || "📌", kind: "manual" }))];
+    const all = [...auto, ...manual.map((m) => ({ ...m, kind: "manual" }))];
     /* newest first, deduped on id so a derived event can't repeat */
     const seen = new Set();
     return all.filter((e) => e.date && !seen.has(e.id) && seen.add(e.id))
@@ -125,7 +130,7 @@ export default function Life({ d, setD }) {
                   {head && <div className="tlabel" style={{ margin: "10px 0 4px 66px" }}>{m}</div>}
                   <li className="tli done" style={{ padding: "5px 0" }}>
                     <div className="tlwhen">{e.date.slice(5)}</div>
-                    <span className="tlmark" style={{ cursor: "default", background: "var(--panel2)", borderColor: "var(--line2)", fontSize: 10 }}>{e.icon}</span>
+                    <span className="tlmark" style={{ cursor: "default", background: KIND_CLR[e.kind] || "var(--faint)", borderColor: "transparent", width: 10, height: 10, marginTop: 5 }} />
                     <div className="tlbody">
                       <div className="tlname" style={{ fontWeight: 500 }}>
                         {e.text}
@@ -145,7 +150,7 @@ export default function Life({ d, setD }) {
         </>
       )}
       <div className="note" style={{ marginTop: 10 }}>
-        Derived events update themselves — pay off the car and the payoff shows up here on its own. Only the 📌 ones are stored.
+        Derived events update themselves — pay off the car and the payoff shows up here on its own. Only your hand-added ones are stored.
       </div>
     </div>
   );

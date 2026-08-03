@@ -236,25 +236,11 @@ const CSS = `
 .fh .brand{ display:flex; align-items:center; gap:10px; }
 .fh h1{ font-family:'Sora',sans-serif; font-weight:700; font-size:20px; letter-spacing:-.02em; }
 .fh .sub{ color:var(--muted); font-size:13px; margin-top:2px; }
+.fh .tgroup{ display:flex; align-items:center; gap:2px; padding:0 4px; }
+.fh .tgroup + .tgroup{ border-left:1px solid var(--line2); margin-left:2px; padding-left:8px; }
+.fh .tglab{ font-size:9px; text-transform:uppercase; letter-spacing:.1em; color:var(--faint); margin-right:5px; white-space:nowrap; }
+@media (max-width:1180px){ .fh .tglab{ display:none; } .fh .tgroup{ padding:0 2px; } .fh .tgroup + .tgroup{ padding-left:4px; } }
 .fh .tabs{ display:flex; gap:2px; background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:3px; overflow-x:auto; max-width:100%; }
-/* ---- grouped sidebar (desktop only) ----
-   Same destinations as the tab row, but sectioned: Money / Grow / Atlas. A flat
-   row of eight tabs reads as clutter; three labelled groups read as a map. */
-.fh .snav{ display:none; }
-@media (min-width:1180px){
-  .fh .tabs{ display:none; }
-  .fh .snav{ display:flex; flex-direction:column; gap:16px; position:fixed; left:0; top:57px; bottom:0; width:198px;
-    padding:18px 12px 20px; border-right:1px solid var(--line); background:var(--panel);
-    z-index:30; overflow-y:auto; }
-  .fh main.wrap{ margin-left:198px; max-width:calc(1360px); }
-  .fh .snsec{ display:flex; flex-direction:column; gap:2px; }
-  .fh .snlab{ font-size:10.5px; text-transform:uppercase; letter-spacing:.09em; color:var(--faint); padding:0 10px 4px; }
-  .fh .snitem{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; background:none; border:none;
-    color:var(--muted); font:inherit; font-size:13.5px; font-weight:500; padding:8px 10px; border-radius:9px; cursor:pointer; }
-  .fh .snitem:hover{ background:var(--panel2); color:var(--text); }
-  .fh .snitem.on{ background:var(--acc-soft); color:var(--acc); font-weight:600; }
-  .fh .snico{ width:16px; text-align:center; opacity:.85; }
-}
 .fh .tab{ font:inherit; font-weight:500; background:none; border:none; border-radius:9px; color:var(--muted); padding:7px 15px; cursor:pointer; font-size:13.5px; white-space:nowrap; transition:color .15s, background .15s; }
 .fh .tab:hover{ color:var(--text); }
 .fh .tab.on{ background:var(--panel); color:var(--text); font-weight:600; box-shadow:0 1px 8px rgba(2,6,16,.35); }
@@ -2265,10 +2251,10 @@ function FinanceHQ({ config }) {
   /* The same pages, grouped the way you actually think about them — shown as a
      sidebar at desktop width, where a flat row of eight reads as clutter. */
   const NAV_SECTIONS = [
-    ["", [["dash", "Dashboard", "◧"], ["life", "Life", "✦"]]],
-    ["Money", [["budget", "Budget", "▤"], ["overview", "Accounts", "⌂"], ["plan", "Plan", "➤"]]],
-    ["Grow", [["invest", "Invest", "↗"], ["career", "Career", "★"]]],
-    ["", [["assistant", "Atlas", "✳"]]],
+    ["", [["dash", "Dashboard"], ["life", "Life"]]],
+    ["Money", [["budget", "Budget"], ["overview", "Accounts"], ["plan", "Plan"]]],
+    ["Grow", [["invest", "Invest"], ["career", "Career"]]],
+    ["", [["assistant", "Atlas"]]],
   ];
   /* phones get a 4-up bottom bar; the rest live behind More */
   const PRIMARY = [["dash", "Dashboard", "grid"], ["overview", "Accounts", "bank"], ["budget", "Budget", "bars"], ["assistant", "Atlas", "chat"]];
@@ -2280,26 +2266,19 @@ function FinanceHQ({ config }) {
       <header>
         <div className="wrap hrow">
           <div className="brand"><Logo size={30} /><h1>Atlas</h1></div>
+          {/* Segmentation lives IN the top row — the same groups the sidebar
+              attempt tried to be, as labelled clusters with dividers. Top nav
+              stays, because that's where he actually looks. */}
           <div className="tabs">
-            {TABS.map(([id, label]) => (
-              <button key={id} className={"tab" + (tab === id ? " on" : "")} onClick={() => setTab(id)}>{label}</button>
-            ))}
-          </div>
-          {/* Desktop gets a grouped sidebar instead of the flat tab row — the
-              same pages, segmented the way you actually think about them.
-              Phones keep the bottom bar; this only exists at width. */}
-          <nav className="snav">
-            {NAV_SECTIONS.map(([section, items]) => (
-              <div className="snsec" key={section || "top"}>
-                {section && <div className="snlab">{section}</div>}
-                {items.map(([id, label, icon]) => (
-                  <button key={id} className={"snitem" + (tab === id ? " on" : "")} onClick={() => setTab(id)}>
-                    <span className="snico">{icon}</span>{label}
-                  </button>
+            {NAV_SECTIONS.map(([sec, items], i) => (
+              <div className="tgroup" key={i}>
+                {sec && <span className="tglab">{sec}</span>}
+                {items.map(([id, label]) => (
+                  <button key={id} className={"tab" + (tab === id ? " on" : "")} onClick={() => setTab(id)}>{label}</button>
                 ))}
               </div>
             ))}
-          </nav>
+          </div>
           <div className="row" style={{ flexWrap: "nowrap" }}>
             <button className="btn small" title="Toggle theme" style={{ display: "inline-flex", alignItems: "center" }} onClick={() => setD((p) => ({ ...p, settings: { ...p.settings, theme: p.settings.theme === "dark" ? "light" : "dark" } }))}>
               <ThemeIcon dark={d.settings.theme === "dark"} />
