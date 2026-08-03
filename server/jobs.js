@@ -605,7 +605,56 @@ export async function pollAll(extraSources = []) {
   const added = jobs.filter((j) => !prevById.has(j.id)).length;
   const closed = (prev.jobs || []).filter((j) => !seen.has(j.id)).length;
 
-  writeCache({ jobs, sources: report, payStats, lastRun: new Date().toISOString(), took: Date.now() - started, added, closed });
+  /* ---- reposts ----------------------------------------------------------
+     A requisition that is closed and reopened gets a fresh id and a fresh
+     posted date, which resets the "days old" counter the reader is using to
+     judge it. Same employer, same title, new id: that is a repost, and a role
+     that reappears on a metronome is usually a pipeline-farming advert rather
+     than a job someone is trying to fill. Atlas polls the same boards every
+     six hours, so it is uniquely placed to notice — it just wasn't looking. */
+  const reg = { ...(prev.titles || {}) };
+  const tkey = (j) => (j.company + "|" + String(j.title || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim());
+  for (const j of jobs) {
+    const k = tkey(j);
+    const r = reg[k] || { first: j.firstSeen || today, ids: [], reposts: 0, gone: null };
+    if (!r.ids.includes(j.id)) {
+      /* a NEW id for a title we already had, after the old one vanished */
+      if (r.ids.length && r.gone) { r.reposts += 1; r.lastRepost = today; }
+      r.ids.push(j.id);
+      if (r.ids.length > 8) r.ids = r.ids.slice(-8);
+    }
+    r.gone = null;
+    r.lastSeen = today;
+    reg[k] = r;
+  }
+  /* mark titles whose every id has disappeared, so a later reappearance counts */
+  for (const [k, r] of Object.entries(reg)) {
+    if (r.lastSeen !== today && !r.gone) r.gone = today;
+    /* forget anything untouched for a year rather than growing without bound */
+    if (r.lastSeen && (Date.parse(today) - Date.parse(r.lastSeen)) > 365 * 86400000) delete reg[k];
+  }
+  /* hand each posting its own history */
+  for (const j of jobs) {
+    const r = reg[tkey(j)];
+    if (!r) continue;
+    j.reposts = r.reposts || 0;
+    j.firstEverSeen = r.first;
+    const trueAge = Math.round((Date.parse(today) - Date.parse(r.first)) / 86400000);
+    if (Number.isFinite(trueAge) && trueAge >= 0) j.trueAgeDays = trueAge;
+  }
+
+  /* ---- hiring velocity --------------------------------------------------
+     How many roles an employer has open, sampled each poll. A hiring freeze
+     shows up on a company's own board weeks before any announcement, and this
+     is the cheapest possible way to see it: count what we already fetched. */
+  const counts = {};
+  for (const j of jobs) counts[j.company] = (counts[j.company] || 0) + 1;
+  const vel = [...(prev.velocity || []).filter((v) => v.date !== today), { date: today, counts }]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-120);   // roughly a year of daily samples
+
+  writeCache({ jobs, sources: report, payStats, titles: reg, velocity: vel,
+    lastRun: new Date().toISOString(), took: Date.now() - started, added, closed });
   running = false;
   return { total: jobs.length, added, closed, took: Date.now() - started,
     withRealPay: jobs.filter((j) => j.comp > 0 && !j.compEst).length };
@@ -620,4 +669,23 @@ export function startPolling(dataDir, extraSourcesFn) {
   setTimeout(run, 20000).unref();
   timer = setInterval(run, POLL_EVERY_MS);
   timer.unref();
+}
+
+/* Direction of travel per employer: how their open-role count now compares with
+   a month ago. Two samples a month apart is a weak signal on its own, which is
+   why this returns the samples alongside the verdict rather than just a word. */
+export function velocityFor(company) {
+  const c = getCache();
+  const rows = (c.velocity || []).map((v) => ({ date: v.date, n: v.counts?.[company] ?? null }))
+    .filter((r) => r.n != null);
+  if (rows.length < 2) return null;
+  const now = rows[rows.length - 1];
+  const target = Date.parse(now.date) - 30 * 86400000;
+  /* the sample closest to a month back, not merely the oldest one */
+  const then = rows.reduce((a, b) => (Math.abs(Date.parse(b.date) - target) < Math.abs(Date.parse(a.date) - target) ? b : a));
+  if (then.date === now.date) return null;
+  const delta = now.n - then.n;
+  const days = Math.round((Date.parse(now.date) - Date.parse(then.date)) / 86400000);
+  return { now: now.n, then: then.n, delta, days, samples: rows.length,
+    dir: delta > 0 ? "growing" : delta < 0 ? "shrinking" : "flat" };
 }

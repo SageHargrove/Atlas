@@ -419,7 +419,12 @@ const CSS = `
 .fh .catopen:hover b{ color:var(--acc); }
 /* A fold header must be clickable across its whole width — hitting only the
    words means aiming at text and usually selecting it instead. */
-.fh .foldhead{ width:100%; padding:2px 0; }
+/* The header must fill the CARD, not merely wrap its own text. Clicking the
+   padding above or below the title did nothing — which is exactly where people
+   aim, because the whole box looks like the control. Negative margins pull the
+   button out over the card padding so the entire rectangle is the hit target. */
+.fh .foldhead{ width:calc(100% + 40px); margin:-18px -20px 0; padding:18px 20px; border-radius:16px 16px 0 0; }
+.fh .card > .foldhead:only-child{ margin-bottom:-18px; border-radius:16px; }
 .fh .foldhead:hover{ background:var(--panel2); border-radius:8px; }
 .fh .catopen{ flex:1; padding:3px 4px; border-radius:7px; }
 .fh .catopen:hover{ background:var(--panel2); }
@@ -3698,12 +3703,24 @@ function Dashboard({ d, setD, config, setTab }) {
   const [drill, setDrill] = useState(null); // "in" | "out" — tile drill-down
   const start = rangeStart(range);
   const tx = d.txns.filter((t) => (t.date || "") >= start);
-  const spend = tx.filter((t) => t.kind === "out").reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  /* Cash flow can only be measured over months where BOTH sides were recorded.
+     A CSV import excludes credits by default, so Jan–Apr arrived with $13,450 of
+     spending and no income at all — and comparing those against income that was
+     never imported produced -$21,699 for someone whose net worth went UP. Count
+     only months that have income on the books, and say how many were skipped. */
+  const monthKeys = [...new Set(tx.map((t) => (t.date || "").slice(0, 7)).filter(Boolean))].sort();
+  const hasIncome = new Set(tx.filter((t) => t.kind === "in").map((t) => (t.date || "").slice(0, 7)));
+  const usable = monthKeys.filter((m) => hasIncome.has(m));
+  const blind = monthKeys.filter((m) => !hasIncome.has(m));
+  const scope = (t) => usable.length === 0 || hasIncome.has((t.date || "").slice(0, 7));
+  const spend = tx.filter((t) => t.kind === "out" && scope(t)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
   const inSum = tx.filter((t) => t.kind === "in").reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const monthsN = range === "m" ? 1 : range === "3m" ? 3 : range === "6m" ? 6 : range === "ytd" ? new Date().getMonth() + 1 : Math.max(1, new Set(d.txns.map((t) => (t.date || "").slice(0, 7))).size);
+  const monthsN = usable.length || (range === "m" ? 1 : range === "3m" ? 3 : range === "6m" ? 6
+    : range === "ytd" ? new Date().getMonth() + 1 : Math.max(1, new Set(d.txns.map((t) => (t.date || "").slice(0, 7))).size));
   const income = inSum > 0 ? inSum : (Number(d.settings.incomeMonthly) || 0) * monthsN;
   const net = income - spend;
   const rate = income > 0 ? Math.round((net / income) * 100) : null;
+  const blindSpend = tx.filter((t) => t.kind === "out" && !scope(t)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
   const { assets, debts, nw } = netWorth(d.accounts);
 
@@ -3872,6 +3889,15 @@ function Dashboard({ d, setD, config, setTab }) {
           <div className="big mono" style={{ fontSize: 22, color: net >= 0 ? "var(--up)" : "var(--red)" }}>{(net >= 0 ? "+" : "") + fmt(net)}</div>
           <div style={{ margin: "4px 0 6px" }}><Spark data={months.map((m) => m.Income - m.Spending)} /></div>
           <span className={"chip " + (rate == null ? "ghost" : rate >= 20 ? "up" : rate >= 0 ? "ghost" : "dn")}>{rate == null ? "set income" : rate + "% kept"}</span>
+          <Why label="Net cash flow"
+            rows={[{ k: "Months counted", v: usable.length ? usable.join(", ") : "none" },
+                   { k: "Income", v: fmt(income) }, { k: "Spending", v: fmt(spend) }]}
+            rule={"Income minus spending, across the " + (usable.length || 0) + " month(s) that have BOTH sides recorded."}
+            excludes={blind.length
+              ? blind.join(", ") + " — " + fmt(blindSpend) + " of spending in months with no income on the books, usually because a CSV import excluded credits. Counting that against income which was never imported is what made this number impossible."
+              : "Nothing — every month in range has both sides recorded."}
+            result={(net >= 0 ? "+" : "") + fmt(net)}
+            caveat={blind.length ? "Re-import those months with credits included and they will join the calculation." : null} />
         </div>
         <div className="card">
           <div className="note" style={{ margin: 0 }}>Runway</div>

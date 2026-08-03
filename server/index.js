@@ -661,6 +661,48 @@ const extraSources = () => {
   return out.slice(0, 60); // a bounded poll, whatever anyone adds
 };
 
+/* Federal contract exposure. For a defence or health-IT employer, contract
+   expiry IS the layoff calendar — a recompete they lose takes the team with it,
+   and that is knowable months ahead from a free government API. Cached per
+   company for a day; USAspending is public data and generous, but there is no
+   reason to ask it the same question repeatedly. */
+const AWARD_CACHE = new Map();
+app.get("/api/company/contracts", auth, quoteLimiter, async (req, res) => {
+  const name = String(req.query.name || "").trim().slice(0, 60);
+  if (!name) return res.status(400).json({ error: "No company given" });
+  const hit = AWARD_CACHE.get(name.toLowerCase());
+  if (hit && Date.now() - hit.at < 864e5) return res.json(hit.data);
+  try {
+    const r = await fetch("https://api.usaspending.gov/api/v2/search/spending_by_award/", {
+      method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
+      signal: AbortSignal.timeout(20000),
+      body: JSON.stringify({
+        filters: { award_type_codes: ["A", "B", "C", "D"], recipient_search_text: [name],
+          time_period: [{ start_date: new Date(Date.now() - 3 * 365 * 864e5).toISOString().slice(0, 10),
+            end_date: new Date(Date.now() + 5 * 365 * 864e5).toISOString().slice(0, 10) }] },
+        fields: ["Award Amount", "Recipient Name", "End Date", "Awarding Agency", "Description"],
+        limit: 40, page: 1, sort: "Award Amount", order: "desc" }),
+    });
+    if (!r.ok) throw new Error("USAspending " + r.status);
+    const j = await r.json();
+    const rows = (j.results || []).map((x) => ({
+      amount: Number(x["Award Amount"]) || 0, recipient: x["Recipient Name"] || "",
+      end: x["End Date"] || "", agency: x["Awarding Agency"] || "" }))
+      .filter((x) => x.amount > 0);
+    const total = rows.reduce((s2, x) => s2 + x.amount, 0);
+    const soon = rows.filter((x) => x.end && Date.parse(x.end) > Date.now()
+      && Date.parse(x.end) < Date.now() + 365 * 864e5).sort((a, b) => a.end.localeCompare(b.end));
+    const data = { name, count: rows.length, total, top: rows.slice(0, 5),
+      expiringWithinAYear: soon.slice(0, 5),
+      atRisk: soon.reduce((s2, x) => s2 + x.amount, 0) };
+    AWARD_CACHE.set(name.toLowerCase(), { at: Date.now(), data });
+    res.json(data);
+  } catch (e) {
+    console.error("usaspending failed:", e.message);
+    res.status(502).json({ error: "Could not reach USAspending right now" });
+  }
+});
+
 app.get("/api/jobs", auth, (req, res) => {
   const c = getCache();
   res.json({ jobs: c.jobs || [], lastRun: c.lastRun || null, added: c.added || 0, closed: c.closed || 0,
