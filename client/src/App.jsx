@@ -8,6 +8,7 @@ import Fold, { FoldWrap } from "./Fold.jsx";
 import Retire from "./Retire.jsx";
 import Loan from "./Loan.jsx";
 import SplitRules from "./SplitRules.jsx";
+import OfferImpact from "./OfferImpact.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -1729,6 +1730,10 @@ function Plan({ d, setD }) {
       <FoldWrap title="Purchase planner" sub="can I afford this, and when">
         <PurchasePlanner d={d} setD={setD} />
       </FoldWrap>
+
+      <Fold title="What would an offer change?" sub="run a real offer through your actual budget and goals">
+        <OfferImpact d={d} setD={setD} />
+      </Fold>
 
       <Fold title="Retire by…" sub="worked backwards from an age you pick" right={"target " + (d.settings.retTarget || 45)}>
         <Retire d={d} invested={investedNow} monthlySpendNow={avgSpend} />
