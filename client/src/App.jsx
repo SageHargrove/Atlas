@@ -455,6 +455,8 @@ const CSS = `
 .fh .whyrule{ margin-top:6px; color:var(--muted); line-height:1.5; }
 .fh .whyresult{ display:flex; justify-content:space-between; gap:10px; margin-top:7px; padding-top:6px;
   border-top:1px solid var(--line2); font-weight:600; }
+.fh .sparkgrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; margin-top:12px; }
+.fh .sparktile{ background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
 .fh .catdrill{ margin:8px 0 2px 22px; border-left:2px solid var(--line); padding-left:12px; }
 .fh .cdrow{ display:grid; grid-template-columns:1fr 34px 78px 40px; gap:8px; align-items:baseline; padding:3px 0; }
 .fh .cdname{ font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -3166,7 +3168,27 @@ function Invest({ d, setD, config }) {
 
   const invAccounts = d.accounts.filter((a) => INVESTED.includes(a.type));
   const [ideasBusy, setIdeasBusy] = useState(false);
+
+
   const ideas = d.settings.investIdeas || null;   // { at, text } — persisted, since research keeps its value for weeks
+  const [sparks, setSparks] = useState(null);   // SYMBOL -> history | null
+  /* Pull ticker candidates out of the free text, then let the history endpoint
+     prove which are real — an uppercase word that is not a symbol fetches null
+     and simply never renders. The blocklist only exists to avoid wasting the
+     lookup budget on obvious English. */
+  const NOT_TICKERS = new Set(["ETF","ETFS","IRA","ROTH","US","USA","FOR","AND","THE","NOT","OWN","VS","AI","CEO","NYSE","FUND","NOTE","MY"]);
+  useEffect(() => {
+    if (!ideas?.text) { setSparks(null); return; }
+    const cands = [...new Set((ideas.text.match(/\b[A-Z]{2,5}(?:\.[A-Z])?\b/g) || [])
+      .filter((t) => !NOT_TICKERS.has(t)))].slice(0, 10);
+    if (!cands.length) { setSparks(null); return; }
+    let dead = false;
+    fetch("/api/history?symbols=" + encodeURIComponent(cands.join(",")))
+      .then((r) => r.json())
+      .then((j) => { if (!dead) setSparks(j.history || null); })
+      .catch(() => { if (!dead) setSparks(null); });
+    return () => { dead = true; };
+  }, [ideas?.text]);
   const researchIdeas = async () => {
     setIdeasBusy(true);
     try {
@@ -3334,6 +3356,36 @@ function Invest({ d, setD, config }) {
             </button>
             {ideas && <span className="note" style={{ margin: 0 }}>from {ideas.at} — research ages; refresh before acting on it</span>}
           </div>
+          {/* the quick peek before Fidelity: six months of each named ticker,
+              drawn only for symbols the history endpoint could actually prove */}
+          {ideas && sparks && Object.entries(sparks).some(([, h]) => h) && (
+            <div className="sparkgrid">
+              {Object.entries(sparks).filter(([, h]) => h).map(([sym, h]) => {
+                const min = Math.min(...h.closes), max = Math.max(...h.closes);
+                const W = 120, H = 34;
+                const pts = h.closes.map((c, i) =>
+                  (i / (h.closes.length - 1) * W).toFixed(1) + "," + (H - ((c - min) / Math.max(0.01, max - min)) * (H - 4) - 2).toFixed(1)
+                ).join(" ");
+                const up = h.pct6m >= 0;
+                return (
+                  <div className="sparktile" key={sym} title={sym + " — " + h.closes.length + " points over ~6 months"}>
+                    <div className="row" style={{ justifyContent: "space-between", gap: 6 }}>
+                      <b className="mono" style={{ fontSize: 12.5 }}>{sym}</b>
+                      <span className="mono" style={{ fontSize: 11.5, color: up ? "var(--up)" : "var(--down)" }}>
+                        {(up ? "+" : "") + h.pct6m}%
+                      </span>
+                    </div>
+                    <svg viewBox={"0 0 " + W + " " + H} style={{ width: "100%", height: H, display: "block", marginTop: 3 }}
+                      role="img" aria-label={sym + " six month price line, " + (up ? "up " : "down ") + Math.abs(h.pct6m) + " percent"}>
+                      <polyline points={pts} fill="none" stroke={up ? "var(--up)" : "var(--down)"} strokeWidth="1.6" />
+                    </svg>
+                    <div className="note" style={{ margin: "2px 0 0", fontSize: 10.5 }}>${h.last.toLocaleString()} · 6mo</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {ideas && <div className="note" style={{ marginTop: 6 }}>Lines are the last ~6 months of daily closes — direction and shape, not a chart to trade off. Anything named above that isn't drawn didn't resolve to a listed symbol (mutual fund classes often don't).</div>}
           {ideas && <div className="aiout">{ideas.text}</div>}
         </div>
         </FoldWrap>

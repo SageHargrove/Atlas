@@ -865,6 +865,42 @@ async function fetchQuote(sym) {
   quoteCache.set(sym, { q, ts: Date.now() });
   return q;
 }
+/* Six months of daily closes, for sparklines. Same Yahoo endpoint the quotes
+   already use, longer range, cached half a day — history doesn't move intraday
+   in any way a sparkline can show. Symbols are proof-by-fetch: an invalid one
+   returns null and the client simply doesn't draw it, which is also how ticker
+   extraction from free text stays safe. */
+const histCache = new Map(); // SYMBOL -> { h, ts }
+async function fetchHistory(sym) {
+  const hit = histCache.get(sym);
+  if (hit && Date.now() - hit.ts < 12 * 3600e3) return hit.h;
+  const y = sym.replace(/\./g, "-");   // BRK.B is BRK-B to Yahoo
+  const r = await fetch("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(y) + "?range=6mo&interval=1d",
+    { headers: { "user-agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(9000) });
+  if (!r.ok) throw new Error("history " + r.status);
+  const j = await r.json();
+  const res0 = j?.chart?.result?.[0];
+  const closes = (res0?.indicators?.quote?.[0]?.close || []).filter((x) => x != null);
+  if (closes.length < 20) throw new Error("thin history");
+  const step = Math.max(1, Math.floor(closes.length / 60));   // ~60 points is plenty for 240px
+  const h = {
+    closes: closes.filter((_, i) => i % step === 0 || i === closes.length - 1).map((x) => Math.round(x * 100) / 100),
+    last: Math.round(closes[closes.length - 1] * 100) / 100,
+    pct6m: Math.round(((closes[closes.length - 1] / closes[0]) - 1) * 1000) / 10,
+    currency: res0?.meta?.currency || "USD",
+  };
+  histCache.set(sym, { h, ts: Date.now() });
+  return h;
+}
+app.get("/api/history", auth, quoteLimiter, async (req, res) => {
+  const syms = [...new Set(String(req.query.symbols || "").toUpperCase().split(",").map((s) => s.trim())
+    .filter((s) => /^[A-Z0-9.^-]{1,10}$/.test(s)))].slice(0, 12);
+  if (!syms.length) return res.status(400).json({ error: "No valid symbols" });
+  const out = {};
+  await Promise.all(syms.map(async (s) => { try { out[s] = await fetchHistory(s); } catch { out[s] = null; } }));
+  res.json({ history: out });
+});
+
 app.get("/api/quotes", auth, quoteLimiter, async (req, res) => {
   const syms = [...new Set(String(req.query.symbols || "").toUpperCase().split(",").map((s) => s.trim())
     .filter((s) => /^[A-Z0-9.^=-]{1,12}$/.test(s)))].slice(0, 30);
