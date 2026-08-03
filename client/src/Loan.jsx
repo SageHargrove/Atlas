@@ -89,18 +89,28 @@ export default function Loan({ d, setD }) {
 
   const sched = useMemo(() => {
     if (!known) return null;
-    const pay = scheduledPayment(principal, apr, term);
-    const k = Math.min(term, monthsElapsed(start));
-    const bal = balanceAfter(principal, apr, term, k);
-    const totalInterest = pay * term - principal;
+    /* The payment on your statement is a FACT. Recomputing one from principal
+       and term makes a fitted principal outrank a number you read off the
+       lender - which is how this card came to claim $363.21 when the loan
+       charges $352.58. Use the stated payment whenever there is one. */
+    const stated = Number(acc.minPay) || 0;
+    const pay = stated > 0 ? stated : scheduledPayment(principal, apr, term);
+    const impliedTerm = stated > 0 && principal > 0
+      ? -Math.log(1 - (principal * (apr / 100 / 12)) / stated) / Math.log(1 + apr / 100 / 12) : term;
+    const eff = Number.isFinite(impliedTerm) && impliedTerm > 0 ? impliedTerm : term;
+    const k = Math.min(eff, monthsElapsed(start));
+    /* amortise with the stated payment, not a derived one */
+    const bal = (() => { const rr = apr / 100 / 12; let bb = principal;
+      for (let i = 0; i < k; i++) bb = Math.max(0, bb + bb * rr - pay); return bb; })();
+    const totalInterest = pay * eff - principal;
     const paidSoFar = pay * k;
     const principalPaid = principal - bal;
     const nextInterest = bal * (apr / 100 / 12);
     const end = new Date(start + "T00:00:00");
-    end.setMonth(end.getMonth() + term);
-    return { pay, k, bal, totalInterest, paidSoFar, principalPaid,
-      interestPaid: Math.max(0, paidSoFar - principalPaid), nextInterest, left: term - k, end };
-  }, [known, principal, apr, term, start]);
+    end.setMonth(end.getMonth() + Math.round(eff));
+    return { pay, k, bal, totalInterest, paidSoFar, principalPaid, stated: stated > 0, eff,
+      interestPaid: Math.max(0, paidSoFar - principalPaid), nextInterest, left: Math.max(0, Math.round(eff - k)), end };
+  }, [known, principal, apr, term, start, acc?.minPay]);
 
   /* What the ledger says you've actually paid — a check on the schedule, not
      its source. Being ahead is the interesting case and it's invisible otherwise. */
@@ -142,6 +152,11 @@ export default function Loan({ d, setD }) {
           <input className="in mono" type="number" value={acc.principal ?? ""} placeholder="e.g. 21000"
             onChange={(e) => setAcc({ principal: e.target.value })} />
         </div>
+        <div style={{ flex: "0 0 118px" }}>
+          <label className="f">Your payment</label>
+          <input className="in mono" type="number" step="0.01" value={acc.minPay ?? ""} placeholder="352.58"
+            onChange={(e) => setAcc({ minPay: e.target.value })} />
+        </div>
         <div style={{ flex: "0 0 86px" }}>
           <label className="f">APR %</label>
           <input className="in mono" type="number" step="0.01" value={acc.rate ?? ""} onChange={(e) => setAcc({ rate: e.target.value })} />
@@ -180,7 +195,7 @@ export default function Loan({ d, setD }) {
               <div className="gts">after {sched.k} of {term} payments</div>
             </div>
             <div className="gtile">
-              <div className="gtl">Scheduled payment</div>
+              <div className="gtl">{sched.stated ? "Your payment" : "Scheduled payment"}</div>
               <div className="gtv">{money2(sched.pay)}</div>
               <div className="gts">{sched.left} left · ends {sched.end.toLocaleDateString(undefined, { month: "short", year: "numeric" })}</div>
             </div>

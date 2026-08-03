@@ -1661,7 +1661,7 @@ function Plan({ d, setD }) {
         </div>
       </div>
 
-      <FoldWrap title="Money order of operations" sub="what the next dollar should do" defaultOpen>
+      <FoldWrap title="Money order of operations" sub="what the next dollar should do">
         <OrderOfOps d={d} k401ok={matchCap > 0 && contribPct >= matchCap} />
       </FoldWrap>
 
@@ -1720,7 +1720,7 @@ function Plan({ d, setD }) {
         )}
       </Fold>
 
-      <Fold title="Loan tracker" sub="what your payments have actually done to the balance" defaultOpen>
+      <Fold title="Loan tracker" sub="what your payments have actually done to the balance">
         <Loan d={d} setD={setD} />
       </Fold>
 
@@ -2721,6 +2721,7 @@ function Merchants({ d, setD }) {
   const [range, setRange] = useState("3m");
   const [sort, setSort] = useState("total");
   const [onlyUncat, setOnlyUncat] = useState(false);
+  const [mShown, setMShown] = useState(10);   // 130 rows is not a list anyone reads
   const [q, setQ] = useState("");
   const [openKey, setOpenKey] = useState(null);
   const [split, setSplit] = useState(null);
@@ -2874,7 +2875,7 @@ function Merchants({ d, setD }) {
       </div>
 
       <div className="card">
-        {shownRows.length ? shownRows.map((r) => {
+        {shownRows.length ? shownRows.slice(0, mShown).map((r) => {
           const ci = d.cats.findIndex((c) => c.id === r.catId);
           return (
             <div key={r.key} style={{ padding: "9px 0", borderBottom: "1px solid var(--line)" }}>
@@ -2945,6 +2946,20 @@ function Merchants({ d, setD }) {
             </div>
           );
         }) : <div className="note">No spending in this range yet — sync or log some transactions.</div>}
+        {/* 130 merchants is not a list anyone reads top to bottom */}
+        {shownRows.length > mShown && (
+          <div className="mrow" style={{ justifyContent: "center", marginTop: 10 }}>
+            <button className="btn small" onClick={() => setMShown((n) => n + 10)}>
+              Show 10 more — {shownRows.length - mShown} left
+            </button>
+            {mShown > 10 && <button className="btn small" onClick={() => setMShown(10)}>Collapse</button>}
+          </div>
+        )}
+        {mShown > 10 && shownRows.length <= mShown && (
+          <div className="mrow" style={{ justifyContent: "center", marginTop: 10 }}>
+            <button className="btn small" onClick={() => setMShown(10)}>Collapse</button>
+          </div>
+        )}
       </div>
 
       {split && (

@@ -1524,10 +1524,6 @@ export default function Career({ d, setD, config, toast }) {
         <Funnel apps={apps} setCareer={setCareer} />
       </Fold>
 
-      <Fold title="Brag document" sub="write it down while you still know the number">
-        <Brag S={S} setCareer={setCareer} />
-      </Fold>
-
       <Fold title="Where you could both work" sub="cities that work for both of you">
         <TwoCareerCities S={S} apps={apps} setCareer={setCareer} onShow={setFocusCompany} />
       </Fold>
@@ -1543,6 +1539,9 @@ export default function Career({ d, setD, config, toast }) {
               </button>
               {/* the numbers every score depends on belong with the rest of "who
                   you are", not stranded in a card at the bottom of the page */}
+              <button className={"pill" + (profileTab === "wins" ? " on" : "")} onClick={() => setProfileTab("wins")}>
+                Wins{(S.wins || []).length ? " " + S.wins.length : ""}
+              </button>
               <button className={"pill" + (profileTab === "assume" ? " on" : "")} onClick={() => setProfileTab("assume")}>Assumptions</button>
             </span>
           </span>
@@ -1555,6 +1554,8 @@ export default function Career({ d, setD, config, toast }) {
               <div style={{ overflowY: "auto", minHeight: 0, paddingRight: 6 }}>
                 {profileTab === "projects" ? (
                   <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
+                ) : profileTab === "wins" ? (
+                  <Brag S={S} setCareer={setCareer} />
                 ) : (
                   <>
                     <FloorOffer S={S} setCareer={setCareer} />
