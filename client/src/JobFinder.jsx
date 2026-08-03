@@ -178,7 +178,7 @@ function appAsRow(a, S) {
   };
 }
 
-export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header, focusCompany, onFocused, focusSource, onSourceFocused, onlyCompanies, onOnlyApplied }) {
+export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor, onCoverLetter, onImpact, onEdit, header, focusCompany, onFocused, focusSource, onSourceFocused, onlyCompanies, onOnlyApplied, onStats }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -232,10 +232,41 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
      whatever filters would hide it, and scroll it into view. Filtering to a
      company and getting nothing because a level chip excluded it is the kind of
      dead end that makes people stop trusting a link. */
-  /* An explicit set of companies the caller wants shown — the timeline knows
-     which windows are open, and the finder has no window filter of its own. */
+  /* An explicit set of companies the caller wants shown. */
   const [pinned, setPinned] = useState(null);
+  const [pinLabel, setPinLabel] = useState("");
   const boxRef = React.useRef(null);
+
+  /* ---- persistent preferences vs transient narrowing -------------------
+     The finder's counts kept lying because a number computed in one pipeline
+     was clicked into a view rendered through another: "20 live roles" counted
+     the raw cache, then the view applied family filters and showed 9. One
+     rule now: persistent preferences (families, US-only, never-show words)
+     travel with EVERY count; everything else is transient and any jump
+     clears it. A button's number is the number of cards you land on. */
+  const excludeWords = S.excludeWords || [];
+  const exclRes = useMemo(() => excludeWords.map((w) => {
+    const esc = String(w).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!esc) return null;
+    try { return new RegExp("\\b" + esc.replace(/\s+/g, "\\s+") + "\\b", "i"); } catch { return null; }
+  }).filter(Boolean), [excludeWords.join("¦")]);
+  const prefPass = (j) => (!usOnly || j.us)
+    && (!fams.size || fams.has(j.family))
+    && !exclRes.some((re) => re.test(j.title || ""));
+  const clearTransient = () => {
+    setQ(""); setLevels(new Set()); setCats(new Set()); setMinPay(0); setLimit(9);
+    setOnlyNew(false); setRemoteOnly(false); setIamOnly(false); setHideStale(false); setFitCities(false);
+  };
+  /* live board rows for one employer, through the same prefs every view uses */
+  const liveFor = (company) => scored.filter((x) => !x.tracked && x.company === company
+    && !dismissed.has(x.id) && prefPass(x));
+  const jumpToCompany = (company) => {
+    clearTransient(); setSource("board");
+    setPinned(new Set([String(company).toLowerCase()]));
+    setPinLabel(company);
+    boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   useEffect(() => {
     if (!focusCompany) return;
     setQ(focusCompany);
@@ -244,14 +275,20 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     onFocused?.();
   }, [focusCompany]);
-  /* The timeline counts targets whose hiring window is open; the finder has no
-     window filter of its own, so "show them" means: clear everything, switch to
-     the tracked targets, and put them on screen. */
+  /* "Open right now" from the timeline means VERIFIED: live postings, from
+     target employers whose boards demonstrably have matching roles today.
+     Unreadable boards are unknown — they don't get to pad an "open" count.
+     Transient narrowing clears; your families and never-show words do not,
+     so the number on the tile is the number of cards you land on. */
   useEffect(() => {
-    if (!Array.isArray(onlyCompanies) || !onlyCompanies.length) return;
-    setQ(""); setSource("tracked"); setLevels(new Set()); setFams(new Set()); setCats(new Set());
-    setMinPay(0); setOnlyNew(false); setRemoteOnly(false); setIamOnly(false); setHideStale(false); setFitCities(false);
-    setPinned(new Set(onlyCompanies.map((c) => String(c).toLowerCase())));
+    if (onlyCompanies !== "__liveopen__") return;
+    clearTransient();
+    setSource("board");
+    const cos = [...new Set(scored.filter((j) => j.tracked && j.status === "Target").map((j) => j.company))]
+      .filter((c) => liveFor(c).length > 0);
+    setPinned(new Set(cos.map((c) => c.toLowerCase())));
+    setPinLabel("Open now — verified live at " + cos.length + " of your targets"
+      + (targetStats.unverifiable ? " (" + targetStats.unverifiable + " more have no readable board)" : ""));
     boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     onOnlyApplied?.();
   }, [onlyCompanies]);
@@ -294,6 +331,23 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     return [...board, ...mine];
   }, [data, apps, S, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj]);
 
+  /* What the timeline's "open right now" should actually mean: targets whose
+     boards VERIFIABLY have matching roles today. Unreadable boards are unknown,
+     not open — they get their own count instead of padding this one. */
+  const targetStats = useMemo(() => {
+    const cos = [...new Set(scored.filter((j) => j.tracked && j.status === "Target").map((j) => j.company))];
+    let liveRoles = 0, liveCos = 0, watchedNone = 0, unverifiable = 0;
+    for (const c of cos) {
+      const n = liveFor(c).length;
+      const src = data?.sources?.[c];
+      if (n > 0) { liveCos++; liveRoles += n; }
+      else if (src && src.ok) watchedNone++;
+      else unverifiable++;
+    }
+    return { liveRoles, liveCos, watchedNone, unverifiable };
+  }, [scored, data, fams, usOnly, exclRes, dismissed]);
+  useEffect(() => { onStats?.(targetStats); }, [targetStats]);
+
   const rows = useMemo(() => {
     const ql = q.trim().toLowerCase();
     /* Most postings never state a level. Filtering to "entry" and hiding all of
@@ -306,6 +360,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     const unknown = (j) => j.levelSure === false && !j.levelBasis;
     let out = scored.filter((j) =>
       !dismissed.has(j.id) &&
+      prefPass(j) &&
       /* an explicit list from the timeline wins over every other filter */
       (!pinned || pinned.has(String(j.company || "").toLowerCase())) &&
       (source === "all" || (source === "board" ? !j.tracked
@@ -455,7 +510,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   ];
   const activeCount = fams.size + cats.size + levels.size + TOGGLES.filter((t) => t.on).length + (minPay ? 1 : 0);
   const clearAll = () => {
-    setPinned(null);
+    setPinned(null); setPinLabel("");
     setFams(new Set()); setCats(new Set()); setLevels(new Set()); setMinPay(0);
     TOGGLES.forEach((t) => t.off());
     setCareer((c) => ({ ...c, settings: { ...c.settings, jobFamilies: [], jobCats: [] } }));
@@ -614,8 +669,8 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       {pinned && (
         <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
           <span className="achip" style={{ borderColor: "var(--gold)", color: "var(--gold)" }}>
-            Windows open now — {pinned.size} employer{pinned.size === 1 ? "" : "s"}
-            <button onClick={() => setPinned(null)} title="Show everything again">×</button>
+            {pinLabel || "Pinned — " + pinned.size + " employer" + (pinned.size === 1 ? "" : "s")}
+            <button onClick={() => { setPinned(null); setPinLabel(""); }} title="Show everything again">×</button>
           </span>
         </div>
       )}
@@ -688,6 +743,29 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
             })}
           </div>
 
+          {/* The loudest power-user demand in every job-search community: a
+              persistent blocklist. Words here hide any title containing them,
+              from every view AND every count — physical security, network
+              engineering, whatever this search has taught you that you're not. */}
+          <label className="f">Never show (words in the title)</label>
+          <div className="row" style={{ gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
+            {excludeWords.map((w) => (
+              <span className="achip" key={w} style={{ borderColor: "var(--down)", color: "var(--down)" }}>
+                {w}
+                <button title="Allow again" onClick={() => setCareer((c) => ({ ...c, settings: { ...c.settings,
+                  excludeWords: (c.settings.excludeWords || []).filter((x) => x !== w) } }))}>×</button>
+              </span>
+            ))}
+            <input className="in" style={{ width: 180, padding: "4px 8px", fontSize: 12.5 }} placeholder="e.g. physical security"
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                const w = e.currentTarget.value.trim().toLowerCase();
+                if (!w) return;
+                e.currentTarget.value = "";
+                setCareer((c) => ({ ...c, settings: { ...c.settings,
+                  excludeWords: [...new Set([...(c.settings.excludeWords || []), w])] } }));
+              }} />
+          </div>
           <label className="f">Narrow it down</label>
           <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
             {TOGGLES.map((t) => (
@@ -732,11 +810,12 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                - board watched, N matches  -> point at the real postings
                - no readable board         -> keep estimates, labelled as such */
           const placeholder = j.tracked && /target/i.test(j.title || "");
-          const liveN = placeholder ? scored.filter((x) => !x.tracked && x.company === j.company).length : 0;
+          /* through the same prefs as every view, so this count IS the landing count */
+          const liveN = placeholder ? liveFor(j.company).length : 0;
           const src = data?.sources?.[j.company];
           const bs = !placeholder ? null
             : liveN > 0 ? { kind: "live", n: liveN }
-            : src && src.ok ? { kind: "none", scanned: src.scanned }
+            : src && src.ok ? { kind: "none", scanned: src.scanned, filtered: src.matched || 0 }
             : { kind: "unwatched" };
           const phantom = bs && bs.kind === "none";
           return (
@@ -807,12 +886,15 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
 
               {bs && bs.kind === "none" ? (
                 <div className="note" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.5, color: "var(--gold)" }}>
-                  Their board is watched — <b>{bs.scanned} open roles right now, none in security/IAM</b>. The scores and
-                  pay this card used to show described a job that doesn't currently exist. It'll appear here the day one does.
+                  {bs.filtered > 0
+                    ? <>Their board is watched — <b>{bs.filtered} security role{bs.filtered === 1 ? "" : "s"} live, but none in your areas of work</b>.
+                        Widen the family filters if you want to see {bs.filtered === 1 ? "it" : "them"}.</>
+                    : <>Their board is watched — <b>{bs.scanned} open roles right now, none in security/IAM</b>. It'll appear here the day one does.</>}
                 </div>
               ) : bs && bs.kind === "live" ? (
                 <div className="mrow" style={{ justifyContent: "flex-start", margin: 0 }}>
-                  <button className="btn small primary" onClick={() => { setQ(j.company); setSource("board"); boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>
+                  {/* count and landing view share one pipeline — this number is the card count you get */}
+                  <button className="btn small primary" onClick={() => jumpToCompany(j.company)}>
                     {bs.n} live matching role{bs.n === 1 ? "" : "s"} on their board — see {bs.n === 1 ? "it" : "them"}
                   </button>
                 </div>

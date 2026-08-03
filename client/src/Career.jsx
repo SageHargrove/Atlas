@@ -1355,6 +1355,7 @@ export default function Career({ d, setD, config, toast }) {
      rather than repeating its details in a second, worse place */
   const [focusCompany, setFocusCompany] = useState(null);
   const [openCompanies, setOpenCompanies] = useState(null);
+  const [jobStats, setJobStats] = useState(null);   // verified-live counts, reported up by the finder
   const [prepFor, setPrepFor] = useState(null);
   const [prepOut, setPrepOut] = useState("");
   const [prepBusy, setPrepBusy] = useState(false);
@@ -1501,7 +1502,7 @@ export default function Career({ d, setD, config, toast }) {
       <JobFinder S={S} apps={apps} setCareer={setCareer} toast={toast} myLevel={myLevel}
         onTailor={tailor} onCoverLetter={coverLetter} onImpact={setImpact} onEdit={setEditing}
         focusCompany={focusCompany} onFocused={() => setFocusCompany(null)}
-        onlyCompanies={openCompanies} onOnlyApplied={() => setOpenCompanies(null)}
+        onlyCompanies={openCompanies} onOnlyApplied={() => setOpenCompanies(null)} onStats={setJobStats}
         header={
           <span className="row" style={{ gap: 6 }}>
             <button className={"btn small" + (S.resume ? "" : " primary")} onClick={() => setProfileOpen(true)}>
@@ -1517,7 +1518,7 @@ export default function Career({ d, setD, config, toast }) {
         } />
 
       <Fold title="Timeline" sub={apps.length ? "when to apply, and what's left to do" : "add targets to see one"}>
-        <Timeline S={S} apps={apps} setCareer={setCareer} onShowOpen={(companies) => setOpenCompanies(companies)} />
+        <Timeline S={S} apps={apps} setCareer={setCareer} live={jobStats} onShowOpen={() => setOpenCompanies("__liveopen__")} />
       </Fold>
 
       <Fold title="How it's going" sub="your own conversion rates, follow-ups, and what has gone quiet">

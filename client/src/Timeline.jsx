@@ -38,7 +38,7 @@ function bucketOf(app, now) {
   return { key: "soon", order: w.from - now <= 2 ? 2 : 3, w };
 }
 
-export default function Timeline({ S, apps, setCareer, onShowOpen }) {
+export default function Timeline({ S, apps, setCareer, onShowOpen, live }) {
   const now = absNow(new Date());
   const grad = S.gradMonth || "2027-05";
   const gradAbs = Number(grad.slice(0, 4)) * 12 + (Number(grad.slice(5, 7)) - 1);
@@ -57,7 +57,11 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
   const seasonStart = gradAbs - 9;            // the August before a May graduation
   const seasonEnd = gradAbs - 6;              // through that November
   const inSeason = now >= seasonStart && now <= seasonEnd;
-  const live = groups.open.length + groups.closing.length;
+  /* windowOpen = targets whose PARSED window says open (a guess); verified =
+     live roles actually on their boards right now (a fact, when the feed has
+     loaded). The fact always outranks the guess wherever both exist. */
+  const windowOpen = groups.open.length + groups.closing.length;
+  const verified = live ? live.liveRoles : null;
   const applied = apps.filter((a) => a.status !== "Target" && a.status !== "Rejected" && a.status !== "Withdrawn").length;
 
   if (!apps.length) return null;
@@ -85,7 +89,9 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
       auto: (S.projects || []).some((p) => (p.pitch || "").trim()),
       todo: "Write a one-line pitch for each project. This is what you'll say out loud in an interview." },
     { k: "open", at: seasonStart, label: "New-grad window opens", auto: now >= seasonStart,
-      detail: live ? live + " target" + (live === 1 ? "" : "s") + " taking applications today" : "" },
+      detail: verified != null
+        ? (verified ? verified + " verified live role" + (verified === 1 ? "" : "s") + " across " + live.liveCos + " of your targets" : "no verified openings at your targets today")
+        : windowOpen ? windowOpen + " targets in window (unverified)" : "" },
     { k: "applying", at: seasonStart + 1, label: "Applications going out",
       auto: applied > 0,
       detail: applied ? applied + " out so far" + (groups.done.length ? " · " + groups.done.length + " in flight" : "") : "",
@@ -126,17 +132,27 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
         </label>
       </div>
 
-      {/* four counts, above the list, because they're the summary of it */}
+      {/* four counts, above the list, because they're the summary of it.
+          "Open right now" means VERIFIED — live postings on target boards,
+          through your own filters — because a count of parsed window strings
+          told you 73 were open when Jump Trading's board had zero. Unreadable
+          boards are unknown, not open; they're named, not counted. */}
       <div className="tlstats">
-        <button className="tlstat" title="Show these in the finder"
-          onClick={() => onShowOpen && onShowOpen([...groups.open, ...groups.closing].map((a) => a.company))}>
-          <span className="tlsn" style={{ color: live ? "var(--up)" : "var(--faint)" }}>{live}</span>
-          <span className="tlsl">Open right now</span>
+        <button className="tlstat" onClick={() => onShowOpen && onShowOpen()}
+          title={verified != null ? "Live matching roles on your targets' own boards — click to see exactly these" : "Job feed still loading"}>
+          <span className="tlsn" style={{ color: verified ? "var(--up)" : "var(--faint)" }}>{verified ?? "—"}</span>
+          <span className="tlsl">Open right now{verified != null && live?.liveCos ? " · " + live.liveCos + " employer" + (live.liveCos === 1 ? "" : "s") : ""}</span>
         </button>
         <div className="tlstat"><span className="tlsn">{groups.soon.length}</span><span className="tlsl">Opens soon</span></div>
         <div className="tlstat"><span className="tlsn" style={{ color: applied ? "var(--acc)" : "var(--faint)" }}>{applied}</span><span className="tlsl">Applied</span></div>
         <div className="tlstat"><span className="tlsn" style={{ color: groups.missed.length ? "var(--down)" : "var(--faint)" }}>{groups.missed.length}</span><span className="tlsl">Missed window</span></div>
       </div>
+      {live && (live.unverifiable > 0 || live.watchedNone > 0) && (
+        <div className="note" style={{ marginTop: 6 }}>
+          {live.watchedNone > 0 && <>{live.watchedNone} target{live.watchedNone === 1 ? "" : "s"} watched with nothing matching today. </>}
+          {live.unverifiable > 0 && <>{live.unverifiable} ha{live.unverifiable === 1 ? "s" : "ve"} no readable board — unknown, not counted; their Open buttons are the way to check by hand.</>}
+        </div>
+      )}
 
       <ol className="tline">
         {rows.map((r, i) => {
@@ -169,18 +185,20 @@ export default function Timeline({ S, apps, setCareer, onShowOpen }) {
         })}
       </ol>
 
-      {live > 0 && applied === 0 && (
+      {(verified ?? windowOpen) > 0 && applied === 0 && (
         <div className="note bad" style={{ marginTop: 10 }}>
           <div>
-            {live} target{live === 1 ? " is" : "s are"} open today and you haven't applied to anything. That's the whole game —
+            {verified != null
+              ? <>{verified} verified live role{verified === 1 ? " is" : "s are"} on your targets' own boards today and you haven't applied to anything.</>
+              : <>{windowOpen} target window{windowOpen === 1 ? " is" : "s are"} open by their stated dates.</>} That's the whole game —
             the tailored resume matters far less than being in the pile before it closes.
           </div>
           {onShowOpen && (
             <div className="mrow" style={{ justifyContent: "flex-start", marginTop: 8 }}>
               {/* passes the actual company list, so the finder filters to the
                   ones whose window is open rather than just to "my targets" */}
-              <button className="btn small primary" onClick={() => onShowOpen([...groups.open, ...groups.closing].map((a) => a.company))}>
-                Show the {live} that {live === 1 ? "is" : "are"} open
+              <button className="btn small primary" onClick={() => onShowOpen()}>
+                Show {verified != null ? "the " + verified + " verified roles" : "what's open"}
               </button>
             </div>
           )}
