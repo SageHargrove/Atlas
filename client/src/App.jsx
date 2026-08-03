@@ -7,6 +7,7 @@ import Trends from "./Trends.jsx";
 import Fold, { FoldWrap } from "./Fold.jsx";
 import Retire from "./Retire.jsx";
 import Loan from "./Loan.jsx";
+import SplitRules from "./SplitRules.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -418,6 +419,9 @@ const CSS = `
 .fh .dueq{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--faint); }
 .fh .duev{ font-size:14.5px; font-weight:600; margin-top:1px; }
 .fh .dued{ font-size:11px; color:var(--muted); }
+.fh .splitrule{ border:1px solid var(--line2); border-radius:11px; padding:11px 13px; margin-top:10px; background:var(--panel2); }
+.fh .bragrow{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; padding:5px 0; border-bottom:1px solid var(--line); font-size:13px; }
+.fh .bragrow:last-child{ border-bottom:none; }
 .fh .catdrill{ margin:8px 0 2px 22px; border-left:2px solid var(--line); padding-left:12px; }
 .fh .cdrow{ display:grid; grid-template-columns:1fr 34px 78px 40px; gap:8px; align-items:baseline; padding:3px 0; }
 .fh .cdname{ font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1445,6 +1449,12 @@ function Budget({ d, setD, config }) {
         {!shownTxns.length && <div className="note">{searching ? "Nothing matches this search." : "No transactions this month yet — log spending above as it happens, or import your bank's CSV."}</div>}
         </>)}
       </div>
+
+      <Fold title="Split rules" sub="for one payment that covers two things">
+
+        <SplitRules d={d} setD={setD} />
+
+      </Fold>
 
       <FoldWrap title="Recurring" sub="bills and subscriptions you've told Atlas about">
         <Recurring d={d} setD={setD} />

@@ -115,7 +115,24 @@ export default function Trends({ d }) {
         }).filter((r) => r.vals.filter((v) => v.v != null).length >= 2)
       : [];
 
-    return { months: filled, complete, avg, median, cur, catRows, years, yoy,
+    /* Savings rate is the single strongest predictor of every long-term
+       outcome, and Atlas already has both halves of it. Complete months only,
+       same rule as everything else here. */
+    const income = new Map();
+    for (const t of (d.txns || [])) {
+      if (t.kind !== "in" || !t.date) continue;
+      const k = monthKey(t.date);
+      income.set(k, (income.get(k) || 0) + (Math.abs(Number(t.amount)) || 0));
+    }
+    const rateRows = complete.map((mm) => {
+      const inc = income.get(mm.key) || 0;
+      return { key: mm.key, inc, out: mm.total, rate: inc > 0 ? (inc - mm.total) / inc : null };
+    }).filter((x) => x.inc > 0);
+    const savedTot = rateRows.reduce((a, x) => a + (x.inc - x.out), 0);
+    const incTot = rateRows.reduce((a, x) => a + x.inc, 0);
+    const savingsRate = incTot > 0 ? savedTot / incTot : null;
+
+    return { months: filled, complete, avg, median, cur, catRows, years, yoy, rateRows, savingsRate, savedTot, incTot,
       first: keys[0], last: keys[keys.length - 1] };
   }, [d.txns, d.cats, thisMonth]);
 
@@ -123,7 +140,7 @@ export default function Trends({ d }) {
      supplies both. Rendering them here too showed the title twice. */
   if (!model) return <div className="note">Nothing to compare yet — this fills in once there are expenses recorded.</div>;
 
-  const { months, complete, avg, median, cur, catRows, years, yoy } = model;
+  const { months, complete, avg, median, cur, catRows, years, yoy, rateRows, savingsRate, savedTot, incTot } = model;
   const shown = months.slice(-14);
   const peak = Math.max(...shown.map((m) => m.total), 1);
   const curTotal = cur ? cur.total : 0;
@@ -173,6 +190,25 @@ export default function Trends({ d }) {
           </div>
 
           {/* Single series, so one hue and no legend — the heading names it. */}
+          {savingsRate != null && (
+            <div className="budgtot" style={{ marginTop: 0, marginBottom: 12 }}>
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+                <b style={{ fontSize: 13.5 }}>Savings rate</b>
+                <span className="mono" style={{ fontSize: 19, fontWeight: 600, color: savingsRate >= 0.2 ? "var(--up)" : savingsRate >= 0 ? "var(--gold)" : "var(--down)" }}>
+                  {Math.round(savingsRate * 100)}%
+                </span>
+              </div>
+              <div className="note" style={{ marginTop: 4 }}>
+                You kept <b className="mono">{money(savedTot)}</b> of <b className="mono">{money(incTot)}</b> earned across{" "}
+                {rateRows.length} complete month{rateRows.length === 1 ? "" : "s"}.
+                {savingsRate < 0
+                  ? " You spent more than you earned over that stretch — savings or credit covered the difference."
+                  : savingsRate < 0.1 ? " Under 10% is the band where an unexpected bill becomes debt."
+                  : savingsRate < 0.2 ? " Solid for someone still in school."
+                  : " That is a genuinely high rate — it is the number that decides how early you can do anything."}
+              </div>
+            </div>
+          )}
           <div className="tlabel">Total spending by month</div>
           <div className="bars" role="img" aria-label={"Monthly spending from " + longLabel(shown[0].key) + " to " + longLabel(shown[shown.length - 1].key)}>
             {shown.map((m) => {

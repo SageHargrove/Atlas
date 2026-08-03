@@ -3,6 +3,8 @@ import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityM
   offerValue, baseToMatch, PENSION_DEFAULT_PCT, MARKET_PREMIUM } from "./careerData.js";
 import JobFinder, { guessMyLevel, yearsFromResume, LEVELS } from "./JobFinder.jsx";
 import Projects, { projectsBrief } from "./Projects.jsx";
+import Funnel from "./Funnel.jsx";
+import Brag from "./Brag.jsx";
 import Timeline, { compoundGap } from "./Timeline.jsx";
 
 /* ------------------------------------------------------------------
@@ -1516,6 +1518,14 @@ export default function Career({ d, setD, config, toast }) {
 
       <Fold title="Timeline" sub={apps.length ? "when to apply, and what's left to do" : "add targets to see one"}>
         <Timeline S={S} apps={apps} setCareer={setCareer} onShowOpen={(companies) => setOpenCompanies(companies)} />
+      </Fold>
+
+      <Fold title="How it's going" sub="your own conversion rates, follow-ups, and what has gone quiet">
+        <Funnel apps={apps} setCareer={setCareer} />
+      </Fold>
+
+      <Fold title="Brag document" sub="write it down while you still know the number">
+        <Brag S={S} setCareer={setCareer} />
       </Fold>
 
       <Fold title="Where you could both work" sub="cities that work for both of you">

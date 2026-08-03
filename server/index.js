@@ -936,6 +936,44 @@ const XFER_RE = /\btransfer\b|\bxfer\b|autopay|auto ?pay|card ?(?:pay(?:ment)?|p
 
 /* Classify a synced transaction. Inflows on debt accounts (card/loan payments
    arriving — or the odd refund) are never income. */
+/* Split one incoming transaction according to the user's standing rules.
+   Returns null when nothing matches, so the caller can keep the original row.
+
+   The tellerId stays on exactly ONE part. Copying it to both would make the
+   next sync think it had already imported the other half; dropping it entirely
+   would make the next sync re-import the whole payment as a duplicate. */
+function splitByRules(row, rules) {
+  if (!Array.isArray(rules) || !rules.length || row.kind !== "out") return null;
+  const note = String(row.note || "").toLowerCase();
+  const amt = Math.round((Number(row.amount) || 0) * 100) / 100;
+  for (const r of rules) {
+    const m = String(r.match || "").trim().toLowerCase();
+    if (!m || !note.includes(m)) continue;
+    if (r.minAmount && amt < Number(r.minAmount)) continue;
+    const parts = (r.parts || []).filter((p) => p.catId && Number(p.amount) > 0);
+    if (!parts.length) continue;
+    const fixed = parts.reduce((s, p) => s + Number(p.amount), 0);
+    /* The remainder is whatever the fixed parts don't claim, so rent absorbs a
+       rise in the total rather than the split silently failing to add up. */
+    const rest = Math.round((amt - fixed) * 100) / 100;
+    if (rest < 0) continue;                       // rule bigger than the payment — leave it alone
+    const out = parts.map((p, i) => ({
+      id: crypto.randomUUID(), accountId: row.accountId, date: row.date, kind: "out",
+      amount: Math.round(Number(p.amount) * 100) / 100, catId: p.catId,
+      note: row.note + (p.label ? " (" + p.label + ")" : ""), splitOf: row.tellerId || row.id, kindSet: true,
+      ...(i === 0 ? { tellerId: row.tellerId } : {}),
+    }));
+    if (rest > 0 && r.remainderCatId) {
+      out.push({ id: crypto.randomUUID(), accountId: row.accountId, date: row.date, kind: "out",
+        amount: rest, catId: r.remainderCatId, note: row.note, splitOf: row.tellerId || row.id, kindSet: true });
+    } else if (rest > 0) {
+      out[0].amount = Math.round((out[0].amount + rest) * 100) / 100;   // no remainder category — fold it in
+    }
+    return out;
+  }
+  return null;
+}
+
 function classifyKind(amt, accType, note) {
   if (XFER_RE.test(String(note || ""))) return "xfer";
   if (amt > 0 && DEBT.includes(accType)) return "xfer";
@@ -1319,7 +1357,13 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
             const carried = keptCats.get(fp(row));
             row.catId = carried || (kind === "out" ? autoCategorize(note, d.cats, merchantMem, Math.abs(amt)) : "");
             if (row.catId && !carried) autoCat++;
-            d.txns.push(row);
+            /* A recurring payment that is really two things — $750 that is $475
+               rent and $275 car — has to be split every single month, or both
+               budget lines lie. A rule does it on arrival so it never has to be
+               done by hand again. */
+            const split = splitByRules(row, d.settings?.splitRules);
+            if (split) { d.txns.push(...split); newTx += split.length - 1; }
+            else d.txns.push(row);
             newTx++;
           }
           /* Brokerage accounts carry a holdings array (undocumented in the spec, but
