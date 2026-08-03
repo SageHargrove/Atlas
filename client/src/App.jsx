@@ -9,6 +9,7 @@ import Retire from "./Retire.jsx";
 import Loan from "./Loan.jsx";
 import SplitRules from "./SplitRules.jsx";
 import OfferImpact from "./OfferImpact.jsx";
+import Why from "./Why.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -145,15 +146,28 @@ const netWorth = (accs = []) => {
 };
 
 /* average monthly spend over up to the last 3 months that have transactions */
-function avgMonthlySpend(txns) {
+/* An emergency fund covers the spending that doesn't stop when income does:
+   rent, utilities, food, getting to work, the loan payment. It does not need to
+   cover a PC you bought once, a tax bill, or a lump sum you chose to throw at
+   the car — and averaging those in is how six months of expenses came out at
+   $27,000 for someone whose rent is $475.
+
+   Two changes. Median rather than mean, so one $4,700 tax payment can't define
+   the baseline. And essentials only, because that is what the number is for. */
+const ESSENTIAL = /^(rent|mortgage|housing|utilities|groceries|food|transport|gas|fuel|health|medical|insurance|car ?\/ ?loan|loan|childcare|phone|internet)/i;
+function avgMonthlySpend(txns, cats) {
+  const ess = new Set((cats || []).filter((c) => ESSENTIAL.test(c.name)).map((c) => c.id));
+  const thisMonth = new Date().toISOString().slice(0, 7);
   const byMonth = {};
-  txns.filter((t) => t.kind === "out").forEach((t) => {
+  (txns || []).filter((t) => t.kind === "out").forEach((t) => {
     const m = (t.date || "").slice(0, 7);
-    if (m) byMonth[m] = (byMonth[m] || 0) + (Number(t.amount) || 0);
+    if (!m || m === thisMonth) return;            // the month you're in is always partial
+    if (ess.size && !ess.has(t.catId)) return;    // essentials only
+    byMonth[m] = (byMonth[m] || 0) + (Number(t.amount) || 0);
   });
-  const months = Object.keys(byMonth).sort().slice(-3);
-  if (!months.length) return 0;
-  return months.reduce((s, m) => s + byMonth[m], 0) / months.length;
+  const v = Object.values(byMonth).filter((x) => x > 0).sort((a, b) => a - b);
+  if (!v.length) return 0;
+  return v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
 }
 
 /* future value of monthly contributions */
@@ -423,6 +437,18 @@ const CSS = `
 .fh .splitrule{ border:1px solid var(--line2); border-radius:11px; padding:11px 13px; margin-top:10px; background:var(--panel2); }
 .fh .bragrow{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; padding:5px 0; border-bottom:1px solid var(--line); font-size:13px; }
 .fh .bragrow:last-child{ border-bottom:none; }
+.fh .whybtn{ width:15px; height:15px; border-radius:50%; border:1px solid var(--line2); background:none;
+  color:var(--faint); font-size:9.5px; line-height:1; cursor:pointer; padding:0; margin-left:5px; vertical-align:middle; flex-shrink:0; }
+.fh .whybtn:hover{ border-color:var(--acc); color:var(--acc); }
+.fh .whybox{ position:relative; margin-top:8px; background:var(--panel); border:1px solid var(--acc);
+  border-radius:10px; padding:10px 12px; font-size:12px; box-shadow:var(--shadow); z-index:5; }
+.fh .whyhead{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px; }
+.fh .whyrows{ border-top:1px solid var(--line); }
+.fh .whyrow{ display:flex; justify-content:space-between; gap:10px; padding:3px 0; border-bottom:1px solid var(--line); }
+.fh .whyrow span:first-child{ color:var(--muted); }
+.fh .whyrule{ margin-top:6px; color:var(--muted); line-height:1.5; }
+.fh .whyresult{ display:flex; justify-content:space-between; gap:10px; margin-top:7px; padding-top:6px;
+  border-top:1px solid var(--line2); font-weight:600; }
 .fh .catdrill{ margin:8px 0 2px 22px; border-left:2px solid var(--line); padding-left:12px; }
 .fh .cdrow{ display:grid; grid-template-columns:1fr 34px 78px 40px; gap:8px; align-items:baseline; padding:3px 0; }
 .fh .cdname{ font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1568,7 +1594,7 @@ function Goals({ d, setD }) {
 
 function Plan({ d, setD }) {
   const s = d.settings;
-  const avgSpend = avgMonthlySpend(d.txns);
+  const avgSpend = avgMonthlySpend(d.txns, d.cats);
   const [efSpend, setEfSpend] = useState("");     // manual override
   const [salary, setSalary] = useState(s.incomeMonthly ? Math.round(s.incomeMonthly * 12 / 0.75) : 85000); // rough gross guess, editable
   const [contribPct, setContribPct] = useState(6);
@@ -1681,7 +1707,26 @@ function Plan({ d, setD }) {
             <label className="f">Monthly expenses</label>
             <input className="in mono" type="number" placeholder={avgSpend ? Math.round(avgSpend) : "e.g. 2500"}
               value={efSpend} onChange={(e) => setEfSpend(e.target.value)} />
-            <div className="note">{avgSpend > 0 ? "Auto from your last months: " + fmt(avgSpend) : "Log transactions and this fills itself."}</div>
+            <div className="note">
+              {avgSpend > 0 ? "From your essential spending: " + fmt(avgSpend) : "Log transactions and this fills itself."}
+              {avgSpend > 0 && (() => {
+                const ess = d.cats.filter((c) => ESSENTIAL.test(c.name));
+                const skipped = d.cats.filter((c) => !ESSENTIAL.test(c.name));
+                const thisMonth = new Date().toISOString().slice(0, 7);
+                const by = {};
+                d.txns.filter((t) => t.kind === "out" && ess.some((c) => c.id === t.catId)).forEach((t) => {
+                  const mm = (t.date || "").slice(0, 7);
+                  if (mm && mm !== thisMonth) by[mm] = (by[mm] || 0) + (Number(t.amount) || 0);
+                });
+                const months = Object.entries(by).sort();
+                return <Why label="Monthly expenses"
+                  rows={months.map(([mm, v]) => ({ k: mm, v: fmt(v) }))}
+                  rule={"Median of " + months.length + " complete months, essentials only (" + ess.map((c) => c.name).join(", ") + "). Median rather than average so one unusual month can't set the baseline."}
+                  excludes={skipped.map((c) => c.name).join(", ") + " — and the month you're in, which is always partial. In a real emergency those stop; rent doesn't."}
+                  result={fmt(avgSpend) + "/mo → " + fmt(avgSpend * s.efMonths) + " for " + s.efMonths + " months"}
+                  caveat="This used to be the mean of the last three months of ALL spending, which counted a one-off tax bill as recurring and put the target at $27,000." />;
+              })()}
+            </div>
           </div>
           <div>
             <label className="f">Target</label>
@@ -1720,13 +1765,15 @@ function Plan({ d, setD }) {
         )}
       </Fold>
 
-      <Fold title="Loan tracker" sub="what your payments have actually done to the balance">
+      {/* One concern, not two cards. The loan tracker answers "where is this
+          loan", the payoff engine answers "which debt do I hit first" — they
+          were separate folds asking overlapping questions. */}
+      <Fold title="Debt" sub="where your loans are, and the fastest way out"
+        right={fmt(d.accounts.filter((a) => DEBT_TYPES.includes(a.type)).reduce((x, a) => x + (Number(a.balance) || 0), 0))}>
         <Loan d={d} setD={setD} />
-      </Fold>
-
-      <FoldWrap title="Debt payoff" sub="avalanche vs snowball">
+        <div style={{ height: 20 }} />
         <DebtPayoff d={d} setD={setD} />
-      </FoldWrap>
+      </Fold>
       <FoldWrap title="Purchase planner" sub="can I afford this, and when">
         <PurchasePlanner d={d} setD={setD} />
       </FoldWrap>
@@ -1735,11 +1782,11 @@ function Plan({ d, setD }) {
         <OfferImpact d={d} setD={setD} />
       </Fold>
 
-      <Fold title="Retire by…" sub="worked backwards from an age you pick" right={"target " + (d.settings.retTarget || 45)}>
+      <Fold title="Retire by…" sub="the same maths, run backwards from an age" right={"target " + (d.settings.retTarget || 45)}>
         <Retire d={d} invested={investedNow} monthlySpendNow={avgSpend} />
       </Fold>
 
-      <Fold title="Compound growth projector" right={fmt(projFV) + " in " + projYears + "y"}>
+      <Fold title="Growth projector" sub="what regular investing turns into" right={fmt(projFV) + " in " + projYears + "y"}>
         <div className="grid2" style={{ marginTop: 8 }}>
           <div><label className="f">Starting from ($)</label>
             <input className="in mono" type="number" value={projStart === null ? investedNow : projStart}
@@ -3343,7 +3390,7 @@ function DebtPayoff({ d, setD }) {
 function PurchasePlanner({ d, setD }) {
   const [np, setNp] = useState({ name: "", cost: "", by: "", monthly: "" });
   const income = Number(d.settings.incomeMonthly) || 0;
-  const kept = Math.max(0, income - avgMonthlySpend(d.txns));
+  const kept = Math.max(0, income - avgMonthlySpend(d.txns, d.cats));
   return (
     <div className="card">
       <h3>Purchase planner</h3>
@@ -3385,7 +3432,7 @@ function PurchasePlanner({ d, setD }) {
 function OrderOfOps({ d, k401ok }) {
   const s = d.settings;
   const liq = liquid(d.accounts);
-  const avg = avgMonthlySpend(d.txns);
+  const avg = avgMonthlySpend(d.txns, d.cats);
   const efTarget = avg * s.efMonths;
   const highDebt = d.accounts.filter((a) => a.type === "Credit card" && Number(a.balance) > 0);
   const taxAdv = d.accounts.filter((a) => ["401k", "IRA / Roth"].includes(a.type)).reduce((x, a) => x + Number(a.balance || 0), 0);
@@ -3699,7 +3746,7 @@ function Dashboard({ d, setD, config, setTab }) {
   const baseYear = [...realHist].reverse().find((h) => h.date < jan1)?.nw
     ?? (realHist.length > 1 && realHist[0].date >= jan1 ? realHist[0].nw : null);
   const ytdDelta = baseYear != null ? nw - baseYear : null;
-  const avgSpend = avgMonthlySpend(d.txns);
+  const avgSpend = avgMonthlySpend(d.txns, d.cats);
   const runway = avgSpend > 0 ? liquid(d.accounts) / avgSpend : null;
   const endDot = (p) => (p.index === hist.length - 1
     ? <circle key="end" cx={p.cx} cy={p.cy} r={4} fill="var(--up)" />
@@ -3750,7 +3797,16 @@ function Dashboard({ d, setD, config, setTab }) {
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div className="note" style={{ margin: 0, textTransform: "uppercase", letterSpacing: ".07em", fontSize: 11 }}>Net worth</div>
+            <div className="note" style={{ margin: 0, textTransform: "uppercase", letterSpacing: ".07em", fontSize: 11 }}>Net worth
+              <Why label="Net worth"
+                rows={d.accounts.filter((a) => Number(a.balance)).map((a) => ({
+                  k: String(a.name).slice(0, 32) + (isDebt(a) ? " (debt)" : ""),
+                  v: (isDebt(a) ? "−" : "") + fmt(a.balance) }))}
+                rule="Everything you own minus everything you owe. Synced accounts report their own balance; a manual loan is amortised from its terms; a vehicle is an estimate you set and should refresh once or twice a year."
+                excludes="Nothing. If an account is missing from this list it is missing from your net worth — that is usually the bug."
+                result={fmt(nw)}
+                caveat="Points before Atlas started recording are reconstructed: the loan from its payment schedule, the car depreciating at about 15%/yr. That is why the line moves through months Atlas wasn't running." />
+            </div>
             <div className="row" style={{ gap: 10 }}>
               <span className="big mono">{fmt(nw)}</span>
               {monthDelta != null && Math.abs(monthDelta) >= 1 && (
@@ -4128,7 +4184,7 @@ function AskAtlas({ d, setD, config }) {
             </div>
           ) : h.buy ? (() => {
             const cost = Math.round(Number(h.buy.cost) || 0);
-            const monthlyKept = Math.max(0, (Number(d.settings.incomeMonthly) || 0) - avgMonthlySpend(d.txns));
+            const monthlyKept = Math.max(0, (Number(d.settings.incomeMonthly) || 0) - avgMonthlySpend(d.txns, d.cats));
             /* the model sometimes answers "March 2027" instead of a date — that
                used to render as "$NaN/mo for NaN mo" */
             const by = /^\d{4}-\d{2}-\d{2}$/.test(h.buy.by || "") ? h.buy.by : null;
