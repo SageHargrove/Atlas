@@ -9,7 +9,7 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
-import { startPolling, initCache, pollAll, getCache, parseBoardUrl, SEED_SOURCES } from "./jobs.js";
+import { startPolling, initCache, pollAll, getCache, parseBoardUrl, SEED_SOURCES, velocityFor } from "./jobs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
@@ -705,8 +705,16 @@ app.get("/api/company/contracts", auth, quoteLimiter, async (req, res) => {
 
 app.get("/api/jobs", auth, (req, res) => {
   const c = getCache();
+  /* 30-day hiring direction per employer, computed from the velocity samples the
+     poller now keeps. A freeze shows on a company's own board weeks before any
+     announcement — the data was already being fetched; this makes it visible. */
+  const velocity = {};
+  for (const company of new Set((c.jobs || []).map((j) => j.company))) {
+    const v = velocityFor(company);
+    if (v && Math.abs(v.delta) >= 3) velocity[company] = v;
+  }
   res.json({ jobs: c.jobs || [], lastRun: c.lastRun || null, added: c.added || 0, closed: c.closed || 0,
-    sources: c.sources || {}, seeded: SEED_SOURCES.map((s) => s.company) });
+    sources: c.sources || {}, seeded: SEED_SOURCES.map((s) => s.company), velocity });
 });
 
 /* Manual refresh is heavily rate limited: it fans out to ~20 third-party APIs,

@@ -1488,6 +1488,9 @@ function Budget({ d, setD, config }) {
 
       </Fold>
 
+      <FoldWrap title="Merchants" sub="every place your money went, biggest first">
+        <Merchants d={d} setD={setD} />
+      </FoldWrap>
       <FoldWrap title="Recurring" sub="bills and subscriptions you've told Atlas about">
         <Recurring d={d} setD={setD} />
       </FoldWrap>
@@ -1628,7 +1631,8 @@ function Plan({ d, setD }) {
     const tot = inv.reduce((x, a) => x + Number(a.balance), 0);
     return tot > 0 ? inv.reduce((x, a) => x + Number(a.balance) * Number(a.rate), 0) / tot : null;
   })();
-  const [projStart, setProjStart] = useState(null); // null = follow investedNow
+  const [projStart, setProjStart] = useState(null);
+  const [futView, setFutView] = useState("retire");   // retire | grow // null = follow investedNow
   const startVal = projStart === null ? investedNow : Number(projStart) || 0;
   const projSeries = fvSeries(Number(projMonthly) || 0, Number(projYears) || 0, s.expReturn, startVal);
   const projFV = projSeries[projSeries.length - 1]?.value || 0;
@@ -1669,6 +1673,9 @@ function Plan({ d, setD }) {
 
       {/* You asked not to open onto a wall of closed dropdowns — this is the
           answer each fold would have given, so you only open the one you want. */}
+      {/* the scoreboard above the strategy — progress first, then the tools */}
+      <Goals d={d} setD={setD} />
+
       <div className="glance">
         <div className="gtile">
           <div className="gtl">Emergency fund</div>
@@ -1787,30 +1794,39 @@ function Plan({ d, setD }) {
         <OfferImpact d={d} setD={setD} />
       </Fold>
 
-      <Fold title="Retire by…" sub="the same maths, run backwards from an age" right={"target " + (d.settings.retTarget || 45)}>
-        <Retire d={d} invested={investedNow} monthlySpendNow={avgSpend} />
+      {/* One fold for the future: the same compounding maths asked two ways —
+          "when could I stop" and "what does this become". Two cards for it was
+          one of the consolidation complaints, and fairly. */}
+      <Fold title="Your future" sub="when you could retire, and what investing becomes"
+        right={fmt(projFV) + " in " + projYears + "y · retire " + (d.settings.retTarget || 45)}>
+        <div className="pills" style={{ marginBottom: 12 }}>
+          <button className={"pill" + (futView === "retire" ? " on" : "")} onClick={() => setFutView("retire")}>When can I retire?</button>
+          <button className={"pill" + (futView === "grow" ? " on" : "")} onClick={() => setFutView("grow")}>What does investing become?</button>
+        </div>
+        {futView === "retire" ? (
+          <Retire d={d} invested={investedNow} monthlySpendNow={avgSpend} />
+        ) : (<>
+          <div className="grid2" style={{ marginTop: 8 }}>
+            <div><label className="f">Starting from ($)</label>
+              <input className="in mono" type="number" value={projStart === null ? investedNow : projStart}
+                onChange={(e) => setProjStart(e.target.value)} />
+              <div className="note">Defaults to your invested balances (401k + IRA + brokerage + crypto).</div></div>
+            <div><label className="f">Monthly invested ($)</label><input className="in mono" type="number" value={projMonthly} onChange={(e) => setProjMonthly(e.target.value)} /></div>
+            <div><label className="f">Years</label><input className="in mono" type="number" value={projYears} onChange={(e) => setProjYears(e.target.value)} /></div>
+            <div><label className="f">Assumed return (%/yr)</label><input className="in mono" type="number" value={s.expReturn}
+              onChange={(e) => setD((p) => ({ ...p, settings: { ...p.settings, expReturn: Number(e.target.value) || 0 } }))} />
+              {weightedRate != null && <div className="note">Your accounts' weighted rate: {weightedRate.toFixed(1)}%</div>}</div>
+          </div>
+          <div className="kv" style={{ marginTop: 10 }}><span className="k">You'd put in (incl. start)</span><span className="mono">{fmt(contributed)}</span></div>
+          <div className="kv"><span className="k">Projected value</span><span className="mono good">{fmt(projFV)}</span></div>
+          <div className="kv"><span className="k">Growth doing the work</span><span className="mono">{fmt(projFV - contributed)}</span></div>
+          {projSeries.length > 1 && (
+            <ChartBox data={projSeries.filter((_, i) => i % Math.ceil(projSeries.length / 12) === 0 || i === projSeries.length - 1)} dataKey="value" xKey="year" height={160} />
+          )}
+          <div className="note">A projection at an assumed rate, not a promise — real returns vary year to year.</div>
+        </>)}
       </Fold>
 
-      <Fold title="Growth projector" sub="what regular investing turns into" right={fmt(projFV) + " in " + projYears + "y"}>
-        <div className="grid2" style={{ marginTop: 8 }}>
-          <div><label className="f">Starting from ($)</label>
-            <input className="in mono" type="number" value={projStart === null ? investedNow : projStart}
-              onChange={(e) => setProjStart(e.target.value)} />
-            <div className="note">Defaults to your invested balances (401k + IRA + brokerage + crypto).</div></div>
-          <div><label className="f">Monthly invested ($)</label><input className="in mono" type="number" value={projMonthly} onChange={(e) => setProjMonthly(e.target.value)} /></div>
-          <div><label className="f">Years</label><input className="in mono" type="number" value={projYears} onChange={(e) => setProjYears(e.target.value)} /></div>
-          <div><label className="f">Assumed return (%/yr)</label><input className="in mono" type="number" value={s.expReturn}
-            onChange={(e) => setD((p) => ({ ...p, settings: { ...p.settings, expReturn: Number(e.target.value) || 0 } }))} />
-            {weightedRate != null && <div className="note">Your accounts' weighted rate: {weightedRate.toFixed(1)}%</div>}</div>
-        </div>
-        <div className="kv" style={{ marginTop: 10 }}><span className="k">You'd put in (incl. start)</span><span className="mono">{fmt(contributed)}</span></div>
-        <div className="kv"><span className="k">Projected value</span><span className="mono good">{fmt(projFV)}</span></div>
-        <div className="kv"><span className="k">Growth doing the work</span><span className="mono">{fmt(projFV - contributed)}</span></div>
-        {projSeries.length > 1 && (
-          <ChartBox data={projSeries.filter((_, i) => i % Math.ceil(projSeries.length / 12) === 0 || i === projSeries.length - 1)} dataKey="value" xKey="year" height={160} />
-        )}
-        <div className="note">A projection at an assumed rate, not a promise — real returns vary year to year.</div>
-      </Fold>
 
       <Fold title="AI review" sub="a plain-English read on your numbers">
         <div className="note">Sends your numbers (from this app only) to Claude for a plain-language look at gaps and priorities. General education, not personalized investment advice.</div>
@@ -2220,8 +2236,10 @@ function FinanceHQ({ config }) {
     </div>
   );
 
-  const TABS = [["dash", "Dashboard"], ["overview", "Accounts"], ["budget", "Budget"], ["merchants", "Merchants"],
-    ["assistant", "Assistant"], ["career", "Career"], ["invest", "Invest"], ["goals", "Goals"], ["plan", "Plan"]];
+  /* Merchants lives inside Budget and Goals inside Plan now — a top-level tab
+     holding a single card was nav weight without nav value. */
+  const TABS = [["dash", "Dashboard"], ["overview", "Accounts"], ["budget", "Budget"],
+    ["assistant", "Assistant"], ["career", "Career"], ["invest", "Invest"], ["plan", "Plan"]];
   /* phones get a 4-up bottom bar; the rest live behind More */
   const PRIMARY = [["dash", "Dashboard", "grid"], ["overview", "Accounts", "bank"], ["budget", "Budget", "bars"], ["assistant", "Atlas", "chat"]];
   const SECONDARY = TABS.filter(([id]) => !PRIMARY.some((p) => p[0] === id));
@@ -2259,11 +2277,9 @@ function FinanceHQ({ config }) {
         {tab === "dash" && <Dashboard d={d} setD={setD} config={config} setTab={setTab} />}
         {tab === "overview" && <Overview d={d} setD={setD} config={config} syncBusy={syncBusy} syncMsg={syncMsg} onSync={syncNow} onRemoveBank={removeBank} onReload={loadData} />}
         {tab === "budget" && <><Budget d={d} setD={setD} config={config} /><FoldWrap title="Trends" sub="month by month, and year over year"><Trends d={d} /></FoldWrap></>}
-        {tab === "merchants" && <Merchants d={d} setD={setD} />}
         {tab === "assistant" && <AskAtlas d={d} setD={setD} config={config} />}
         {tab === "career" && <Career d={d} setD={setD} config={config} toast={toast} />}
         {tab === "invest" && <Invest d={d} setD={setD} config={config} />}
-        {tab === "goals" && <Goals d={d} setD={setD} />}
         {tab === "plan" && <Plan d={d} setD={setD} />}
       </main>
       {showSettings && (
@@ -2635,7 +2651,10 @@ function Recurring({ d, setD }) {
         </select>
         <button className="btn small primary" onClick={() => {
           if (!nr.amount) return;
-          setD((p) => ({ ...p, recurring: [...p.recurring, { id: uid(), ...nr, amount: Number(nr.amount) }] }));
+          /* With bank sync connected the real charge already arrives on its own,
+             so a new entry defaults to Watching — Auto-log would double-count it,
+             which is the exact trap the note above this form warns about. */
+          setD((p) => ({ ...p, recurring: [...p.recurring, { id: uid(), ...nr, amount: Number(nr.amount), watch: (p.simplefin || []).length > 0 }] }));
           setNr({ name: "", catId: nr.catId, amount: "", freq: "m", day: 1, month: 1 });
         }}>Add</button>
       </div>

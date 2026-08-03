@@ -206,6 +206,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   const [found, setFound] = useState(null);   // discovered boards awaiting your yes
   const [whyId, setWhy] = useState(null);     // which row's city detail is expanded
   const [menuId, setMenuId] = useState(null); // which card's overflow menu is open
+  const [contracts, setContracts] = useState({}); // company -> USAspending result
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [source, setSource] = useState("all");
   /* The offer you're near-certain of, adjusted the same way every row is, so the
@@ -740,6 +741,22 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                   })()}
                 </span>
               </div>
+              {contracts[j.company] && (() => {
+                const c = contracts[j.company];
+                const m = (x) => "$" + (x >= 1e9 ? (x / 1e9).toFixed(1) + "B" : x >= 1e6 ? Math.round(x / 1e6) + "M" : Math.round(x / 1e3) + "k");
+                return (
+                  <div className="note" style={{ margin: "6px 0 0", fontSize: 11.5, lineHeight: 1.5 }}>
+                    {c.loading ? "Checking USAspending…"
+                      : c.error ? "Federal contracts: " + c.error
+                      : c.count === 0 ? "No federal prime contracts on file — their revenue is private-sector."
+                      : <>Federal contracts: <b className="mono">{m(c.total)}</b> across {c.count} awards.
+                          {c.atRisk > 0 && <> <b style={{ color: "var(--gold)" }}>{m(c.atRisk)} expires within a year</b>
+                            {c.expiringWithinAYear[0] && " (next: " + c.expiringWithinAYear[0].end + ", " + (c.expiringWithinAYear[0].agency || "").split("|")[0] + ")"} — a recompete lost is a team gone.</>}
+                          {c.atRisk === 0 && " Nothing expiring within a year — stable federal book."}
+                          <button className="x" style={{ marginLeft: 6 }} onClick={() => setContracts((p) => { const q = { ...p }; delete q[j.company]; return q; })}>✕</button></>}
+                  </div>
+                );
+              })()}
 
               <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
                 {j.tracked && <span className="tag" style={{ color: STATUS_CLR[j.status] || "var(--faint)", borderColor: STATUS_CLR[j.status] || "var(--line2)" }}>{j.status}</span>}
@@ -784,6 +801,20 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                 {j.location || "location not stated"}{j.posted ? " · " + ago(j.posted) : ""}
                 {j.compLow ? " · posted " + money(j.compLow) + "–" + money(j.compHigh) : j.compEst ? " · pay estimated" : ""}
                 {j.ageDays > 120 ? " · open 4+ months" : ""}
+                {/* A closed-and-reopened req resets its own posted date — the age
+                    people judge it by. The registry keeps the true first sighting,
+                    and a role reposted repeatedly is usually pipeline-farming. */}
+                {j.reposts > 0 && (
+                  <span style={{ color: "var(--gold)" }} title={"First seen " + (j.firstEverSeen || "earlier") + " — reposting resets the visible age, so treat “" + ago(j.posted || j.firstSeen) + "” with suspicion."}>
+                    {" · reposted " + j.reposts + "×" + (j.trueAgeDays > (j.ageDays || 0) + 14 ? ", really " + Math.round(j.trueAgeDays / 30) + " mo old" : "")}
+                  </span>
+                )}
+                {data?.velocity?.[j.company] && (
+                  <span style={{ color: data.velocity[j.company].delta < 0 ? "var(--down)" : "var(--up)" }}
+                    title={"Open roles at " + j.company + ": " + data.velocity[j.company].then + " → " + data.velocity[j.company].now + " over " + data.velocity[j.company].days + " days. A shrinking board often precedes a freeze."}>
+                    {" · hiring " + (data.velocity[j.company].delta > 0 ? "up " : "down ") + Math.abs(data.velocity[j.company].delta) + " in 30d"}
+                  </span>
+                )}
               </span>
 
               <div className="jfoot">
@@ -813,6 +844,20 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                       <button onClick={() => { setMenuId(null); onImpact(track(j, true)); }}>What it pays me</button>
                       <hr />
                       <button onClick={() => { setMenuId(null); setWhy(whyId === j.id ? null : j.id); }}>Why this city</button>
+                      {/* Cleared and defense-adjacent employers live on federal money,
+                          and a recompete they lose takes the team with it. USAspending
+                          is public and free — the layoff calendar, months in advance. */}
+                      {["cleared", "consulting", "utility"].includes(j.cat) && (
+                        <button onClick={async () => {
+                          setMenuId(null);
+                          setContracts((p) => ({ ...p, [j.company]: { loading: true } }));
+                          try {
+                            const r = await fetch("/api/company/contracts?name=" + encodeURIComponent(j.company));
+                            const jj = await r.json();
+                            setContracts((p) => ({ ...p, [j.company]: r.ok ? jj : { error: jj.error || "lookup failed" } }));
+                          } catch { setContracts((p) => ({ ...p, [j.company]: { error: "lookup failed" } })); }
+                        }}>Federal contracts</button>
+                      )}
                       <button className="danger" onClick={() => { setMenuId(null); dismiss(j.id); }}>Not interested</button>
                     </div>
                   )}
