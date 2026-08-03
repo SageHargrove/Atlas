@@ -724,6 +724,21 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       <div className="jgrid">
         {rows.slice(0, limit).map((j) => {
           const already = tracked.has((j.company + "|" + j.title.slice(0, 90)).toLowerCase());
+          /* A tracked target with a placeholder role is an INTENTION, not a
+             posting — but the card dressed it as one: estimated pay, a fit
+             score, "+$183k vs floor", all describing a job nobody has verified
+             exists. Three honest states instead:
+               - board watched, 0 matches  -> say so; no phantom numbers
+               - board watched, N matches  -> point at the real postings
+               - no readable board         -> keep estimates, labelled as such */
+          const placeholder = j.tracked && /target/i.test(j.title || "");
+          const liveN = placeholder ? scored.filter((x) => !x.tracked && x.company === j.company).length : 0;
+          const src = data?.sources?.[j.company];
+          const bs = !placeholder ? null
+            : liveN > 0 ? { kind: "live", n: liveN }
+            : src && src.ok ? { kind: "none", scanned: src.scanned }
+            : { kind: "unwatched" };
+          const phantom = bs && bs.kind === "none";
           return (
             <div className="jcard" key={j.id}>
               <div className="jtop">
@@ -732,13 +747,17 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                   <span style={{ display: "block", fontSize: 12.5, marginTop: 1 }}>{j.title}</span>
                 </span>
                 <span style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div className="mono" style={{ fontSize: 14.5, fontWeight: 600 }}>{money(j.adj)}</div>
-                  {floorAdj > 0 && j.adj > 0 && (() => {
-                    const d = j.adj - floorAdj;
-                    if (Math.abs(d) < 2500) return <div className="note" style={{ margin: 0, fontSize: 10.5 }}>same as floor</div>;
-                    return <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: d > 0 ? "var(--up)" : "var(--down)" }}>
-                      {d > 0 ? "+" : "−"}{money(Math.abs(d))} vs floor</div>;
-                  })()}
+                  {phantom
+                    ? <div className="note" style={{ margin: 0, fontSize: 11.5 }}>no opening<br />to price</div>
+                    : <>
+                        <div className="mono" style={{ fontSize: 14.5, fontWeight: 600 }}>{money(j.adj)}</div>
+                        {floorAdj > 0 && j.adj > 0 && (() => {
+                          const d = j.adj - floorAdj;
+                          if (Math.abs(d) < 2500) return <div className="note" style={{ margin: 0, fontSize: 10.5 }}>same as floor</div>;
+                          return <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: d > 0 ? "var(--up)" : "var(--down)" }}>
+                            {d > 0 ? "+" : "−"}{money(Math.abs(d))} vs floor</div>;
+                        })()}
+                      </>}
                 </span>
               </div>
               {contracts[j.company] && (() => {
@@ -786,16 +805,35 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                 </span>
               )}
 
-              <div className="row" style={{ gap: 12 }}>
-                <Meter label="LIKELIHOOD" value={j.odds} color={meterColor(j.odds)}
-                  title={j.odds == null ? "Upload a resume and this turns on" : "Your rung, resume overlap, years, clearance, and how selective this employer is"} />
-                <Meter label="FIT" value={j.fit} color={meterColor(j.fit)}
-                  title="Pay after cost of living, place, growth, and whether it's the work you want" />
-                <Meter label="GROWTH" value={j.moveUp} color={meterColor(j.moveUp)}
-                  title={CAT_GROWTH[j.cat]?.[1] || "How fast this kind of employer promotes"} />
-              </div>
-
-              {j.why && <span className="note" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.45 }}>{j.why}</span>}
+              {bs && bs.kind === "none" ? (
+                <div className="note" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.5, color: "var(--gold)" }}>
+                  Their board is watched — <b>{bs.scanned} open roles right now, none in security/IAM</b>. The scores and
+                  pay this card used to show described a job that doesn't currently exist. It'll appear here the day one does.
+                </div>
+              ) : bs && bs.kind === "live" ? (
+                <div className="mrow" style={{ justifyContent: "flex-start", margin: 0 }}>
+                  <button className="btn small primary" onClick={() => { setQ(j.company); setSource("board"); boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>
+                    {bs.n} live matching role{bs.n === 1 ? "" : "s"} on their board — see {bs.n === 1 ? "it" : "them"}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {bs && bs.kind === "unwatched" && (
+                    <span className="note" style={{ margin: 0, fontSize: 10.5, color: "var(--gold)" }}>
+                      No readable board — role and pay are assumptions, not a posting. Open checks their careers page.
+                    </span>
+                  )}
+                  <div className="row" style={{ gap: 12 }}>
+                    <Meter label="LIKELIHOOD" value={j.odds} color={meterColor(j.odds)}
+                      title={j.odds == null ? "Upload a resume and this turns on" : "Your rung, resume overlap, years, clearance, and how selective this employer is"} />
+                    <Meter label="FIT" value={j.fit} color={meterColor(j.fit)}
+                      title="Pay after cost of living, place, growth, and whether it's the work you want" />
+                    <Meter label="GROWTH" value={j.moveUp} color={meterColor(j.moveUp)}
+                      title={CAT_GROWTH[j.cat]?.[1] || "How fast this kind of employer promotes"} />
+                  </div>
+                  {j.why && <span className="note" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.45 }}>{j.why}</span>}
+                </>
+              )}
 
               <span className="note" style={{ margin: 0, fontSize: 10.5 }}>
                 {j.location || "location not stated"}{j.posted ? " · " + ago(j.posted) : ""}
