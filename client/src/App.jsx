@@ -10,6 +10,7 @@ import Loan from "./Loan.jsx";
 import SplitRules from "./SplitRules.jsx";
 import OfferImpact from "./OfferImpact.jsx";
 import Why from "./Why.jsx";
+import Forecast from "./Forecast.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -3164,6 +3165,22 @@ function Invest({ d, setD, config }) {
   };
 
   const invAccounts = d.accounts.filter((a) => INVESTED.includes(a.type));
+  const [ideasBusy, setIdeasBusy] = useState(false);
+  const ideas = d.settings.investIdeas || null;   // { at, text } — persisted, since research keeps its value for weeks
+  const researchIdeas = async () => {
+    setIdeasBusy(true);
+    try {
+      const surplusNote = d.settings.incomeMonthly ? "Monthly take-home about $" + d.settings.incomeMonthly + "." : "";
+      const held = holdings.map((h) => h.symbol).join(", ") || "nothing yet";
+      const prompt = "Use web search. I am 22, investing inside a Roth IRA with a 40+ year horizon. I currently hold: " + held +
+        (watch.length ? ". Watching: " + watch.join(", ") : "") + ". " + surplusNote +
+        " Suggest 5 candidates worth MY OWN further research - at least three should be boring broad-market or target-date index funds, at most one individual stock. For each give: what it is in one line, the case FOR in one line, the case AGAINST in one line, expense ratio if a fund, and one concrete thing to verify before acting. Flag any suggestion that substantially overlaps what I already hold. Do NOT tell me to buy anything - these are research starting points, and end with one line on why time-in-market beats picking for someone my age. Plain text, under 400 words.";
+      const text = await callClaude(prompt, true);
+      setD((p) => ({ ...p, settings: { ...p.settings, investIdeas: { at: new Date().toISOString().slice(0, 10), text } } }));
+    } catch (e) { alert("Research failed - " + e.message); }
+    setIdeasBusy(false);
+  };
+
   const marketBrief = async () => {
     setBriefBusy(true);
     try {
@@ -3302,6 +3319,25 @@ function Invest({ d, setD, config }) {
       </div>
       </FoldWrap>
 
+      {config?.aiEnabled && (
+        <FoldWrap title="Research ideas" sub="starting points with the case for AND against — not advice">
+        <div className="card">
+          <h3>Research ideas</h3>
+          <div className="note">
+            Five candidates matched to your account, horizon and what you already hold — each with the bull case, the bear
+            case, and one thing to verify yourself. <b>These are homework assignments, not recommendations</b>: the point
+            is to save you the search, not the judgement.
+          </div>
+          <div className="mrow" style={{ justifyContent: "flex-start" }}>
+            <button className="btn primary" disabled={ideasBusy} onClick={researchIdeas}>
+              {ideasBusy ? "Researching…" : ideas ? "Refresh ideas" : "Get research ideas"}
+            </button>
+            {ideas && <span className="note" style={{ margin: 0 }}>from {ideas.at} — research ages; refresh before acting on it</span>}
+          </div>
+          {ideas && <div className="aiout">{ideas.text}</div>}
+        </div>
+        </FoldWrap>
+      )}
       {config?.aiEnabled && (
         <FoldWrap title="Market brief" sub="what moved today, and your tickers">
         <div className="card">
@@ -3655,7 +3691,45 @@ function MonthReview({ d, setD, config }) {
             </div>
           </div>
 
-          <div className="grid2" style={{ marginTop: 14 }}>
+          <Forecast d={d} />
+
+      {/* the weekly digest: the same story as month-in-review, but at the
+          cadence people actually check in at — and capped at one action,
+          because a digest with ten actions is a to-do list nobody does */}
+      {(() => {
+        const DAY = 864e5;
+        const cut = (n) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
+        const wk = d.txns.filter((t) => t.kind === "out" && t.date >= cut(7));
+        const prev = d.txns.filter((t) => t.kind === "out" && t.date >= cut(14) && t.date < cut(7));
+        if (!wk.length && !prev.length) return null;
+        const sum = (a) => a.reduce((x, t) => x + (Number(t.amount) || 0), 0);
+        const wkS = sum(wk), prevS = sum(prev);
+        const by = {};
+        wk.forEach((t) => { const c = d.cats.find((x) => x.id === t.catId)?.name || "Uncategorized"; by[c] = (by[c] || 0) + Number(t.amount); });
+        const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0];
+        const unfiled = wk.filter((t) => !t.catId).length;
+        const over = d.cats.filter((c) => Number(c.limit) > 0)
+          .map((c) => ({ c, spent: sum(d.txns.filter((t) => t.kind === "out" && t.catId === c.id && t.date >= new Date().toISOString().slice(0, 7) + "-01")) }))
+          .filter((x) => x.spent > Number(x.c.limit)).sort((a, b) => (b.spent - b.c.limit) - (a.spent - a.c.limit))[0];
+        const action = unfiled ? "File the " + unfiled + " uncategorized transaction" + (unfiled > 1 ? "s" : "") + " from this week — they are invisible to every budget line."
+          : over ? "Ease off " + over.c.name + " — already " + fmt(over.spent - Number(over.c.limit)) + " over for the month with time left on the clock."
+          : wkS > prevS * 1.4 && prevS > 0 ? "This week ran " + fmt(wkS - prevS) + " hotter than last — worth a glance at the biggest line before it becomes the new normal."
+          : "Nothing needs you. That is the good outcome — do not invent a chore.";
+        return (
+          <div className="card">
+            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <h3>This week</h3>
+              <span className="note" style={{ margin: 0 }}>
+                <b className="mono">{fmt(wkS)}</b> spent{prevS > 0 && <> · {wkS <= prevS ? <span className="good">{fmt(prevS - wkS)} less</span> : <span className="bad">{fmt(wkS - prevS)} more</span>} than last week</>}
+                {top && <> · most went to <b>{top[0]}</b> ({fmt(top[1])})</>}
+              </span>
+            </div>
+            <div className="note" style={{ marginTop: 6 }}><b>One thing:</b> {action}</div>
+          </div>
+        );
+      })()}
+
+      <div className="grid2" style={{ marginTop: 14 }}>
             <div>
               <div className="sub" style={{ marginBottom: 4 }}>Biggest changes vs {monthLabel(prevMonth(m))}</div>
               {movers.length ? movers.map((x) => (
