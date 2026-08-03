@@ -6,6 +6,7 @@ import TaxCard from "./TaxCard.jsx";
 import Trends from "./Trends.jsx";
 import Fold, { FoldWrap } from "./Fold.jsx";
 import Retire from "./Retire.jsx";
+import Loan from "./Loan.jsx";
 
 /* ------------------------------------------------------ */
 /*  Finance HQ — net worth · budget · goals · projections  */
@@ -982,6 +983,7 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onSync, onRemoveBank, on
           .map(([type, value]) => ({ name: type, value: Math.round(value), color: seriesColor(ASSET_TYPES.indexOf(type)) }))
           .sort((a, b) => b.value - a.value);
         return rows.length >= 2 ? (
+          <FoldWrap title="Asset allocation" sub="how your assets are split">
           <div className="card">
             <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
               <h3>Asset allocation</h3>
@@ -989,6 +991,7 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onSync, onRemoveBank, on
             </div>
             <StackBar segs={rows} />
           </div>
+          </FoldWrap>
         ) : null;
       })()}
     </>
@@ -1704,6 +1707,10 @@ function Plan({ d, setD }) {
             <ChartBox data={k401Series.filter((_, i) => i % Math.ceil(k401Series.length / 12) === 0 || i === k401Series.length - 1)} dataKey="value" xKey="year" height={160} />
           </>
         )}
+      </Fold>
+
+      <Fold title="Loan tracker" sub="what your payments have actually done to the balance" defaultOpen>
+        <Loan d={d} setD={setD} />
       </Fold>
 
       <FoldWrap title="Debt payoff" sub="avalanche vs snowball">
@@ -3161,12 +3168,15 @@ function Invest({ d, setD, config }) {
       </div>
 
       {allocSegs.length >= 2 && (
+        <FoldWrap title="Allocation" sub="what your money is actually in">
         <div className="card">
           <h3>Allocation</h3>
           <StackBar segs={allocSegs} />
         </div>
+        </FoldWrap>
       )}
 
+      <FoldWrap title="Watchlist" sub="tickers you're following">
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h3>Watchlist</h3>
@@ -3189,8 +3199,10 @@ function Invest({ d, setD, config }) {
           {!watch.length && <span className="note" style={{ margin: 0 }}>Add tickers you're keeping an eye on — quotes load with the rest.</span>}
         </div>
       </div>
+      </FoldWrap>
 
       {config?.aiEnabled && (
+        <FoldWrap title="Market brief" sub="what moved today, and your tickers">
         <div className="card">
           <h3>Market brief</h3>
           <div className="note">A web-searched snapshot of what's moving markets today, plus one-liners on your tickers. Informational only — not advice, and worth double-checking like anything else on the internet.</div>
@@ -3199,6 +3211,7 @@ function Invest({ d, setD, config }) {
           </div>
           {brief && <div className="aiout">{brief}</div>}
         </div>
+        </FoldWrap>
       )}
     </>
   );
