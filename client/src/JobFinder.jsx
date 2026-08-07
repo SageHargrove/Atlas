@@ -235,6 +235,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   /* An explicit set of companies the caller wants shown. */
   const [pinned, setPinned] = useState(null);
   const [pinLabel, setPinLabel] = useState("");
+  const [freshOnly, setFreshOnly] = useState(false);   // caught within ~a day
   const boxRef = React.useRef(null);
 
   /* ---- persistent preferences vs transient narrowing -------------------
@@ -256,6 +257,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   const clearTransient = () => {
     setQ(""); setLevels(new Set()); setCats(new Set()); setMinPay(0); setLimit(9);
     setOnlyNew(false); setRemoteOnly(false); setIamOnly(false); setHideStale(false); setFitCities(false);
+    setFreshOnly(false);
   };
   /* live board rows for one employer, through the same prefs every view uses */
   const liveFor = (company) => scored.filter((x) => !x.tracked && x.company === company
@@ -362,6 +364,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     let out = scored.filter((j) =>
       !dismissed.has(j.id) &&
       prefPass(j) &&
+      (!freshOnly || (j.seenTs && Date.now() - j.seenTs < 26 * 3600e3)) &&
       /* an explicit list from the timeline wins over every other filter */
       (!pinned || pinned.has(String(j.company || "").toLowerCase())) &&
       (source === "all" || (source === "board" ? !j.tracked
@@ -387,7 +390,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       new: (a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""),
     };
     return out.sort(cmp[sort]);
-  }, [pinned, scored, source, levels, showUnlabelled, fams, cats, minPay, hideStale, onlyNew, lastSeen, dismissed,
+  }, [freshOnly, pinned, scored, source, levels, showUnlabelled, fams, cats, minPay, hideStale, onlyNew, lastSeen, dismissed,
       remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
 
   const unlabelled = useMemo(() => scored.filter((j) => j.levelSure === false && !j.levelBasis && (!usOnly || j.us)).length, [scored, usOnly]);
@@ -475,6 +478,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     const ql = q.trim().toLowerCase();
     return scored.filter((j) =>
       !dismissed.has(j.id) &&
+      (!freshOnly || (j.seenTs && Date.now() - j.seenTs < 26 * 3600e3)) &&
       (!pinned || pinned.has(String(j.company || "").toLowerCase())) &&
       (source === "all" || (source === "board" ? !j.tracked
         : source === "tracked" ? j.tracked
@@ -486,7 +490,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       (!hideCleared || !j.clearance) && (!hideStale || !(j.ageDays > 60)) &&
       (!fitCities || j.remote || !!j.city) && (!minPay || (j.adj || 0) >= minPay) &&
       (!ql || (j.company + " " + j.title + " " + (j.location || "")).toLowerCase().includes(ql)));
-  }, [scored, dismissed, pinned, source, exclRes, onlyNew, lastSeen, q,
+  }, [freshOnly, scored, dismissed, pinned, source, exclRes, onlyNew, lastSeen, q,
       usOnly, remoteOnly, iamOnly, hideCleared, hideStale, fitCities, minPay]);
 
   const counts = useMemo(() => {
@@ -683,6 +687,32 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
 
       {/* A pin narrows the list harder than any other filter, so it must be
           visible and removable — an invisible filter reads as missing data. */}
+      {(() => {
+        const FRESH = 26 * 3600e3;
+        const freshN = scored.filter((j) => !j.tracked && !dismissed.has(j.id) && prefPass(j)
+          && j.seenTs && Date.now() - j.seenTs < FRESH).length;
+        if (freshOnly) return (
+          <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
+            <span className="achip" style={{ borderColor: "var(--up)", color: "var(--up)" }}>
+              Fresh — caught within the last day
+              <button onClick={() => setFreshOnly(false)} title="Show everything again">×</button>
+            </span>
+          </div>
+        );
+        if (!freshN) return null;
+        /* Speed-to-application is the one thing the blast services are right
+           about. The counter to a thousand bot applications is being the first
+           HUMAN one — Tailor and the cover letter are one click from here. */
+        return (
+          <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
+            <button className="btn small" style={{ borderColor: "var(--up)", color: "var(--up)" }}
+              title="Postings first caught within the last day. Early applications beat late perfect ones - and the fast lane polls your targets hourly."
+              onClick={() => { clearTransient(); setSource("board"); setSort("new"); setFreshOnly(true); }}>
+              {freshN} fresh — caught in the last day
+            </button>
+          </div>
+        );
+      })()}
       {pinned && (
         <div className="row" style={{ marginTop: 6, gap: 5, flexWrap: "wrap" }}>
           <span className="achip" style={{ borderColor: "var(--gold)", color: "var(--gold)" }}>
@@ -943,6 +973,11 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
 
               <span className="note" style={{ margin: 0, fontSize: 10.5 }}>
                 {j.location || "location not stated"}{j.posted ? " · " + ago(j.posted) : ""}
+                {j.seenTs && Date.now() - j.seenTs < 26 * 3600e3 && (
+                  <span style={{ color: "var(--up)" }} title="When the fast lane first saw this posting on the employer board">
+                    {" · caught " + Math.max(1, Math.round((Date.now() - j.seenTs) / 3600e3)) + "h ago"}
+                  </span>
+                )}
                 {j.compLow ? " · posted " + money(j.compLow) + "–" + money(j.compHigh) : j.compEst ? " · pay estimated" : ""}
                 {j.ageDays > 120 ? " · open 4+ months" : ""}
                 {/* A closed-and-reopened req resets its own posted date — the age

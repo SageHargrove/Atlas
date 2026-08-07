@@ -1547,7 +1547,20 @@ app.use((err, req, res, next) => {
    JOB_POLL=0 for local dev — it has no business hitting forty third-party APIs
    on every restart — and the last poll's results are still served. */
 initCache(DATA_DIR);
-if (process.env.JOB_POLL !== "0") startPolling(DATA_DIR, extraSources);
+/* companies anyone is tracking - these boards get the hourly fast lane */
+const targetCompanies = () => {
+  const out = new Set();
+  try {
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!f.startsWith("data-") || !f.endsWith(".json")) continue;
+      const d = readJSON(path.join(DATA_DIR, f), null);
+      for (const a of d?.career?.apps || [])
+        if (a.company && a.status !== "Rejected" && a.status !== "Withdrawn") out.add(String(a.company).toLowerCase());
+    }
+  } catch (e) { console.error("target scan failed:", e.message); }
+  return out;
+};
+if (process.env.JOB_POLL !== "0") startPolling(DATA_DIR, extraSources, targetCompanies);
 
 /* bind to loopback only — Caddy (same host) is the sole ingress; never listen on a public interface */
 const HOST = process.env.HOST || "127.0.0.1";

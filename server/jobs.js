@@ -550,13 +550,19 @@ function buildPayStats(jobs) {
   return out;
 }
 
-export async function pollAll(extraSources = []) {
+export async function pollAll(extraSources = [], onlyCompanies = null) {
   if (running) return { skipped: "already running" };
   running = true;
   const started = Date.now();
   const prev = readCache();
   const prevById = new Map((prev.jobs || []).map((j) => [j.id, j]));
-  const sources = [...SEED_SOURCES, ...extraSources];
+  /* Fast lane: a partial poll over just the boards someone is actually
+     targeting, so "posted today" on a target can mean caught within the hour
+     instead of within six. Everything not polled this round carries over
+     from the previous cache untouched — a partial poll must never look like
+     those employers closed all their roles. */
+  let sources = [...SEED_SOURCES, ...extraSources];
+  if (onlyCompanies && onlyCompanies.size) sources = sources.filter((s) => onlyCompanies.has(String(s.company).toLowerCase()));
   const kept = [];
   const report = {};
   const today = new Date().toISOString().slice(0, 10);
@@ -576,7 +582,8 @@ export async function pollAll(extraSources = []) {
         const seen = c.posted || was?.firstSeen || today;
         const days = Math.round((Date.parse(today) - Date.parse(seen)) / 86400000);
         hits.push({ ...c, company: src.company, cat: src.cat || "enterprise", source: src.kind,
-          firstSeen: was?.firstSeen || today, ageDays: Number.isFinite(days) && days >= 0 ? days : null });
+          firstSeen: was?.firstSeen || today, seenTs: was?.seenTs || Date.now(),
+          ageDays: Number.isFinite(days) && days >= 0 ? days : null });
       }
       kept.push(...hits);
       report[key] = { ok: true, scanned: raw.length, matched: hits.length };
@@ -589,6 +596,10 @@ export async function pollAll(extraSources = []) {
     await sleep(BETWEEN_MS);
   }
 
+  if (onlyCompanies && onlyCompanies.size) {
+    const polled = new Set(sources.map((x) => x.company));
+    kept.push(...(prev.jobs || []).filter((j) => !polled.has(j.company)));
+  }
   /* newest first, then trim — a cache that grows forever is a disk leak */
   kept.sort((a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""));
   const jobs = kept.slice(0, MAX_KEEP);
@@ -670,15 +681,29 @@ export async function pollAll(extraSources = []) {
     withRealPay: jobs.filter((j) => j.comp > 0 && !j.compEst).length };
 }
 
-export function startPolling(dataDir, extraSourcesFn) {
+export function startPolling(dataDir, extraSourcesFn, targetsFn) {
   initCache(dataDir);
   const run = () => pollAll(extraSourcesFn ? extraSourcesFn() : [])
     .then((r) => console.log("job poll:", JSON.stringify(r)))
     .catch((e) => console.error("job poll failed:", e.message));
+  /* The fast lane: boards belonging to companies someone is actually tracking
+     get re-polled hourly. Speed-to-application is the one thing the auto-apply
+     services are right about - the counter to a thousand bot applications is
+     being the first HUMAN one, and that means catching the posting in its
+     first hour, not its sixth. */
+  const fast = () => {
+    const t = targetsFn ? targetsFn() : null;
+    if (!t || !t.size) return;
+    pollAll(extraSourcesFn ? extraSourcesFn() : [], t)
+      .then((r) => { if (!r.skipped) console.log("fast-lane poll:", JSON.stringify(r)); })
+      .catch((e) => console.error("fast-lane poll failed:", e.message));
+  };
   /* a boot-time poll would fight the app for the event loop during startup */
   setTimeout(run, 20000).unref();
   timer = setInterval(run, POLL_EVERY_MS);
   timer.unref();
+  const fastTimer = setInterval(fast, 60 * 60 * 1000);
+  fastTimer.unref();
 }
 
 /* Direction of travel per employer: how their open-role count now compares with
