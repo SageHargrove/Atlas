@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { DEFAULT_CITIES, AZA_JOBS, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, parseWindow, absMonth,
   offerValue, baseToMatch, PENSION_DEFAULT_PCT, MARKET_PREMIUM } from "./careerData.js";
 import JobFinder, { guessMyLevel, yearsFromResume, LEVELS } from "./JobFinder.jsx";
+import Suggest from "./Suggest.jsx";
 import Projects, { projectsBrief } from "./Projects.jsx";
 import Funnel from "./Funnel.jsx";
 import Brag from "./Brag.jsx";
@@ -1526,6 +1527,13 @@ export default function Career({ d, setD, config, toast }) {
             <button className="btn small" onClick={() => setEditing({})}>+ Add</button>
           </span>
         } />
+
+      {/* Placed right under the finder because it answers the question the
+          finder provokes: "is this really all there is?" Often the answer is
+          no, and this is where you widen it. */}
+      <Fold title="Employers worth adding" sub="close the gaps in what Atlas can see">
+        <Suggest S={S} setCareer={setCareer} toast={toast} />
+      </Fold>
 
       <Fold title="Timeline" sub={apps.length ? "when to apply, and what's left to do" : "add targets to see one"}>
         <Timeline S={S} apps={apps} setCareer={setCareer} live={jobStats} onShowOpen={() => setOpenCompanies("__liveopen__")} />

@@ -495,6 +495,66 @@ export function parseBoardUrl(raw, company) {
   return null;
 }
 
+/* ---------------- recommended employers ----------------
+   Employers worth watching that Atlas does NOT already poll. Most are here
+   because discovery genuinely failed on them (iCIMS, Taleo and SuccessFactors
+   publish nothing readable), and the honest response to that is to name them
+   and hand over a way in, rather than let them stay invisible and let the feed
+   imply they aren't hiring. `hard` marks the ones where auto-resolve is
+   unlikely, so the UI can send you straight to a search instead of pretending. */
+export const RECOMMENDED = [
+  // pure-play IAM consultancies: the realistic entry path into this field
+  { company: "CyberArk", site: "cyberark.com", cat: "enterprise", why: "PAM leader; large IAM engineering org", hard: true },
+  { company: "Integral Partners", site: "integralpartners.com", cat: "consulting", why: "IAM-only consultancy, hires juniors" },
+  { company: "Edgile", site: "edgile.com", cat: "consulting", why: "IAM and GRC consultancy (Wipro)", hard: true },
+  { company: "Identity Fusion", site: "identityfusion.com", cat: "consulting", why: "small IAM shop, ForgeRock and Okta work" },
+  { company: "Hub City Media", site: "hubcitymedia.com", cat: "consulting", why: "IAM-only integrator, Oracle and Okta" },
+  { company: "PathMaker Group", site: "pathmaker-group.com", cat: "consulting", why: "IAM consultancy, entry-friendly" },
+  { company: "SecurIT", site: "securit.biz", cat: "consulting", why: "IAM integrator, IBM and SailPoint" },
+  { company: "Sath", site: "sath.com", cat: "consulting", why: "IAM consultancy, IDHub product" },
+  { company: "Clango", site: "clango.com", cat: "consulting", why: "IAM-only consultancy, SailPoint partner" },
+  { company: "Set Solutions", site: "setsolutions.com", cat: "consulting", why: "security integrator, Texas based" },
+  { company: "Novacoast", site: "novacoast.com", cat: "consulting", why: "IAM practice, trains juniors" },
+  { company: "Aujas Cybersecurity", site: "aujas.com", cat: "consulting", why: "IAM managed services" },
+  // identity vendors
+  { company: "Radiant Logic", site: "radiantlogic.com", cat: "enterprise", why: "identity data fabric" },
+  { company: "Clear Skye", site: "clearskye.com", cat: "enterprise", why: "IGA built on ServiceNow" },
+  { company: "Omada", site: "omadaidentity.com", cat: "enterprise", why: "IGA vendor, US and EU" },
+  { company: "Silverfort", site: "silverfort.com", cat: "enterprise", why: "identity protection, fast growing" },
+  { company: "Veza", site: "veza.com", cat: "enterprise", why: "authorization and access graph" },
+  { company: "Imprivata", site: "imprivata.com", cat: "enterprise", why: "healthcare IAM, large support org", hard: true },
+  { company: "Entrust", site: "entrust.com", cat: "enterprise", why: "PKI and identity, big footprint", hard: true },
+  { company: "HID Global", site: "hidglobal.com", cat: "enterprise", why: "identity and credentials", hard: true },
+  { company: "StrongDM", site: "strongdm.com", cat: "enterprise", why: "infrastructure access" },
+  // cyber consultancies and MSSPs
+  { company: "Mandiant", site: "mandiant.com", cat: "consulting", why: "IR and consulting (Google)", hard: true },
+  { company: "Trustwave", site: "trustwave.com", cat: "consulting", why: "MSSP with analyst pipeline", hard: true },
+  { company: "Red Canary", site: "redcanary.com", cat: "consulting", why: "MDR, known for training analysts" },
+  { company: "Expel", site: "expel.io", cat: "consulting", why: "MDR, strong junior analyst program" },
+  { company: "Critical Start", site: "criticalstart.com", cat: "consulting", why: "MDR, Texas based" },
+  { company: "Binary Defense", site: "binarydefense.com", cat: "consulting", why: "MDR, entry SOC roles" },
+  // cyber product
+  { company: "Rapid7", site: "rapid7.com", cat: "enterprise", why: "vuln management, hires new grads", hard: true },
+  { company: "SentinelOne", site: "sentinelone.com", cat: "enterprise", why: "endpoint, large security org", hard: true },
+  { company: "Varonis", site: "varonis.com", cat: "enterprise", why: "data security and access governance", hard: true },
+  { company: "Snyk", site: "snyk.io", cat: "enterprise", why: "appsec, developer security", hard: true },
+  { company: "Forescout", site: "forescout.com", cat: "enterprise", why: "network and device security", hard: true },
+  { company: "Claroty", site: "claroty.com", cat: "enterprise", why: "OT security", hard: true },
+  // cleared and research: entry-heavy, and near your region
+  { company: "MITRE", site: "mitre.org", cat: "cleared", why: "FFRDC, heavy new-grad hiring", hard: true },
+  { company: "Noblis", site: "noblis.org", cat: "cleared", why: "FFRDC-adjacent, entry cyber roles", hard: true },
+  { company: "Johns Hopkins APL", site: "jhuapl.edu", cat: "cleared", why: "research lab, large new-grad intake", hard: true },
+  { company: "ManTech", site: "mantech.com", cat: "cleared", why: "cleared cyber, sponsors clearances", hard: true },
+  { company: "Two Six Technologies", site: "twosixtech.com", cat: "cleared", why: "cleared R&D" },
+  { company: "Sandia National Laboratories", site: "sandia.gov", cat: "cleared", why: "national lab, new-grad pipeline", hard: true },
+  // regional employers with real IAM teams
+  { company: "Entergy", site: "entergy.com", cat: "utility", why: "utility in your region, NERC CIP work", hard: true },
+  { company: "Southern Company", site: "southerncompany.com", cat: "utility", why: "utility, large security org", hard: true },
+  { company: "USAA", site: "usaa.com", cat: "financial", why: "big IAM team, Texas", hard: true },
+  { company: "Charles Schwab", site: "schwab.com", cat: "financial", why: "large IAM org, Texas", hard: true },
+  { company: "Fidelity Investments", site: "fidelity.com", cat: "financial", why: "large IAM and IGA org", hard: true },
+];
+
 /* ---------------- board discovery ----------------
    The ceiling on this whole feature was never parsing, it was DISCOVERY. Atlas
    can read any of these boards, but only if it knows the employer's exact ATS

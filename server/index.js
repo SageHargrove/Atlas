@@ -9,7 +9,7 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
-import { startPolling, initCache, pollAll, requestFullPoll, pollStatus, getCache, parseBoardUrl, discoverBoard, SEED_SOURCES, velocityFor } from "./jobs.js";
+import { startPolling, initCache, pollAll, requestFullPoll, pollStatus, getCache, parseBoardUrl, discoverBoard, RECOMMENDED, SEED_SOURCES, velocityFor } from "./jobs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
@@ -729,6 +729,38 @@ app.post("/api/jobs/refresh", auth, refreshLimiter, (req, res) => {
 /* Cheap, unlimited: the client polls this while a sweep runs so the button can
    say "checking Boeing - 34 of 72" instead of freezing for four minutes. */
 app.get("/api/jobs/status", auth, (req, res) => res.json(pollStatus()));
+
+/* Employers worth adding that Atlas does not already poll. Anything already
+   seeded or already added by this user is filtered out, so the list only ever
+   shows real gaps rather than things that are quietly already covered. */
+app.get("/api/jobs/recommended", auth, async (req, res) => {
+  try {
+    const d = readData(req.userId);
+    const mine = new Set([...(d?.career?.settings?.boards || []).map((b) => String(b.company || "").toLowerCase()),
+      ...SEED_SOURCES.map((s) => String(s.company).toLowerCase())]);
+    /* a company you already track as a target still counts as a gap if we have
+       no board for it - that is exactly the case worth surfacing */
+    res.json({ items: RECOMMENDED.filter((r) => !mine.has(r.company.toLowerCase())) });
+  } catch (e) { res.status(500).json({ error: "Could not build recommendations" }); }
+});
+
+/* Resolve ONE employer on demand, so the recommendations list can try the
+   careers-page pass per row instead of making you wait on all of them.
+   Deliberately NOT on refreshLimiter: that budget is four per hour because a
+   sweep hits ninety-five boards, whereas this touches one company's own site.
+   Sharing it made the fourth click on a list of forty rows fail with a rate
+   limit, which reads as the feature being broken. */
+const resolveLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false,
+  message: { error: "That's a lot of lookups in one hour — give it a few minutes." } });
+app.post("/api/jobs/resolve", auth, resolveLimiter, async (req, res) => {
+  const company = String(req.body?.company || "").slice(0, 60).trim();
+  const site = String(req.body?.site || "").slice(0, 80).trim() || undefined;
+  if (!company) return res.status(400).json({ error: "No company given" });
+  try {
+    const board = await discoverBoard(company, site);
+    res.json(board ? { found: true, board } : { found: false });
+  } catch (e) { res.status(502).json({ error: "Could not reach that employer's site" }); }
+});
 
 /* Turn a pasted careers link into a board adapter. Guessing a Workday tenant
    fails ~80% of the time; the URL states it exactly. */

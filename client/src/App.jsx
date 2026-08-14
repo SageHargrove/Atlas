@@ -397,6 +397,11 @@ const CSS = `
   font-size:15px; color:var(--muted); flex-shrink:0; margin-top:1px; }
 .fh .starbtn:hover{ color:var(--gold); }
 .fh .starbtn.on{ color:var(--gold); }
+.sglist{ display:flex; flex-direction:column; gap:7px; }
+.sgrow{ display:flex; gap:10px; align-items:flex-start; justify-content:space-between;
+  border:1px solid var(--line2); border-radius:11px; padding:9px 11px; background:var(--panel2); flex-wrap:wrap; }
+.sgrow.ok{ border-color:var(--up); }
+.sgrow .pill{ font-size:10.5px; padding:1px 6px; border:1px solid var(--line2); border-radius:999px; color:var(--muted); }
 .fh .jcard .jtop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
 .fh .jcard .jfoot{ display:flex; gap:6px; align-items:center; margin-top:auto; padding-top:4px; }
 /* the overflow menu — everything that isn't the one obvious action */
