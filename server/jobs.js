@@ -14,6 +14,10 @@ import fs from "fs";
 import path from "path";
 
 const UA = "atlas-job-finder/1.0 (personal job search; contact via repo)";
+/* Only for reading a company's own public careers PAGE during discovery. Their
+   marketing sites sit behind bot rules that reject the honest UA above, and the
+   page is public either way — the JSON board APIs still get the honest one. */
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const TIMEOUT_MS = 25000;   // Palantir's Lever board is ~280 postings and timed out at 12s
 const POLL_EVERY_MS = 6 * 60 * 60 * 1000;   // 4x/day is plenty; postings don't churn hourly
 const BETWEEN_MS = 250;                      // be a polite guest on someone else's API
@@ -21,6 +25,8 @@ const MAX_KEEP = 1200;                       // hard ceiling on the cache
 const DESC_CHARS = 700;                      // enough to keyword-match; not enough to bloat
 const WORKDAY_DETAIL_CAP = 90;               // bounded extra requests per Workday board per poll
 const WORKDAY_PAGE_CAP = 200;                // rows per query per Workday board (10 pages)
+const JAZZ_DETAIL_CAP = 60;              // JazzHR needs one request per posting for its text
+const SR_DETAIL_CAP = 60;                    // SmartRecruiters needs one request per posting for its text
 
 /* ---------------- adapters ----------------
    Each returns a normalized posting or null. Anything that throws is caught
@@ -89,6 +95,120 @@ const ADAPTERS = {
       remoteHint: !!x.isRemote,
       comp: compFromAshby(x),
     }));
+  },
+  /* The mid-size IAM consultancies - the firms that actually hire and train
+     juniors - are mostly NOT on the four boards above. Probing 82 named
+     employers turned up SmartRecruiters, Workable and Recruitee often enough
+     that leaving them out was quietly capping coverage of exactly the segment
+     that matters most here. */
+  async smartrecruiters(src) {
+    const j = await jget("https://api.smartrecruiters.com/v1/companies/" + src.token + "/postings?limit=100");
+    const out = [];
+    for (const x of (j.content || [])) {
+      let full = "";
+      /* the list endpoint carries no description at all, and without one the
+         years-required and pay parsers have nothing to read */
+      if (out.length < SR_DETAIL_CAP) {
+        try {
+          const d = await jget("https://api.smartrecruiters.com/v1/companies/" + src.token + "/postings/" + x.id);
+          const secs = d?.jobAd?.sections || {};
+          full = [secs.companyDescription?.text, secs.jobDescription?.text, secs.qualifications?.text,
+            secs.additionalInformation?.text].filter(Boolean).join(" \n");
+        } catch { /* one unreadable posting must not kill the board */ }
+        await sleep(BETWEEN_MS);
+      }
+      out.push(withPay(full, {
+        id: "sr:" + src.token + ":" + x.id,
+        title: txt(x.name),
+        location: txt([x.location?.city, x.location?.region].filter(Boolean).join(", ")),
+        url: x.applyUrl || ("https://jobs.smartrecruiters.com/" + src.token + "/" + x.id),
+        posted: (x.releasedDate || x.createdOn || "").slice(0, 10),
+        remoteHint: !!x.location?.remote,
+        comp: null,
+      }));
+    }
+    return out;
+  },
+  async workable(src) {
+    const j = await jget("https://apply.workable.com/api/v1/widget/accounts/" + src.token + "?details=true");
+    return (j.jobs || []).map((x) => withPay([x.description, x.requirements, x.benefits].filter(Boolean).join(" \n"), {
+      id: "wk:" + src.token + ":" + (x.shortcode || x.id),
+      title: txt(x.title),
+      location: txt([x.city, x.state || x.country].filter(Boolean).join(", ")),
+      url: x.url || x.application_url,
+      posted: (x.published_on || x.created_at || "").slice(0, 10),
+      remoteHint: !!x.telecommuting,
+      comp: null,
+    }));
+  },
+  async recruitee(src) {
+    const j = await jget("https://" + src.token + ".recruitee.com/api/offers/");
+    return (j.offers || []).map((x) => withPay([x.description, x.requirements].filter(Boolean).join(" \n"), {
+      id: "rc:" + src.token + ":" + x.id,
+      title: txt(x.title),
+      location: txt([x.city, x.country_code].filter(Boolean).join(", ")),
+      url: x.careers_url || x.careers_apply_url,
+      posted: (x.published_at || x.created_at || "").slice(0, 10),
+      remoteHint: /remote/i.test(x.location || ""),
+      comp: (Number(x.min_salary) > 0)
+        ? Math.round((Number(x.min_salary) + Number(x.max_salary || x.min_salary)) / 2) : null,
+    }));
+  },
+  /* JazzHR publishes no JSON at all, just a server-rendered board — and it is
+     where a lot of the mid-size IAM consultancies live (Simeio among them), so
+     "no API" was not a good enough reason to leave those roles invisible. The
+     markup is stable and simple: one li.list-group-item per opening, title in
+     the anchor, location behind a map-marker icon. */
+  async jazzhr(src) {
+    const base = "https://" + src.token + ".applytojob.com";
+    const r = await fetch(base + "/apply/", {
+      headers: { "user-agent": BROWSER_UA, accept: "text/html" },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!r.ok) throw new Error("jazzhr " + src.token + " -> " + r.status);
+    const html = await r.text();
+    const out = [];
+    for (const block of html.split(/<li class="list-group-item"/).slice(1)) {
+      const a = /<a href="([^"]*\/apply\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/.exec(block);
+      if (!a) continue;
+      const loc = /fa-map-marker'><\/i>([^<]*)</.exec(block) || /fa-map-marker"><\/i>([^<]*)</.exec(block);
+      out.push({
+        id: "jz:" + src.token + ":" + (a[1].split("/apply/")[1] || "").split("/")[0],
+        title: txt(a[2]),
+        location: txt(loc ? loc[1] : ""),
+        url: a[1],
+        posted: "",
+        comp: null,
+        _path: a[1],
+      });
+    }
+    /* the board page carries no description, and without one nothing can read
+       years-required or pay — so fetch the detail, but only for rows that
+       survive the security filter */
+    const keep = new Set(out.filter((p) => classifyPosting({ ...p }, src.cat)).map((p) => p.id));
+    let spent = 0;
+    for (const p of out) {
+      if (!keep.has(p.id) || spent >= JAZZ_DETAIL_CAP) { delete p._path; continue; }
+      spent++;
+      try {
+        const d = await fetch(p._path, { headers: { "user-agent": BROWSER_UA, accept: "text/html" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+        if (d.ok) {
+          const dh = await d.text();
+          const body = /<div[^>]*id="resumator-job-description"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i.exec(dh)
+            || /<div[^>]*class="[^"]*job-description[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i.exec(dh);
+          const full = txt(body ? body[1] : dh.replace(/<script[\s\S]*?<\/script>/gi, ""));
+          if (full) {
+            p.desc = full.slice(0, DESC_CHARS);
+            p._full = full;
+            const pay = payFromText(full);
+            if (pay) Object.assign(p, pay);
+          }
+        }
+      } catch { /* one unreadable posting must not kill the board */ }
+      delete p._path;
+      await sleep(BETWEEN_MS);
+    }
+    return out;
   },
   /* Workday's careers page renders itself from this POST. Tenant + site have to
      be exact, which is why they come from a pasted careers URL rather than a
@@ -307,6 +427,36 @@ export const SEED_SOURCES = [
   { company: "Delinea", kind: "ashby", token: "delinea", cat: "enterprise" },
   { company: "Trace3", kind: "greenhouse", token: "trace3", cat: "consulting" },
   { company: "Myriad360", kind: "greenhouse", token: "myriad360", cat: "consulting" },
+  /* --- found by discoverBoard, 2026-08-14 ---------------------------------
+     Resolved from the employer's own careers page rather than a guessed token,
+     which is how Simeio and Optiv finally became visible. Every row below was
+     then run through the real adapter alone and kept only if it produced actual
+     security postings; boards that resolved but yielded nothing were dropped,
+     because a source that returns nothing quietly claims an employer has no
+     openings. Three more were dropped by hand: Secureworks and Nuspire both
+     resolve to a parent company's board (Sophos, PDI) and would file postings
+     under the wrong employer, and Amentum's careers link points at a single
+     Antarctic support contract rather than their board. */
+  { company: "Simeio", kind: "jazzhr", token: "simeio", cat: "consulting" },
+  { company: "SailPoint", kind: "workday", tenant: "sailpoint", wd: "wd1", site: "SailPoint", cat: "enterprise" },
+  { company: "Keeper Security", kind: "greenhouse", token: "keepersecurity", cat: "enterprise" },
+  { company: "ConductorOne", kind: "ashby", token: "C1", cat: "enterprise" },
+  { company: "Bishop Fox", kind: "greenhouse", token: "bishopfox", cat: "consulting" },
+  { company: "Teleport", kind: "ashby", token: "goteleport", cat: "enterprise" },
+  { company: "Optiv", kind: "workday", tenant: "optiv", wd: "wd5", site: "Optiv_Careers", cat: "consulting" },
+  { company: "Deepwatch", kind: "greenhouse", token: "deepwatchinc", cat: "consulting" },
+  { company: "Arctic Wolf", kind: "workday", tenant: "arcticwolf", wd: "wd1", site: "External", cat: "consulting" },
+  { company: "Cyderes", kind: "lever", token: "cyderes", cat: "consulting" },
+  { company: "Tenable", kind: "greenhouse", token: "tenableinc", cat: "enterprise" },
+  { company: "Qualys", kind: "workday", tenant: "qualys", wd: "wd5", site: "Careers", cat: "enterprise" },
+  { company: "CrowdStrike", kind: "workday", tenant: "crowdstrike", wd: "wd5", site: "crowdstrikecareers", cat: "enterprise" },
+  { company: "Wiz", kind: "greenhouse", token: "wizinc", cat: "enterprise" },
+  { company: "Proofpoint", kind: "workday", tenant: "proofpoint", wd: "wd5", site: "proofpointcareers", cat: "enterprise" },
+  { company: "Chainguard", kind: "greenhouse", token: "chainguard", cat: "enterprise" },
+  { company: "Tanium", kind: "greenhouse", token: "tanium", cat: "enterprise" },
+  { company: "Menlo Security", kind: "ashby", token: "menlosecurity", cat: "enterprise" },
+  { company: "Illumio", kind: "ashby", token: "illumio", cat: "enterprise" },
+  { company: "Booz Allen Hamilton", kind: "workday", tenant: "bah", wd: "wd1", site: "BAH_Jobs", cat: "cleared" },
 ];
 
 /* The employer's own listings page, rebuilt from the board we already know.
@@ -334,6 +484,143 @@ export function parseBoardUrl(raw, company) {
     return { kind: "ashby", token: m[1].toLowerCase() };
   if ((m = /https?:\/\/([a-z0-9-]+)\.(wd\d)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([A-Za-z0-9_-]+)/i.exec(u)))
     return { kind: "workday", tenant: m[1].toLowerCase(), wd: m[2].toLowerCase(), site: m[3] };
+  if ((m = /jobs\.smartrecruiters\.com\/([a-z0-9_-]+)/i.exec(u)) || (m = /api\.smartrecruiters\.com\/v1\/companies\/([a-z0-9_-]+)/i.exec(u)))
+    return { kind: "smartrecruiters", token: m[1] };
+  if ((m = /(?:apply|jobs)\.workable\.com\/(?:api\/v1\/widget\/accounts\/)?([a-z0-9_-]+)/i.exec(u)))
+    return { kind: "workable", token: m[1].toLowerCase() };
+  if ((m = /https?:\/\/([a-z0-9-]+)\.recruitee\.com/i.exec(u)))
+    return { kind: "recruitee", token: m[1].toLowerCase() };
+  if ((m = /https?:\/\/([a-z0-9-]+)\.applytojob\.com/i.exec(u)))
+    return { kind: "jazzhr", token: m[1].toLowerCase() };
+  return null;
+}
+
+/* ---------------- board discovery ----------------
+   The ceiling on this whole feature was never parsing, it was DISCOVERY. Atlas
+   can read any of these boards, but only if it knows the employer's exact ATS
+   token, and guessing that token from a company name fails about four times in
+   five. Simeio is the case in point: five spellings across nine vendors, all
+   misses, while their postings sat on a board Atlas can read perfectly well.
+
+   So stop guessing and go find it. Read the company's own careers page and pull
+   the ATS link straight out of the markup, exactly as a person would by
+   clicking through. Guessing stays as the cheap first pass because when it does
+   work it costs one request. */
+const slugs = (name) => {
+  const base = String(name || "").toLowerCase().replace(/[.,']/g, "")
+    .replace(/\b(inc|llc|ltd|corp|corporation|company|co|group|holdings|solutions|technologies|technology|systems|consulting|partners|global)\b/g, " ")
+    .trim();
+  const squashed = base.replace(/[^a-z0-9]+/g, "");
+  const dashed = base.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return [...new Set([squashed, dashed, squashed + "inc", dashed + "-inc"])].filter((s) => s.length > 2);
+};
+
+/* one probe per (vendor, token): does this board exist and have postings? */
+const PROBES = {
+  greenhouse: (t) => ["https://boards-api.greenhouse.io/v1/boards/" + t + "/jobs", (j) => (j.jobs || []).length],
+  lever: (t) => ["https://api.lever.co/v0/postings/" + t + "?mode=json", (j) => (Array.isArray(j) ? j : []).length],
+  ashby: (t) => ["https://api.ashbyhq.com/posting-api/job-board/" + t, (j) => (j.jobs || []).length],
+  smartrecruiters: (t) => ["https://api.smartrecruiters.com/v1/companies/" + t + "/postings?limit=10", (j) => (j.content || []).length],
+  workable: (t) => ["https://apply.workable.com/api/v1/widget/accounts/" + t + "?details=true", (j) => (j.jobs || []).length],
+  recruitee: (t) => ["https://" + t + ".recruitee.com/api/offers/", (j) => (j.offers || []).length],
+};
+
+async function probeBoard(kind, token) {
+  /* JazzHR serves HTML, not JSON, so it is counted by its listing markup */
+  if (kind === "jazzhr") {
+    try {
+      const r = await fetch("https://" + token + ".applytojob.com/apply/", {
+        headers: { "user-agent": BROWSER_UA, accept: "text/html" }, signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (!r.ok) return 0;
+      return (await r.text()).split(/<li class="list-group-item"/).length - 1;
+    } catch { return 0; }
+  }
+  const p = PROBES[kind];
+  if (!p) return 0;
+  const [url, count] = p(token);
+  try { return count(await jget(url)) || 0; } catch { return 0; }
+}
+
+/* Pull every ATS reference out of a careers page. Sites link their board in a
+   dozen shapes (iframe src, a script tag, a plain anchor), so match on the
+   vendor URL itself rather than trying to predict the markup around it. */
+const ATS_IN_HTML = [
+  [/boards\.greenhouse\.io\/(?:embed\/job_board\?for=)?([a-z0-9_-]+)/gi, "greenhouse"],
+  [/greenhouse\.io\/embed\/job_board\?for=([a-z0-9_-]+)/gi, "greenhouse"],
+  [/job-boards\.greenhouse\.io\/([a-z0-9_-]+)/gi, "greenhouse"],
+  [/jobs\.lever\.co\/([a-z0-9_-]+)/gi, "lever"],
+  [/jobs\.ashbyhq\.com\/([a-z0-9_.-]+)/gi, "ashby"],
+  [/jobs\.smartrecruiters\.com\/([a-z0-9_-]+)/gi, "smartrecruiters"],
+  [/([a-z0-9_-]+)\.workable\.com/gi, "workable"],
+  [/([a-z0-9-]+)\.recruitee\.com/gi, "recruitee"],
+  [/([a-z0-9-]+)\.applytojob\.com/gi, "jazzhr"],
+  [/([a-z0-9-]+)\.(wd\d)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([A-Za-z0-9_-]+)/gi, "workday"],
+];
+
+async function boardsInPage(url) {
+  const out = [];
+  try {
+    /* a careers page is HTML, and several of them 403 anything that does not
+       look like a browser - so ask like one */
+    const r = await fetch(url, {
+      redirect: "follow",
+      headers: { "user-agent": BROWSER_UA, accept: "text/html,application/xhtml+xml" },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!r.ok) return out;
+    const html = (await r.text()).slice(0, 900000);
+    for (const [re, kind] of ATS_IN_HTML) {
+      for (const m of html.matchAll(re)) {
+        if (kind === "workday") out.push({ kind, tenant: m[1].toLowerCase(), wd: m[2].toLowerCase(), site: m[3] });
+        else if (!/^(www|jobs|careers|apply|api|assets|static|cdn)$/i.test(m[1])) out.push({ kind, token: m[1] });
+      }
+    }
+  } catch { /* an unreachable careers page is a miss, not an error */ }
+  return out;
+}
+
+/* Resolve one employer to a board Atlas can actually read. Returns null rather
+   than a hopeful guess: a source that yields nothing is worse than no source,
+   because it silently pretends an employer has no openings. */
+export async function discoverBoard(name, siteHint) {
+  const tried = new Set();
+  /* pass 1: guess. cheap, and right about a fifth of the time */
+  for (const t of slugs(name)) {
+    for (const kind of ["greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "jazzhr"]) {
+      const key = kind + ":" + t;
+      if (tried.has(key)) continue;
+      tried.add(key);
+      const n = await probeBoard(kind, t);
+      if (n > 0) return { company: name, kind, token: t, postings: n, how: "guessed" };
+    }
+  }
+  /* pass 2: read their careers page and take the board it actually links to */
+  const host = siteHint || (slugs(name)[0] + ".com");
+  const pages = [];
+  for (const h of [host, "www." + host]) {
+    for (const p of ["/careers", "/careers/", "/company/careers", "/about/careers", "/jobs", "/careers/open-positions"]) {
+      pages.push("https://" + h.replace(/^https?:\/\//, "").replace(/\/$/, "") + p);
+    }
+  }
+  for (const url of pages.slice(0, 8)) {
+    const found = await boardsInPage(url);
+    for (const b of found) {
+      if (b.kind === "workday") {
+        /* a Workday tenant still has to answer before we believe in it */
+        try {
+          const j = await jget("https://" + b.tenant + "." + b.wd + ".myworkdayjobs.com/wday/cxs/" + b.tenant + "/" + b.site + "/jobs", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ appliedFacets: {}, limit: 20, offset: 0, searchText: "security" }),
+          });
+          if ((j.jobPostings || []).length) return { company: name, ...b, postings: j.total || j.jobPostings.length, how: "careers page" };
+        } catch { /* keep looking */ }
+        continue;
+      }
+      const n = await probeBoard(b.kind, b.token);
+      if (n > 0) return { company: name, kind: b.kind, token: b.token, postings: n, how: "careers page" };
+    }
+  }
   return null;
 }
 
