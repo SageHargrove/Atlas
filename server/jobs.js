@@ -544,6 +544,12 @@ export function classifyPosting(p, cat) {
 let CACHE_PATH = "";
 let timer = null;
 let running = false;
+/* Progress is exported because a full sweep is ~70 boards and several minutes.
+   Without it the only honest thing the button could say was nothing at all,
+   which is exactly what it did: you pressed Check now and the page sat there. */
+let progress = { running: false, done: 0, total: 0, board: "", startedAt: 0, partial: false };
+let queuedFull = false;
+export const pollStatus = () => ({ ...progress, queued: queuedFull });
 
 const readCache = () => { try { return JSON.parse(fs.readFileSync(CACHE_PATH, "utf8")); } catch { return { jobs: [], sources: {}, lastRun: null }; } };
 const writeCache = (v) => {
@@ -603,13 +609,16 @@ export async function pollAll(extraSources = [], onlyCompanies = null) {
      from the previous cache untouched — a partial poll must never look like
      those employers closed all their roles. */
   let sources = [...SEED_SOURCES, ...extraSources];
-  if (onlyCompanies && onlyCompanies.size) sources = sources.filter((s) => onlyCompanies.has(String(s.company).toLowerCase()));
+  const partial = !!(onlyCompanies && onlyCompanies.size);
+  if (partial) sources = sources.filter((s) => onlyCompanies.has(String(s.company).toLowerCase()));
   const kept = [];
   const report = {};
   const today = new Date().toISOString().slice(0, 10);
+  progress = { running: true, done: 0, total: sources.length, board: "", startedAt: Date.now(), partial };
 
   for (const src of sources) {
     const key = src.company;
+    progress.board = key;
     try {
       const raw = await ADAPTERS[src.kind](src);
       const hits = [];
@@ -634,12 +643,18 @@ export async function pollAll(extraSources = [], onlyCompanies = null) {
       kept.push(...stale);
       report[key] = { ok: false, error: String(e.message || e).slice(0, 120), stale: stale.length };
     }
+    progress.done++;
     await sleep(BETWEEN_MS);
   }
 
-  if (onlyCompanies && onlyCompanies.size) {
+  if (partial) {
     const polled = new Set(sources.map((x) => x.company));
     kept.push(...(prev.jobs || []).filter((j) => !polled.has(j.company)));
+    /* The jobs merged back but the REPORT did not, so after an hourly fast
+       lane the cache claimed the whole feed came from the handful of boards
+       that round touched — which is why the header read "11 employers" when
+       72 had been swept. Carry the untouched boards' results forward too. */
+    for (const [k, v] of Object.entries(prev.sources || {})) if (!polled.has(k)) report[k] = v;
   }
   /* newest first, then trim — a cache that grows forever is a disk leak */
   kept.sort((a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""));
@@ -718,8 +733,27 @@ export async function pollAll(extraSources = [], onlyCompanies = null) {
   writeCache({ jobs, sources: report, payStats, titles: reg, velocity: vel,
     lastRun: new Date().toISOString(), took: Date.now() - started, added, closed });
   running = false;
+  progress = { ...progress, running: false, board: "", done: sources.length };
   return { total: jobs.length, added, closed, took: Date.now() - started,
     withRealPay: jobs.filter((j) => j.comp > 0 && !j.compEst).length };
+}
+
+/* "Check now" means check now. It used to await the whole sweep inside the
+   request, so ~70 boards took minutes and the browser gave up before the
+   answer came back; and if the hourly fast lane happened to be mid-run it hit
+   the `already running` guard and returned nothing at all, which read as the
+   button doing nothing. Now it starts a FULL sweep, returns immediately, and
+   the client watches pollStatus(). A press during another poll queues a full
+   one rather than being dropped. */
+export function requestFullPoll(extraSources = []) {
+  if (running) { queuedFull = true; return { started: false, queued: true, ...pollStatus() }; }
+  queuedFull = false;
+  const total = SEED_SOURCES.length + extraSources.length;
+  progress = { running: true, done: 0, total, board: "starting", startedAt: Date.now(), partial: false };
+  pollAll(extraSources)
+    .catch((e) => { console.error("manual poll failed:", e.message); running = false; progress.running = false; })
+    .then(() => { if (queuedFull) { queuedFull = false; requestFullPoll(extraSources); } });
+  return { started: true, queued: false, total };
 }
 
 export function startPolling(dataDir, extraSourcesFn, targetsFn) {

@@ -191,6 +191,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   /* Off by default now. Rows wearing "Level not stated" read as noise when most
      of the list has a real rung — they're opt-in, not a permanent tax. */
   const [showUnlabelled, setShowUnlabelled] = useState(false);
+  const [pollAt, setPollAt] = useState(null);   // live sweep progress, null when idle
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("fit");
   /* 25 rows made the page endless. Ten is a screenful you can actually read. */
@@ -415,15 +416,30 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     return s;
   });
 
+  /* A full sweep is ~70 third-party boards and takes minutes, so the request
+     returns as soon as it has STARTED and we watch the server's progress.
+     Awaiting the sweep inside the click is what made the button look dead. */
   const refresh = async () => {
     setBusy("refresh");
+    setPollAt({ done: 0, total: 0, board: "" });
     try {
       const r = await fetch("/api/jobs/refresh", { method: "POST" });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "refresh failed");
-      toast("Boards checked — " + j.total + " postings, " + j.added + " new, " + j.closed + " gone.");
+      if (j.queued) toast("A check was already running — yours will start right after it.");
+      let last = 0;
+      for (let i = 0; i < 600; i++) {          // 600 x 2s = 20 min ceiling
+        await new Promise((s) => setTimeout(s, 2000));
+        const st = await fetch("/api/jobs/status").then((x) => x.json()).catch(() => null);
+        if (!st) continue;
+        setPollAt({ done: st.done || 0, total: st.total || 0, board: st.board || "" });
+        if (!st.running && !st.queued && (last > 0 || i > 1)) break;
+        last = st.done || 0;
+      }
       await load();
+      toast("Boards checked — the feed is up to date.");
     } catch (e) { toast(e.message, "err"); }
+    setPollAt(null);
     setBusy("");
   };
 
@@ -587,7 +603,11 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
           {apps.length > 0 && <button className="btn small" disabled={!!busy} onClick={discover}
             title="Look up public job boards for the companies you track">{busy === "discover" ? "Looking…" : "Find boards"}</button>}
           <button className="btn small" disabled={!!busy} onClick={() => setAddOpen((v) => !v)}>+ Employer</button>
-          <button className="btn small primary" disabled={!!busy} onClick={refresh}>{busy === "refresh" ? "Checking…" : "Check now"}</button>
+          <button className="btn small primary" disabled={!!busy} onClick={refresh}
+            title={pollAt?.board ? "Reading " + pollAt.board : "Sweep every employer board now"}>
+            {busy === "refresh"
+              ? (pollAt?.total ? "Checking " + pollAt.done + "/" + pollAt.total + "…" : "Checking…")
+              : "Check now"}</button>
         </span>
       </div>
 

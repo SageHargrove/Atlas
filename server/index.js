@@ -9,7 +9,7 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
-import { startPolling, initCache, pollAll, getCache, parseBoardUrl, SEED_SOURCES, velocityFor } from "./jobs.js";
+import { startPolling, initCache, pollAll, requestFullPoll, pollStatus, getCache, parseBoardUrl, SEED_SOURCES, velocityFor } from "./jobs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
@@ -721,10 +721,14 @@ app.get("/api/jobs", auth, (req, res) => {
    and hammering someone else's board is how you get blocked for everyone. */
 const refreshLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 4, standardHeaders: true, legacyHeaders: false,
   message: { error: "Refresh is limited to 4 per hour — the boards update a few times a day at most." } });
-app.post("/api/jobs/refresh", auth, refreshLimiter, async (req, res) => {
-  try { res.json(await pollAll(extraSources())); }
+app.post("/api/jobs/refresh", auth, refreshLimiter, (req, res) => {
+  try { res.json(requestFullPoll(extraSources())); }
   catch (e) { console.error("manual poll failed:", e.message); res.status(502).json({ error: "Could not reach the job boards right now" }); }
 });
+
+/* Cheap, unlimited: the client polls this while a sweep runs so the button can
+   say "checking Boeing - 34 of 72" instead of freezing for four minutes. */
+app.get("/api/jobs/status", auth, (req, res) => res.json(pollStatus()));
 
 /* Turn a pasted careers link into a board adapter. Guessing a Workday tenant
    fails ~80% of the time; the URL states it exactly. */
