@@ -192,6 +192,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
      of the list has a real rung — they're opt-in, not a permanent tax. */
   const [showUnlabelled, setShowUnlabelled] = useState(false);
   const [pollAt, setPollAt] = useState(null);   // live sweep progress, null when idle
+  const [starsOnly, setStarsOnly] = useState(false);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("fit");
   /* 25 rows made the page endless. Ten is a screenful you can actually read. */
@@ -331,6 +332,23 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   const dismiss = (id) => setCareer((c) => ({ ...c, settings: { ...c.settings,
     /* bounded: this is a permanent list in a file that autosaves on every keystroke */
     dismissed: [...new Set([...(c.settings.dismissed || []), id])].slice(-400) } }));
+
+  /* Starring. The scores rank by what Atlas can measure; they cannot know that
+     you have read the posting and think it is genuinely the one. A star is your
+     judgement overriding the sort, so starred rows sit on top of every view
+     regardless of how they scored, and survive filters that would hide them.
+     Keyed by URL, not the board id, so a repost under a new req number stays
+     starred instead of quietly losing the mark. */
+  const starKey = (j) => String(j.url || j.id || "");
+  const starred = useMemo(() => new Set(S.starred || []), [S.starred]);
+  const toggleStar = (j) => {
+    const k = starKey(j);
+    setCareer((c) => {
+      const cur = new Set(c.settings.starred || []);
+      cur.has(k) ? cur.delete(k) : cur.add(k);
+      return { ...c, settings: { ...c.settings, starred: [...cur].slice(-200) } };
+    });
+  };
   const tracked = useMemo(() => new Set(apps.map((a) => (a.company + "|" + a.role).toLowerCase())), [apps]);
 
   const hasResume = !!String(S.resume || "").trim();
@@ -376,6 +394,10 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     const wantsUnlabelled = showUnlabelled && levels.size && !levels.has("mid");
     const unknown = (j) => j.levelSure === false && !j.levelBasis;
     let out = scored.filter((j) =>
+      /* a star is a decision you already made; it outranks every filter below,
+         so narrowing the view can never lose the role you meant to prioritise */
+      starred.has(starKey(j)) ||
+      (
       !dismissed.has(j.id) &&
       prefPass(j) &&
       (!freshOnly || (j.seenTs && Date.now() - j.seenTs < 26 * 3600e3)) &&
@@ -394,16 +416,19 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       (!iamOnly || j.iam) &&
       (!hideCleared || !j.clearance) &&
       (!fitCities || j.remote || !!j.city) &&
-      (!ql || (j.company + " " + j.title + " " + (j.location || "")).toLowerCase().includes(ql)));
+      (!ql || (j.company + " " + j.title + " " + (j.location || "")).toLowerCase().includes(ql))
+      ));
+    if (starsOnly) out = out.filter((j) => starred.has(starKey(j)));
     const cmp = {
       fit: (a, b) => b.fit - a.fit || b.odds - a.odds,
       odds: (a, b) => b.odds - a.odds || b.fit - a.fit,
       comp: (a, b) => (b.adj || 0) - (a.adj || 0),
       new: (a, b) => (b.posted || b.firstSeen || "").localeCompare(a.posted || a.firstSeen || ""),
     };
-    return out.sort(cmp[sort]);
+    /* starred first, then whatever sort is chosen inside each group */
+    return out.sort((a, b) => (starred.has(starKey(b)) ? 1 : 0) - (starred.has(starKey(a)) ? 1 : 0) || cmp[sort](a, b));
   }, [freshOnly, pinned, scored, source, levels, showUnlabelled, fams, cats, minPay, hideStale, onlyNew, lastSeen, dismissed,
-      remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort]);
+      remoteOnly, usOnly, iamOnly, hideCleared, fitCities, q, sort, starred, starsOnly]);
 
   const unlabelled = useMemo(() => scored.filter((j) => j.levelSure === false && !j.levelBasis && (!usOnly || j.us)).length, [scored, usOnly]);
 
@@ -711,6 +736,12 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
         <button className={"btn small" + (activeCount ? " primary" : "")} onClick={() => setFiltersOpen((v) => !v)}>
           Filters{activeCount ? " · " + activeCount : ""} {filtersOpen ? "▴" : "▾"}
         </button>
+        {!!starred.size && (
+          <button className={"btn small" + (starsOnly ? " primary" : "")} onClick={() => setStarsOnly((v) => !v)}
+            title="Your favorites. Starred roles sit on top of every view and no filter hides them.">
+            ★ Favorites · {starred.size}
+          </button>
+        )}
         <span className="note" style={{ margin: 0 }}>
           {rows.length} match{dismissed.size ? " · " + dismissed.size + " hidden" : ""}
         </span>
@@ -897,11 +928,17 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
             : { kind: "unwatched" };
           const phantom = bs && bs.kind === "none";
           return (
-            <div className="jcard" key={j.id}>
+            <div className={"jcard" + (starred.has(starKey(j)) ? " starred" : "")} key={j.id}>
               <div className="jtop">
-                <span style={{ minWidth: 0 }}>
-                  <b style={{ fontSize: 14.5, display: "block", lineHeight: 1.25 }}>{j.company}</b>
-                  <span style={{ display: "block", fontSize: 12.5, marginTop: 1 }}>{j.title}</span>
+                <span style={{ minWidth: 0, display: "flex", gap: 7, alignItems: "flex-start" }}>
+                  <button className={"starbtn" + (starred.has(starKey(j)) ? " on" : "")}
+                    onClick={() => toggleStar(j)}
+                    title={starred.has(starKey(j)) ? "Remove from favorites" : "Favorite — pin this to the top of every view"}
+                    aria-label="Favorite">{starred.has(starKey(j)) ? "★" : "☆"}</button>
+                  <span style={{ minWidth: 0 }}>
+                    <b style={{ fontSize: 14.5, display: "block", lineHeight: 1.25 }}>{j.company}</b>
+                    <span style={{ display: "block", fontSize: 12.5, marginTop: 1 }}>{j.title}</span>
+                  </span>
                 </span>
                 <span style={{ textAlign: "right", flexShrink: 0 }}>
                   {phantom

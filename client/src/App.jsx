@@ -390,6 +390,13 @@ const CSS = `
 .fh .jgrid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); gap:12px; margin-top:12px; }
 .fh .jcard{ border:1px solid var(--line2); border-radius:13px; padding:13px 15px; background:var(--panel2); display:flex; flex-direction:column; gap:7px; }
 .fh .jcard:hover{ border-color:var(--acc); }
+/* A favorite is your own judgement outranking the score, so it should read as
+   deliberate from across the page, not as one more small badge among many. */
+.fh .jcard.starred{ border-color:var(--gold); box-shadow:inset 3px 0 0 var(--gold); }
+.fh .starbtn{ background:none; border:0; padding:0 1px; cursor:pointer; line-height:1;
+  font-size:15px; color:var(--muted); flex-shrink:0; margin-top:1px; }
+.fh .starbtn:hover{ color:var(--gold); }
+.fh .starbtn.on{ color:var(--gold); }
 .fh .jcard .jtop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
 .fh .jcard .jfoot{ display:flex; gap:6px; align-items:center; margin-top:auto; padding-top:4px; }
 /* the overflow menu — everything that isn't the one obvious action */

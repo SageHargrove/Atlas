@@ -303,6 +303,10 @@ export const SEED_SOURCES = [
   { company: "Equifax", kind: "workday", tenant: "equifax", wd: "wd5", site: "External", cat: "financial" },
   { company: "3M", kind: "workday", tenant: "3m", wd: "wd1", site: "Search", cat: "enterprise" },
   { company: "Xcel Energy", kind: "workday", tenant: "xcelenergy", wd: "wd1", site: "External", cat: "utility" },
+  /* verified 2026-08-14, second sweep: PAM vendor and two security integrators */
+  { company: "Delinea", kind: "ashby", token: "delinea", cat: "enterprise" },
+  { company: "Trace3", kind: "greenhouse", token: "trace3", cat: "consulting" },
+  { company: "Myriad360", kind: "greenhouse", token: "myriad360", cat: "consulting" },
 ];
 
 /* The employer's own listings page, rebuilt from the board we already know.
