@@ -251,11 +251,24 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     if (!esc) return null;
     try { return new RegExp("\\b" + esc.replace(/\s+/g, "\\s+") + "\\b", "i"); } catch { return null; }
   }).filter(Boolean), [excludeWords.join("¦")]);
-  const prefPass = (j) => (!usOnly || j.us)
+  /* Level is a PREFERENCE, not transient narrowing. Choosing "Entry / new grad"
+     is a statement about who you are, and clearing it on a jump is what made
+     Okta "9 live matching roles" land on nine senior reqs. It travels with
+     every count and survives every jump — like families and never-show. */
+  const levelOk = (j) => {
+    if (!levels.size) return true;
+    if (levels.has(j.level)) return true;
+    /* an unlabelled posting is a maybe, not a no — but only when you have not
+       said "mid", which is what an unlabelled row defaults to */
+    return showUnlabelled && !levels.has("mid") && j.levelSure === false && !j.levelBasis;
+  };
+  const prefPassNoLevel = (j) => (!usOnly || j.us)
     && (!fams.size || fams.has(j.family))
     && !exclRes.some((re) => re.test(j.title || ""));
+  const prefPass = (j) => prefPassNoLevel(j) && levelOk(j);
   const clearTransient = () => {
-    setQ(""); setLevels(new Set()); setCats(new Set()); setMinPay(0); setLimit(9);
+    /* levels/families/never-show/US-only deliberately survive — see prefPass */
+    setQ(""); setCats(new Set()); setMinPay(0); setLimit(9);
     setOnlyNew(false); setRemoteOnly(false); setIamOnly(false); setHideStale(false); setFitCities(false);
     setFreshOnly(false);
   };
@@ -371,8 +384,6 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
         : source === "tracked" ? j.tracked
         : source === "applied" ? j.status && j.status !== "Target"
         : true)) &&
-      (!levels.size || levels.has(j.level) || (wantsUnlabelled && unknown(j))) &&
-      (!fams.size || fams.has(j.family)) &&
       (!cats.size || cats.has(j.cat)) &&
       (!minPay || (j.adj || 0) >= minPay) &&
       (!hideStale || !(j.ageDays > 60)) &&
@@ -478,19 +489,19 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     const ql = q.trim().toLowerCase();
     return scored.filter((j) =>
       !dismissed.has(j.id) &&
+      prefPassNoLevel(j) &&
       (!freshOnly || (j.seenTs && Date.now() - j.seenTs < 26 * 3600e3)) &&
       (!pinned || pinned.has(String(j.company || "").toLowerCase())) &&
       (source === "all" || (source === "board" ? !j.tracked
         : source === "tracked" ? j.tracked
         : source === "applied" ? j.status && j.status !== "Target"
         : true)) &&
-      !exclRes.some((re) => re.test(j.title || "")) &&
       (!onlyNew || (j.firstSeen || "") > lastSeen) &&
-      (!usOnly || j.us) && (!remoteOnly || j.remote) && (!iamOnly || j.iam) &&
+      (!remoteOnly || j.remote) && (!iamOnly || j.iam) &&
       (!hideCleared || !j.clearance) && (!hideStale || !(j.ageDays > 60)) &&
       (!fitCities || j.remote || !!j.city) && (!minPay || (j.adj || 0) >= minPay) &&
       (!ql || (j.company + " " + j.title + " " + (j.location || "")).toLowerCase().includes(ql)));
-  }, [freshOnly, scored, dismissed, pinned, source, exclRes, onlyNew, lastSeen, q,
+  }, [freshOnly, scored, dismissed, pinned, source, exclRes, fams, onlyNew, lastSeen, q,
       usOnly, remoteOnly, iamOnly, hideCleared, hideStale, fitCities, minPay]);
 
   const counts = useMemo(() => {

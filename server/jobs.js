@@ -20,6 +20,7 @@ const BETWEEN_MS = 250;                      // be a polite guest on someone els
 const MAX_KEEP = 1200;                       // hard ceiling on the cache
 const DESC_CHARS = 700;                      // enough to keyword-match; not enough to bloat
 const WORKDAY_DETAIL_CAP = 90;               // bounded extra requests per Workday board per poll
+const WORKDAY_PAGE_CAP = 200;                // rows per query per Workday board (10 pages)
 
 /* ---------------- adapters ----------------
    Each returns a normalized posting or null. Anything that throws is caught
@@ -95,14 +96,25 @@ const ADAPTERS = {
   async workday(src) {
     const base = "https://" + src.tenant + "." + (src.wd || "wd1") + ".myworkdayjobs.com";
     const out = [];
-    for (let offset = 0; offset < 100; offset += 20) {
+    const seenIds = new Set();
+    /* Workday searchText is a keyword match over the posting, so ONE query is a
+       blind spot: "cyber security" never returns "IAM Analyst" or "Identity
+       Engineer", which is exactly the niche we care most about. Run the union
+       and dedupe, rather than pretending one phrase covers the field. */
+    const queries = src.query ? [src.query]
+      : ["cyber security", "identity access management", "information security"];
+    for (const query of queries)
+    for (let offset = 0; offset < WORKDAY_PAGE_CAP; offset += 20) {
       const j = await jget(base + "/wday/cxs/" + src.tenant + "/" + src.site + "/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: src.query || "cyber security" }),
+        body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: query }),
       });
       const rows = j.jobPostings || [];
       for (const x of rows) {
+        const rid = "wd:" + src.tenant + ":" + (x.bulletFields?.[0] || x.externalPath);
+        if (seenIds.has(rid)) continue;
+        seenIds.add(rid);
         out.push({
           id: "wd:" + src.tenant + ":" + (x.bulletFields?.[0] || x.externalPath),
           title: txt(x.title),
@@ -113,7 +125,7 @@ const ADAPTERS = {
           _path: x.externalPath,
         });
       }
-      if (rows.length < 20 || out.length >= (j.total || 0)) break;
+      if (rows.length < 20 || offset + 20 >= (j.total || 0)) break;
       await sleep(BETWEEN_MS);
     }
 
@@ -262,6 +274,35 @@ export const SEED_SOURCES = [
   { company: "Marqeta", kind: "greenhouse", token: "marqeta", cat: "financial" },
   { company: "Coinbase", kind: "greenhouse", token: "coinbase", cat: "financial" },
   { company: "Virtu Financial", kind: "greenhouse", token: "virtu", cat: "quant" },
+
+  /* --- verified 2026-08-14: each of these answered a live request with real
+     security postings. Guessed tokens were dropped, not left in hopefully. --- */
+  { company: "Elastic", kind: "greenhouse", token: "elastic", cat: "enterprise" },
+  { company: "Twilio", kind: "greenhouse", token: "twilio", cat: "bigtech" },
+  { company: "Bugcrowd", kind: "greenhouse", token: "bugcrowd", cat: "consulting" },
+  { company: "CLEAR", kind: "greenhouse", token: "clear", cat: "enterprise" },
+  { company: "LastPass", kind: "greenhouse", token: "lastpass", cat: "enterprise" },
+  { company: "Bitwarden", kind: "greenhouse", token: "bitwarden", cat: "enterprise" },
+  { company: "Praetorian", kind: "greenhouse", token: "praetorian", cat: "consulting" },
+  { company: "Veracode", kind: "greenhouse", token: "veracode", cat: "enterprise" },
+  { company: "Synack", kind: "greenhouse", token: "synack", cat: "consulting" },
+  { company: "Corelight", kind: "greenhouse", token: "corelight", cat: "enterprise" },
+  { company: "Jamf", kind: "greenhouse", token: "jamf", cat: "enterprise" },
+  { company: "Prove", kind: "greenhouse", token: "prove", cat: "financial" },
+  { company: "Opal", kind: "ashby", token: "opal", cat: "enterprise" },
+  { company: "Socket", kind: "ashby", token: "socket", cat: "enterprise" },
+  { company: "Material Security", kind: "ashby", token: "material", cat: "enterprise" },
+  { company: "Secureframe", kind: "ashby", token: "secureframe", cat: "enterprise" },
+  /* Workday tenants — where entry-level IAM analyst roles actually live in
+     volume. tenant/host/site are exact, confirmed against the live endpoint. */
+  { company: "GDIT", kind: "workday", tenant: "gdit", wd: "wd5", site: "External_Career_Site", cat: "cleared" },
+  { company: "Parsons", kind: "workday", tenant: "parsons", wd: "wd5", site: "Search", cat: "cleared" },
+  { company: "Boeing", kind: "workday", tenant: "boeing", wd: "wd1", site: "External_Careers", cat: "cleared" },
+  { company: "PNC", kind: "workday", tenant: "pnc", wd: "wd5", site: "External", cat: "financial" },
+  { company: "McKesson", kind: "workday", tenant: "mckesson", wd: "wd3", site: "External_Careers", cat: "enterprise" },
+  { company: "Equifax", kind: "workday", tenant: "equifax", wd: "wd5", site: "External", cat: "financial" },
+  { company: "3M", kind: "workday", tenant: "3m", wd: "wd1", site: "Search", cat: "enterprise" },
+  { company: "Xcel Energy", kind: "workday", tenant: "xcelenergy", wd: "wd1", site: "External", cat: "utility" },
 ];
 
 /* The employer's own listings page, rebuilt from the board we already know.
