@@ -59,17 +59,36 @@ backups.
 
 ## Screenshots
 
+**Career** — postings pulled straight from ~95 employers' own job boards, never an
+aggregator. Each is scored for likelihood, fit and growth against your resume and
+your current pay, so a role that pays $46k over your floor but wants three years
+you don't have is labelled as exactly that. Star the ones you mean to prioritise
+and they pin to the top of every view, above any filter.
+
+![Career — scored postings from employer job boards, with favourites pinned and freshness tracking](docs/screenshots/Career.png)
+
+**Employers worth adding** — Atlas only shows postings from boards it can read, so
+an employer it can't reach looks identical to one with no openings. This names the
+gaps. *Find board* reads the company's own careers page and adds it automatically;
+when that fails, *Search* finds the board URL and you paste it back.
+
+![Employers worth adding — board discovery for employers Atlas cannot yet read](docs/screenshots/Employers.png)
+
+**Life** — a timeline of things that actually happened, derived from your own data:
+loans opened, big one-off purchases, extra principal payments, interviews, wins.
+Derived events update themselves; only hand-added ones are stored.
+
+![Life — personal timeline derived from your own financial and career data](docs/screenshots/Life.png)
+
 ![Accounts — read-only bank sync via SimpleFIN, net-worth history, synced balances](docs/screenshots/Accounts.png)
 
 ![Budget — per-category budgets with AI recommend, transaction log with search](docs/screenshots/Budget.png)
 
 ![Invest — synced holdings with live values, allocation, watchlist](docs/screenshots/Invest.png)
 
-![Goals — savings goals with pace-to-target tracking](docs/screenshots/Goals.png)
+![Plan — savings goals with pace-to-target, money order of operations, emergency fund and 401k match calculators](docs/screenshots/Plan.png)
 
-![Plan — money order of operations, emergency fund and 401k match calculators](docs/screenshots/Plan.png)
-
-![Security — passkeys enrolled, recovery codes, passkey-only mode on](docs/screenshots/Security.png)
+![Security — passkeys, one-time recovery codes, passkey-only sign-in, sign-in audit trail and sign out everywhere](docs/screenshots/Security.png)
 
 ## Test locally first (do this before deploying)
 
