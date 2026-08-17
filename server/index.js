@@ -10,6 +10,7 @@ import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
 import { startPolling, initCache, pollAll, requestFullPoll, pollStatus, getCache, parseBoardUrl, discoverBoard, RECOMMENDED, SEED_SOURCES, velocityFor } from "./jobs.js";
+import { pushReady, publicKey, defaultSettings, evaluate, send as sendPush, bundle as bundleAlerts } from "./alerts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
@@ -729,6 +730,116 @@ app.post("/api/jobs/refresh", auth, refreshLimiter, (req, res) => {
 /* Cheap, unlimited: the client polls this while a sweep runs so the button can
    say "checking Boeing - 34 of 72" instead of freezing for four minutes. */
 app.get("/api/jobs/status", auth, (req, res) => res.json(pollStatus()));
+
+/* ---------------- push alerts ----------------
+   Read-modify-write under the same "data:<uid>" lock every other writer uses,
+   so an alert run and a browser autosave can never interleave and lose one of
+   the two. Returning false from the mutator skips the write entirely, which is
+   the common case: most alert runs find nothing new. */
+function mutateUser(uid, fn) {
+  return withLock("data:" + uid, () => {
+    const d = readData(uid);
+    const out = fn(d);
+    if (out === false) return out;
+    d._rev = (d._rev || 0) + 1;
+    writeData(uid, d);
+    return out;
+  });
+}
+
+const pushTestLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 6, standardHeaders: true, legacyHeaders: false,
+  message: { error: "That's a lot of test notifications — wait a few minutes." } });
+
+app.get("/api/push/key", auth, (req, res) => {
+  const d = readData(req.userId);
+  res.json({
+    ready: pushReady,
+    key: pushReady ? publicKey() : "",
+    devices: (d.push || []).length,
+    settings: { ...defaultSettings(), ...(d.alerts?.settings || {}) },
+  });
+});
+
+/* Subscribing runs the rules ONCE in silent mode. Without that, turning
+   notifications on would immediately fire every paycheck and every large charge
+   already in your history, which is the fastest possible way to get the whole
+   feature muted. */
+app.post("/api/push/subscribe", auth, async (req, res) => {
+  if (!pushReady) return res.status(503).json({ error: "Push isn't configured on this server (VAPID keys missing)" });
+  const sub = req.body?.sub;
+  if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) {
+    return res.status(400).json({ error: "That subscription is missing its keys" });
+  }
+  try {
+    await mutateUser(req.userId, (d) => {
+      d.push = [...(d.push || []).filter((x) => x.endpoint !== sub.endpoint),
+        { endpoint: sub.endpoint, keys: sub.keys, ua: String(req.get("user-agent") || "").slice(0, 120), added: new Date().toISOString() }]
+        .slice(-8);
+      d.alerts = { ...(d.alerts || {}), settings: { ...defaultSettings(), ...(d.alerts?.settings || {}), on: true } };
+      const { state } = evaluate(d, { silent: true });   // baseline, sends nothing
+      d.alerts = state;
+    });
+    res.json({ ok: true });
+  } catch (e) { console.error("subscribe failed:", e.message); res.status(500).json({ error: "Could not save that device" }); }
+});
+
+app.post("/api/push/unsubscribe", auth, async (req, res) => {
+  const endpoint = String(req.body?.endpoint || "");
+  try {
+    await mutateUser(req.userId, (d) => {
+      d.push = (d.push || []).filter((x) => x.endpoint !== endpoint);
+      if (!d.push.length) d.alerts = { ...(d.alerts || {}), settings: { ...(d.alerts?.settings || {}), on: false } };
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: "Could not remove that device" }); }
+});
+
+app.put("/api/push/settings", auth, async (req, res) => {
+  const body = req.body?.settings || {};
+  try {
+    let out;
+    await mutateUser(req.userId, (d) => {
+      const next = { ...defaultSettings(), ...(d.alerts?.settings || {}) };
+      for (const k of ["paid", "low", "big", "sub", "budget", "bill"]) if (k in body) next[k] = !!body[k];
+      for (const [k, lo, hi] of [["lowAt", 0, 100000], ["bigAt", 1, 100000], ["billDays", 1, 14]]) {
+        if (k in body) next[k] = Math.max(lo, Math.min(hi, Number(body[k]) || 0));
+      }
+      d.alerts = { ...(d.alerts || {}), settings: next };
+      /* Re-baseline: loosening a threshold must not retro-fire on old rows. */
+      const { state } = evaluate(d, { silent: true });
+      d.alerts = state;
+      out = next;
+    });
+    res.json({ ok: true, settings: out });
+  } catch (e) { res.status(500).json({ error: "Could not save those settings" }); }
+});
+
+app.post("/api/push/test", auth, pushTestLimiter, async (req, res) => {
+  const d = readData(req.userId);
+  if (!(d.push || []).length) return res.status(400).json({ error: "No device is subscribed yet" });
+  const { sent, dead } = await sendPush(d.push, { title: "Atlas is set up", body: "Alerts will arrive here.", tag: "test" });
+  if (dead.length) await mutateUser(req.userId, (u) => { u.push = (u.push || []).filter((x) => !dead.includes(x.endpoint)); });
+  res.json({ ok: true, sent });
+});
+
+/* Run the rules for one user and deliver whatever is new. Called after a sync
+   (new transactions are the main source of alerts) and by the daily sweep. */
+async function runAlerts(uid) {
+  let payloadAlerts = null;
+  let subs = [];
+  await mutateUser(uid, (d) => {
+    if (!d.alerts?.settings?.on || !(d.push || []).length) return false;
+    const { alerts, state } = evaluate(d);
+    d.alerts = state;
+    if (alerts.length) { payloadAlerts = alerts; subs = d.push; }
+  });
+  if (!payloadAlerts) return 0;
+  const { sent, dead } = await sendPush(subs, bundleAlerts(payloadAlerts));
+  if (dead.length) {
+    await mutateUser(uid, (d) => { d.push = (d.push || []).filter((x) => !dead.includes(x.endpoint)); });
+  }
+  return sent;
+}
 
 /* Employers worth adding that Atlas does not already poll. Anything already
    seeded or already added by this user is filtered out, so the list only ever
@@ -1526,6 +1637,10 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
     const iso = (u) => new Date(u * 1000).toISOString().slice(0, 10);
     res.json({ ok: true, newTx, updAcc, updHold, autoCat, xferPairs, retyped, warnings: warnings.slice(0, 3),
       askedDays: days, pulled: got.length, oldest: got.length ? iso(got[0]) : null, newest: got.length ? iso(got[got.length - 1]) : null });
+    /* New transactions are where most alerts come from, so evaluate right after
+       a sync - but AFTER responding, because a push round-trip must never make
+       the sync button feel slower. */
+    runAlerts(req.userId).catch((e) => console.error("alerts after sync failed:", e.message));
   } catch (e) { console.error("simplefin merge failed:", e.message); res.status(500).json({ error: "Synced but couldn't save — your existing data was left untouched" }); }
 });
 
@@ -1596,6 +1711,26 @@ const targetCompanies = () => {
   return out;
 };
 if (process.env.JOB_POLL !== "0") startPolling(DATA_DIR, extraSources, targetCompanies);
+
+/* Time-based alerts (a bill coming due, a balance sitting low) have no sync to
+   ride along with, so they need their own heartbeat. Hourly, because "due in 3
+   days" should land during waking hours rather than whenever a sync happened to
+   run; the once-ever key on each alert is what stops this being hourly spam. */
+if (pushReady && process.env.ALERT_SWEEP !== "0") {
+  const sweep = async () => {
+    let files = [];
+    try { files = fs.readdirSync(DATA_DIR).filter((f) => f.startsWith("data-") && f.endsWith(".json")); }
+    catch (e) { return console.error("alert sweep scan failed:", e.message); }
+    for (const f of files) {
+      const uid = f.slice(5, -5);
+      try { await runAlerts(uid); }
+      catch (e) { console.error("alert sweep failed for a user:", e.message); }
+    }
+  };
+  const t = setInterval(sweep, 60 * 60 * 1000);
+  t.unref();
+  setTimeout(sweep, 90 * 1000).unref();   // once shortly after boot, not during it
+}
 
 /* bind to loopback only — Caddy (same host) is the sole ingress; never listen on a public interface */
 const HOST = process.env.HOST || "127.0.0.1";

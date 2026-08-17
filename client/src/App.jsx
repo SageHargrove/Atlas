@@ -8,6 +8,7 @@ import Fold, { FoldWrap } from "./Fold.jsx";
 import Retire from "./Retire.jsx";
 import Loan from "./Loan.jsx";
 import SplitRules from "./SplitRules.jsx";
+import Alerts from "./Alerts.jsx";
 import OfferImpact from "./OfferImpact.jsx";
 import Why from "./Why.jsx";
 import Forecast from "./Forecast.jsx";
@@ -402,6 +403,8 @@ const CSS = `
   border:1px solid var(--line2); border-radius:11px; padding:9px 11px; background:var(--panel2); flex-wrap:wrap; }
 .sgrow.ok{ border-color:var(--up); }
 .sgrow .pill{ font-size:10.5px; padding:1px 6px; border:1px solid var(--line2); border-radius:999px; color:var(--muted); }
+.pre{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; background:var(--panel2);
+  border:1px solid var(--line2); border-radius:8px; padding:8px 10px; overflow-x:auto; white-space:pre; margin:0; }
 .fh .jcard .jtop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
 .fh .jcard .jfoot{ display:flex; gap:6px; align-items:center; margin-top:auto; padding-top:4px; }
 /* the overflow menu — everything that isn't the one obvious action */
@@ -2329,6 +2332,8 @@ function FinanceHQ({ config }) {
           <input className="in mono" type="number" value={d.settings.expReturn}
             onChange={(e) => setD((p) => ({ ...p, settings: { ...p.settings, expReturn: Number(e.target.value) || 0 } }))} />
           <div className="note">Just an assumption for the calculators — historical broad-market averages are often cited around 7% after inflation, but you choose the number.</div>
+          <label className="f">Phone alerts</label>
+          <Alerts toast={toast} />
           <label className="f">Your data</label>
           <div className="row">
             <button className="btn small" onClick={exportCSV}>Export transactions (CSV)</button>

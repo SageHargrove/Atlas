@@ -28,6 +28,7 @@ your goal dates. Neither half could answer that alone.
 | **Passkeys** | WebAuthn sign in, with optional passkey-only mode that turns passwords off entirely. |
 | **Multi-user** | Invite gated. Every user's data lives in its own file, invisible to everyone else. |
 | **Installable** | Add it to a phone home screen and it behaves like a native app. |
+| **Phone alerts** | Push when income lands, a balance runs low, or a new subscription starts billing. Each alert fires once, ever. |
 
 Built with React and Express. No database to run: each user is a JSON file with
 revision-checked writes, so two devices can never silently overwrite each other.
@@ -262,6 +263,37 @@ modeller that runs a real offer through your actual budget.
 
 ---
 
+## Phone alerts
+
+Atlas can notify your phone when money lands, when checking and savings drop under
+a line you set, when a single charge is unusually large, when a **new subscription**
+has quietly billed three months running at the same amount, when a category goes
+over budget, or when a watched bill is a few days out.
+
+The design constraint is the whole feature. A notification channel that cries wolf
+gets muted within a week, and then you miss the real one too. So:
+
+- **Every alert is sent once, ever.** Not once per sync, not once a day. Once.
+- **Turning it on never replays your history.** The first pass runs silently and
+  records what already exists as seen, so enabling alerts on an account with two
+  years of transactions sends nothing at all. Changing a threshold re-baselines
+  the same way, so lowering your "large charge" line cannot retro-fire on old rows.
+- **Thresholds fire on the crossing, not the state.** Sitting under your low-balance
+  line for a fortnight is one notification, not fourteen, and recovery has a buffer
+  so hovering on the line cannot flap.
+- **Several at once become one notification**, rather than six separate buzzes.
+- **The payload carries only the line of text you see.** No balances, no account
+  names beyond what the message says, because notifications sit on lock screens.
+
+Alerts are evaluated right after each bank sync, and hourly for the time-based ones
+like a bill coming due. It is off until you turn it on, per device.
+
+Push needs a VAPID key pair. Generate one with `npx web-push generate-vapid-keys`,
+put it in `.env` as `VAPID_PUBLIC`, `VAPID_PRIVATE` and `VAPID_SUBJECT`, and restart.
+Without it the panel just says push is not configured. On iPhone, notifications work
+only once the app is added to the home screen, which is an Apple restriction rather
+than a limit here.
+
 ## Security
 
 ![Security: passkeys, recovery codes, passkey-only sign in, audit trail](docs/screenshots/Security.png)
@@ -321,7 +353,7 @@ Then:
 npm test
 ```
 
-344 assertions, no server or browser needed. They pull the real functions out of
+366 assertions, no server or browser needed. They pull the real functions out of
 the source rather than testing a copy, so they fail if the source drifts. They
 cover the bugs that were hardest to see, including card payments counted as both
 spending and income, short city names false matching ("LA" matching Dallas), and
