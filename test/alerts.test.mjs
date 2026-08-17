@@ -32,8 +32,11 @@ const base = () => ({
   d.alerts = evaluate(d, { silent: true }).state;
   d.txns.push(t({ id: "new1", date: ago(1), amount: 2180, kind: "in", note: "EMPLOYER PAYROLL" }));
   d.txns.push(t({ id: "new2", date: ago(1), amount: 640, note: "NEW LAPTOP" }));
+  d.txns.push(t({ id: "venmo", date: ago(1), amount: 40, kind: "in", note: "VENMO FROM A FRIEND" }));
   const r1 = evaluate(d);
   ck("new income fires", r1.alerts.some((a) => a.tag === "paid" && /2,180/.test(a.title)), r1.alerts.map((a) => a.title).join(" | "));
+  ck("a small Venmo is NOT reported as a paycheck", !r1.alerts.some((a) => /\$40/.test(a.title)),
+    r1.alerts.map((a) => a.title).join(" | "));
   ck("a large charge fires", r1.alerts.some((a) => a.tag === "big"), r1.alerts.map((a) => a.tag).join(","));
   d.alerts = r1.state;
   ck("the same rows never fire twice", evaluate(d).alerts.length === 0);
@@ -47,23 +50,20 @@ const base = () => ({
   ck("a transfer in is not reported as money landing", evaluate(d).alerts.length === 0);
 }
 
-/* 4. low balance is a crossing, not a state */
+/* 4. low balance is tiered, and each tier fires on the way down */
 {
   const d = base();
   d.alerts = evaluate(d, { silent: true }).state;
-  d.accounts[0].balance = 100; d.accounts[1].balance = 0;    // 100 total, under the 300 line
-  let r = evaluate(d); d.alerts = r.state;
-  ck("dropping under the line fires once", r.alerts.filter((a) => a.tag === "low").length === 1);
-  r = evaluate(d); d.alerts = r.state;
-  ck("staying under it is silent", r.alerts.length === 0);
-  r = evaluate(d); d.alerts = r.state;
-  ck("still silent on the third run", r.alerts.length === 0);
-  d.accounts[0].balance = 5000;                              // recovered
-  r = evaluate(d); d.alerts = r.state;
-  ck("recovering is not itself an alert", r.alerts.length === 0);
-  d.accounts[0].balance = 50;                                // and under again
-  r = evaluate(d); d.alerts = r.state;
-  ck("a fresh crossing fires again", r.alerts.filter((a) => a.tag === "low").length === 1);
+  const bal = (n) => { d.accounts[0].balance = n; d.accounts[1].balance = 0; const r = evaluate(d); d.alerts = r.state; return r.alerts.filter((a) => a.tag === "low"); };
+  ck("dropping under the first line fires once", bal(250).length === 1);
+  ck("staying between lines is silent", bal(240).length === 0);
+  ck("falling past the next line fires again", bal(150).length === 1);
+  ck("and past the last one too", bal(80).length === 1);
+  ck("sitting at the bottom is silent", bal(70).length === 0);
+  ck("recovering is not itself an alert", bal(5000).length === 0);
+  const again = bal(90);
+  ck("a fresh fall re-fires", again.length === 1);
+  ck("falling past several lines at once is ONE alert naming the lowest", again.length === 1 && /\$100|lowest line/.test(again[0].body), again[0]?.body);
 }
 
 /* 5. a new subscription: three monthly charges at a stable amount */
@@ -93,17 +93,48 @@ const base = () => ({
     !evaluate(d).alerts.some((a) => a.tag === "sub"));
 }
 
-/* 6. budget overrun, once per category per month */
+/* 6. budget is OVERALL for the month, never per category */
 {
   const d = base();
-  d.cats = [{ id: "cEat", name: "Eating out", limit: 100 }];
+  const today = new Date().toISOString().slice(0, 10);
+  d.cats = [{ id: "cEat", name: "Eating out", limit: 100 }, { id: "cGro", name: "Groceries", limit: 400 }];
   d.alerts = evaluate(d, { silent: true }).state;
-  d.txns.push(t({ id: "e1", date: new Date().toISOString().slice(0, 10), amount: 140, note: "DINNER", catId: "cEat" }));
+  d.txns.push(t({ id: "e1", date: today, amount: 180, note: "DINNERS", catId: "cEat" }));
+  ck("one category over its limit is NOT an alert on its own",
+    evaluate(d).alerts.filter((a) => a.tag === "budget").length === 0);
+  d.txns.push(t({ id: "g1", date: today, amount: 400, note: "FOOD", catId: "cGro" }));
   let r = evaluate(d);
-  ck("going over a limit fires", r.alerts.some((a) => a.tag === "budget" && /Eating out/.test(a.title)));
+  ck("passing the TOTAL budget fires once", r.alerts.filter((a) => a.tag === "budget").length === 1,
+    r.alerts.map((a) => a.title).join(" | "));
+  ck("and it reports the month, not a category", r.alerts.some((a) => /Over budget for the month/.test(a.title)));
   d.alerts = r.state;
-  d.txns.push(t({ id: "e2", date: new Date().toISOString().slice(0, 10), amount: 40, note: "MORE", catId: "cEat" }));
+  d.txns.push(t({ id: "g2", date: today, amount: 90, note: "MORE", catId: "cGro" }));
   ck("going further over does not fire again", evaluate(d).alerts.filter((a) => a.tag === "budget").length === 0);
+}
+
+/* 6b. bills: only big ones, or ones you cannot cover */
+{
+  const mk = (bal) => {
+    const d = base();
+    d.accounts[0].balance = bal; d.accounts[1].balance = 0;
+    const day = new Date(Date.now() + 2 * 86400e3).getDate();
+    d.recurring = [
+      { id: "r1", name: "Rent", amount: 780, day, watch: true },
+      { id: "r2", name: "Streaming", amount: 80, day, watch: true },
+    ];
+    d.alerts = { settings: { ...defaultSettings(), on: true } };
+    return d;
+  };
+  const rich = mk(5000);
+  let r = evaluate(rich).alerts.filter((a) => a.tag === "bill");
+  ck("a big bill alerts even when covered", r.some((a) => /Rent/.test(a.title)), r.map((a) => a.title).join(" | "));
+  ck("a small bill you can cover stays quiet", !r.some((a) => /Streaming/.test(a.title)), r.map((a) => a.title).join(" | "));
+
+  const broke = mk(60);
+  r = evaluate(broke).alerts.filter((a) => a.tag === "bill");
+  ck("a small bill you CANNOT cover does alert", r.some((a) => /Can't cover Streaming/.test(a.title)),
+    r.map((a) => a.title).join(" | "));
+  ck("and it says what checking actually holds", r.some((a) => /\$60/.test(a.body)), r.map((a) => a.body).join(" | "));
 }
 
 /* 7. respecting the off switch */

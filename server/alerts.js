@@ -37,13 +37,27 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export const defaultSettings = () => ({
   on: false,
-  paid: true,          // income landed
-  low: true, lowAt: 300,
+  /* Income: a floor, because otherwise every $12 Venmo reads as "money landed".
+     It is a crude filter and it will let the odd large transfer through, but it
+     is the difference between a useful signal and a muted channel. */
+  paid: true, paidAt: 150,
+  /* Balance: tiers, not one line. The point is not "you are low" once, it is
+     noticing again as it gets worse, so moving money over cannot be forgotten. */
+  low: true, lowTiers: [300, 200, 100],
   big: true, bigAt: 400,
   sub: true,           // a new recurring charge started
-  budget: true,        // a category went over its limit
-  bill: true, billDays: 3,
+  budget: true,        // OVERALL month spending vs the sum of your limits
+  /* Bills: only the ones worth interrupting for. Big ones by size, and any
+     bill of any size that your checking cannot currently cover. */
+  bill: true, billDays: 3, billBig: 400,
 });
+
+const parseTiers = (v) => {
+  const list = (Array.isArray(v) ? v : String(v || "").split(","))
+    .map((x) => Math.round(Number(x) || 0))
+    .filter((x) => x > 0);
+  return [...new Set(list)].sort((a, b) => b - a).slice(0, 5);   // high to low
+};
 
 /* ---------------- rules ----------------
    Each returns zero or more { key, title, body, tag }. They are pure: they read
@@ -52,12 +66,16 @@ export const defaultSettings = () => ({
 
 function ruleIncome(d, s) {
   if (!s.paid) return [];
+  const floor = Math.max(0, +s.paidAt || 0);
   const out = [];
   /* only the last week, so a first run after a long gap cannot avalanche */
   const cutoff = new Date(Date.now() - 7 * 86400e3).toISOString().slice(0, 10);
   for (const t of d.txns || []) {
     if (t.kind !== "in" || t.type === "transfer") continue;
     if ((t.date || "") < cutoff) continue;
+    /* a paycheck floor: small incoming money is a friend paying you back, and
+       being told about it is what makes people turn notifications off */
+    if ((+t.amount || 0) < floor) continue;
     out.push({
       key: "paid:" + t.id,
       title: money(t.amount) + " landed",
@@ -86,30 +104,44 @@ function ruleBigCharge(d, s) {
   return out;
 }
 
-/* Balance is a CROSSING, not a state. The key carries the crossing number, so
-   dipping under, recovering, and dipping under again is two notifications while
-   sitting under it for a month is one. */
+/* Balance is a CROSSING, not a state, and it is TIERED. One line tells you once
+   that you are low and then goes quiet however far it falls, which is exactly
+   when you most need telling again. Each tier fires on its own way down, and a
+   tier only re-arms once you climb back above it with a buffer, so hovering on
+   a line cannot flap.
+
+   Falling past several tiers at once is still ONE notification, naming the
+   lowest one crossed. Three buzzes for one bad afternoon is how this gets muted. */
 function ruleLowBalance(d, s, mem) {
-  if (!s.low || !(s.lowAt > 0)) return { alerts: [], mem };
+  const tiers = parseTiers(s.lowTiers ?? s.lowAt);   // lowAt: older saved settings
+  if (!s.low || !tiers.length) return { alerts: [], mem };
   const liquid = (d.accounts || [])
     .filter((a) => LIQUID.includes(a.type))
     .reduce((sum, a) => sum + (+a.balance || 0), 0);
-  const wasLow = !!mem.low;
-  /* recover with a 10% buffer so hovering on the line cannot flap */
-  const isLow = wasLow ? liquid < s.lowAt * 1.1 : liquid < s.lowAt;
-  const n = mem.lowN || 0;
-  if (isLow && !wasLow) {
-    return {
-      alerts: [{
-        key: "low:" + (n + 1),
-        title: "Running low: " + money(liquid),
-        body: "Checking and savings are under your " + money(s.lowAt) + " line.",
-        tag: "low",
-      }],
-      mem: { ...mem, low: true, lowN: n + 1 },
-    };
+
+  const armed = { ...(mem.lowTiers || {}) };         // tier -> already alerted?
+  const crossed = [];
+  for (const tier of tiers) {
+    const was = !!armed[tier];
+    const isUnder = was ? liquid < tier * 1.1 : liquid < tier;
+    if (isUnder && !was) crossed.push(tier);
+    armed[tier] = isUnder;
   }
-  return { alerts: [], mem: { ...mem, low: isLow } };
+  const nextMem = { ...mem, lowTiers: armed };
+  if (!crossed.length) return { alerts: [], mem: nextMem };
+
+  const lowest = Math.min(...crossed);
+  const n = (mem.lowN || 0) + 1;
+  return {
+    alerts: [{
+      key: "low:" + lowest + ":" + n,
+      title: "Running low: " + money(liquid),
+      body: "Checking and savings are under " + money(lowest)
+        + (lowest === Math.min(...tiers) ? ". That is your lowest line." : ". Move money over."),
+      tag: "low",
+    }],
+    mem: { ...nextMem, lowN: n },
+  };
 }
 
 /* A new recurring charge is the one Rocket Money is genuinely useful for: the
@@ -155,38 +187,55 @@ function ruleNewSubscription(d, s) {
   return out;
 }
 
+/* OVERALL, not per category. Per-category alerts fire five or six times a month
+   for normal spending, which is noise wearing the costume of a warning. Going
+   over your total budget for the month is a single fact worth one interruption. */
 function ruleBudget(d, s) {
   if (!s.budget) return [];
   const m = monthOf(todayISO());
-  const spent = {};
+  const total = (d.cats || []).reduce((sum, c) => sum + (+c.limit || 0), 0);
+  if (total <= 0) return [];                        // no budget set means nothing to be over
+  let spent = 0;
   for (const t of d.txns || []) {
     if (t.kind !== "out" || t.type === "transfer") continue;
-    if (monthOf(t.date) !== m || !t.catId) continue;
-    spent[t.catId] = (spent[t.catId] || 0) + (+t.amount || 0);
+    if (monthOf(t.date) !== m) continue;
+    spent += +t.amount || 0;
   }
-  const out = [];
-  for (const c of d.cats || []) {
-    const lim = +c.limit || 0;
-    if (lim <= 0) continue;
-    const got = spent[c.id] || 0;
-    if (got <= lim) continue;
-    out.push({
-      key: "budget:" + c.id + ":" + m,
-      title: c.name + " is over budget",
-      body: money(got) + " spent of a " + money(lim) + " limit this month.",
-      tag: "budget",
-    });
-  }
-  return out;
+  if (spent <= total) return [];
+  return [{
+    key: "budget:total:" + m,
+    title: "Over budget for the month",
+    body: money(spent) + " spent against " + money(total) + " budgeted.",
+    tag: "budget",
+  }];
 }
 
+/* Two reasons to interrupt someone about a bill, and only two.
+
+   It is BIG (rent), so it is worth planning around even when the money is there.
+   Or you CANNOT COVER IT, at any size: an $80 charge against $60 in checking is
+   the overdraft you actually wanted warning about, and telling you about an $80
+   bill you can trivially pay is the noise that gets the channel muted.
+
+   Coverage is checked against CHECKING, not checking plus savings, because the
+   bill hits checking. Money sitting in savings is money you still have to move,
+   which is the whole thing being warned about. */
 function ruleBillDue(d, s) {
   if (!s.bill) return [];
   const days = Math.max(1, Math.min(14, +s.billDays || 3));
+  const big = Math.max(0, +s.billBig || 0);
+  const accts = d.accounts || [];
+  const checkingAccts = accts.filter((a) => a.type === "Checking");
+  /* fall back to all liquid if nothing is typed as Checking, otherwise a user
+     who never set an account type would be told they can cover nothing */
+  const src = checkingAccts.length ? checkingAccts : accts.filter((a) => LIQUID.includes(a.type));
+  const checking = src.reduce((sum, a) => sum + (+a.balance || 0), 0);
+
   const now = new Date();
   const out = [];
   for (const r of d.recurring || []) {
     if (!r.watch || !(+r.amount > 0)) continue;
+    const amt = +r.amount;
     const day = Math.max(1, Math.min(31, +r.day || 1));
     /* next occurrence of this day-of-month, clamped for short months */
     for (const addMonth of [0, 1]) {
@@ -195,11 +244,18 @@ function ruleBillDue(d, s) {
       const due = new Date(y, mo, Math.min(day, last));
       const diff = Math.ceil((due - now) / 86400e3);
       if (diff < 0 || diff > days) continue;
+      const short = src.length > 0 && checking < amt;
+      if (!short && !(big > 0 && amt >= big)) break;   // due, but not worth a buzz
       const iso = due.toISOString().slice(0, 10);
+      const when = diff <= 0 ? "today" : "in " + diff + " day" + (diff === 1 ? "" : "s");
       out.push({
-        key: "bill:" + r.id + ":" + iso,
-        title: r.name + " due " + (diff <= 0 ? "today" : "in " + diff + " day" + (diff === 1 ? "" : "s")),
-        body: money(r.amount) + " on " + iso,
+        key: "bill:" + r.id + ":" + iso + (short ? ":short" : ""),
+        title: short
+          ? "Can't cover " + r.name + " (" + money(amt) + ")"
+          : r.name + " due " + when,
+        body: short
+          ? "Due " + when + " and checking holds " + money(checking) + ". Move money over."
+          : money(amt) + " on " + iso,
         tag: "bill",
       });
       break;

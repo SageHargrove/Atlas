@@ -801,8 +801,13 @@ app.put("/api/push/settings", auth, async (req, res) => {
     await mutateUser(req.userId, (d) => {
       const next = { ...defaultSettings(), ...(d.alerts?.settings || {}) };
       for (const k of ["paid", "low", "big", "sub", "budget", "bill"]) if (k in body) next[k] = !!body[k];
-      for (const [k, lo, hi] of [["lowAt", 0, 100000], ["bigAt", 1, 100000], ["billDays", 1, 14]]) {
+      for (const [k, lo, hi] of [["paidAt", 0, 1000000], ["bigAt", 1, 1000000], ["billDays", 1, 14], ["billBig", 0, 1000000]]) {
         if (k in body) next[k] = Math.max(lo, Math.min(hi, Number(body[k]) || 0));
+      }
+      if ("lowTiers" in body) {
+        const t = (Array.isArray(body.lowTiers) ? body.lowTiers : String(body.lowTiers || "").split(","))
+          .map((x) => Math.round(Number(x) || 0)).filter((x) => x > 0 && x < 1000000);
+        next.lowTiers = [...new Set(t)].sort((a, b) => b - a).slice(0, 5);
       }
       d.alerts = { ...(d.alerts || {}), settings: next };
       /* Re-baseline: loosening a threshold must not retro-fire on old rows. */

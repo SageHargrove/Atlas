@@ -28,7 +28,7 @@ your goal dates. Neither half could answer that alone.
 | **Passkeys** | WebAuthn sign in, with optional passkey-only mode that turns passwords off entirely. |
 | **Multi-user** | Invite gated. Every user's data lives in its own file, invisible to everyone else. |
 | **Installable** | Add it to a phone home screen and it behaves like a native app. |
-| **Phone alerts** | Push when income lands, a balance runs low, or a new subscription starts billing. Each alert fires once, ever. |
+| **Phone alerts** | Push when a paycheck lands, a balance falls past a tier, a new subscription starts billing, or a bill lands that checking cannot cover. Each fires once, ever. |
 
 Built with React and Express. No database to run: each user is a JSON file with
 revision-checked writes, so two devices can never silently overwrite each other.
@@ -265,10 +265,29 @@ modeller that runs a real offer through your actual budget.
 
 ## Phone alerts
 
-Atlas can notify your phone when money lands, when checking and savings drop under
-a line you set, when a single charge is unusually large, when a **new subscription**
-has quietly billed three months running at the same amount, when a category goes
-over budget, or when a watched bill is a few days out.
+Atlas can notify your phone when a paycheck lands, when your balance falls past
+a line, when a single charge is unusually large, when a **new subscription** has
+quietly billed three months running at the same amount, when you pass your total
+budget for the month, and when a bill is coming that matters.
+
+Each rule is deliberately narrow, because the ones that fire constantly are the
+ones that teach you to ignore the ones that matter:
+
+- **Income** has a floor (default $150), so a friend paying you back for lunch is
+  not announced as a paycheck.
+- **Running low** is **tiered**, not a single line. Default $300, $200 and $100,
+  each firing once on the way down, so a balance that keeps sliding keeps saying
+  so instead of going quiet after the first warning. Falling past several at once
+  is still one notification, naming the lowest.
+- **Over budget** is your **whole month against your whole budget**, once. Never
+  per category: five or six category alerts a month is normal spending wearing
+  the costume of a warning.
+- **Bills** alert for exactly two reasons. It is big enough to plan around (default
+  over $400, so rent does and a streaming service does not), or **your checking
+  cannot cover it**, at any size. An $80 charge against $60 in checking is the
+  overdraft actually worth waking up for. Coverage is checked against checking
+  rather than checking plus savings, because money in savings is money you still
+  have to move, which is the thing being warned about.
 
 The design constraint is the whole feature. A notification channel that cries wolf
 gets muted within a week, and then you miss the real one too. So:
@@ -353,7 +372,7 @@ Then:
 npm test
 ```
 
-366 assertions, no server or browser needed. They pull the real functions out of
+376 assertions, no server or browser needed. They pull the real functions out of
 the source rather than testing a copy, so they fail if the source drifts. They
 cover the bugs that were hardest to see, including card payments counted as both
 spending and income, short city names false matching ("LA" matching Dallas), and

@@ -14,12 +14,12 @@ const b64ToU8 = (s) => {
 };
 
 const ROWS = [
-  ["paid", "Money landed", "When income posts to an account."],
-  ["low", "Running low", "When checking plus savings drops under your line."],
+  ["paid", "Money landed", "Income over your floor, so small transfers don't count as a paycheck."],
+  ["low", "Running low", "Each time checking plus savings falls past one of your lines."],
   ["big", "Large charge", "A single charge over your threshold."],
   ["sub", "New subscription", "A charge that has quietly billed three months running at the same amount."],
-  ["budget", "Over budget", "The first time a category passes its limit in a month."],
-  ["bill", "Bill coming due", "A watched recurring bill, a few days ahead."],
+  ["budget", "Over budget", "Once a month, if total spending passes your total budget. Not per category."],
+  ["bill", "Bill coming due", "Only big ones, or any bill your checking can't cover."],
 ];
 
 export default function Alerts({ toast }) {
@@ -160,11 +160,23 @@ export default function Alerts({ toast }) {
             <div style={{ minWidth: 0, flex: 1 }}>
               <b style={{ fontSize: 13.5 }}>{label}</b>
               <div className="note" style={{ margin: "2px 0 0", fontSize: 12 }}>{why}</div>
-              {k === "low" && s.low && (
+              {k === "paid" && s.paid && (
                 <div className="row" style={{ gap: 6, marginTop: 6, alignItems: "center" }}>
-                  <span className="note" style={{ margin: 0, fontSize: 12 }}>Line</span>
-                  <input className="in" type="number" min="0" style={{ width: 100 }} value={s.lowAt}
-                    disabled={!on} onChange={(e) => save({ lowAt: Number(e.target.value) })} />
+                  <span className="note" style={{ margin: 0, fontSize: 12 }}>Only over</span>
+                  <input className="in" type="number" min="0" style={{ width: 100 }} value={s.paidAt}
+                    disabled={!on} onChange={(e) => save({ paidAt: Number(e.target.value) })} />
+                </div>
+              )}
+              {k === "low" && s.low && (
+                <div className="row" style={{ gap: 6, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="note" style={{ margin: 0, fontSize: 12 }}>Lines</span>
+                  {/* free text so the tiers stay editable as a set: typing into a
+                      list of number inputs fights you every time one empties */}
+                  <input className="in" style={{ width: 150 }} defaultValue={(s.lowTiers || []).join(", ")}
+                    disabled={!on} placeholder="300, 200, 100"
+                    onBlur={(e) => save({ lowTiers: e.target.value })}
+                    onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
+                  <span className="note" style={{ margin: 0, fontSize: 11.5 }}>one alert per line, on the way down</span>
                 </div>
               )}
               {k === "big" && s.big && (
@@ -175,10 +187,16 @@ export default function Alerts({ toast }) {
                 </div>
               )}
               {k === "bill" && s.bill && (
-                <div className="row" style={{ gap: 6, marginTop: 6, alignItems: "center" }}>
+                <div className="row" style={{ gap: 6, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="note" style={{ margin: 0, fontSize: 12 }}>Big is over</span>
+                  <input className="in" type="number" min="0" style={{ width: 90 }} value={s.billBig}
+                    disabled={!on} onChange={(e) => save({ billBig: Number(e.target.value) })} />
                   <span className="note" style={{ margin: 0, fontSize: 12 }}>Days ahead</span>
-                  <input className="in" type="number" min="1" max="14" style={{ width: 80 }} value={s.billDays}
+                  <input className="in" type="number" min="1" max="14" style={{ width: 70 }} value={s.billDays}
                     disabled={!on} onChange={(e) => save({ billDays: Number(e.target.value) })} />
+                  <span className="note" style={{ margin: 0, fontSize: 11.5, flexBasis: "100%" }}>
+                    Anything you can't cover alerts whatever its size.
+                  </span>
                 </div>
               )}
             </div>
