@@ -16,12 +16,16 @@
      3. A threshold alert fires on the CROSSING, not on the state. Being below
         your low-balance line for a fortnight is one notification, not fourteen. */
 
-import webpush from "web-push";
+/* web-push is only needed to deliver. The rules engine below must stay
+   importable on a clone that has never run npm install, so the tests can run
+   against it the way every other pure module here is tested. */
+let webpush = null;
+try { webpush = (await import("web-push")).default; } catch { /* not installed */ }
 
 const PUB = process.env.VAPID_PUBLIC || "";
 const PRIV = process.env.VAPID_PRIVATE || "";
 const SUBJECT = process.env.VAPID_SUBJECT || "mailto:atlas@localhost";
-export const pushReady = !!(PUB && PRIV);
+export const pushReady = !!(webpush && PUB && PRIV);
 if (pushReady) {
   try { webpush.setVapidDetails(SUBJECT, PUB, PRIV); }
   catch (e) { console.error("VAPID setup failed:", e.message); }
