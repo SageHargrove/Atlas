@@ -6,6 +6,7 @@ import Suggest from "./Suggest.jsx";
 import Projects, { projectsBrief } from "./Projects.jsx";
 import Funnel from "./Funnel.jsx";
 import Brag from "./Brag.jsx";
+import Certs from "./Certs.jsx";
 import Timeline, { compoundGap } from "./Timeline.jsx";
 
 /* ------------------------------------------------------------------
@@ -1561,6 +1562,9 @@ export default function Career({ d, setD, config, toast }) {
               <button className={"pill" + (profileTab === "wins" ? " on" : "")} onClick={() => setProfileTab("wins")}>
                 Wins{(S.wins || []).length ? " " + S.wins.length : ""}
               </button>
+              <button className={"pill" + (profileTab === "certs" ? " on" : "")} onClick={() => setProfileTab("certs")}>
+                Certs{(S.certs || []).length ? " " + (S.certs || []).length : ""}
+              </button>
               <button className={"pill" + (profileTab === "assume" ? " on" : "")} onClick={() => setProfileTab("assume")}>Assumptions</button>
             </span>
           </span>
@@ -1575,6 +1579,8 @@ export default function Career({ d, setD, config, toast }) {
                   <Projects S={S} setCareer={setCareer} toast={toast} aiEnabled={config?.aiEnabled} />
                 ) : profileTab === "wins" ? (
                   <Brag S={S} setCareer={setCareer} />
+                ) : profileTab === "certs" ? (
+                  <Certs S={S} setCareer={setCareer} />
                 ) : (
                   <>
                     <FloorOffer S={S} setCareer={setCareer} />

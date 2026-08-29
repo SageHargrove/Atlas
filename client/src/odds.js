@@ -35,7 +35,8 @@ const SKILLS = [
   "sql", "rest", "api", "git", "linux", "windows server", "vmware", "networking", "tcp/ip", "firewall", "vpn",
   "zero trust", "threat", "incident response", "forensics", "malware", "vulnerability", "pentest", "red team",
   "risk", "audit", "compliance", "grc", "governance", "access review", "provisioning", "deprovisioning",
-  "security+", "cissp", "cisa", "cism", "gsec", "gcih", "gcia", "ceh", "oscp", "az-500", "sc-200",
+  "security+", "cysa+", "pentest+", "cissp", "cisa", "cism", "gsec", "gcih", "gcia", "ceh", "oscp",
+  "az-500", "az-104", "sc-200", "sc-300", "sc-900", "sc-100",
 ];
 /* Memoized: scoring calls this twice per job with the SAME resume string — 600
    jobs meant 1,200 identical scans of a 3,000-character resume per pass, which

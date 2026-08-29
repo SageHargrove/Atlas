@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, money, yearsFromResume, offerValue } from "./careerData.js";
 import { SEED_LINKS } from "./Career.jsx";
 import { scoreOdds, oddsParts, explainRow, scoreFit, scoreGrowth, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
+import { withCerts } from "./certs.js";
 export { yearsFromResume };
 
 /* ------------------------------------------------------------------
@@ -322,7 +323,11 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
     setLevels(new Set([myLevel, LEVEL_ORDER[i + 1]].filter(Boolean)));
   }, [myLevel]);
 
-  const resumeTokens = useMemo(() => tokensOf(S.resume), [S.resume]);
+  /* Scoring reads a resume that always mentions the certs Atlas knows you
+     hold — a passed SC-300 the resume forgot is signal, not fiction. The raw
+     resume stays untouched everywhere the user sees or edits it. */
+  const scoringResume = useMemo(() => withCerts(S.resume, S.certs), [S.resume, S.certs]);
+  const resumeTokens = useMemo(() => tokensOf(scoringResume), [scoringResume]);
   const hasClearance = !!S.hasClearance;
   const dismissed = useMemo(() => new Set(S.dismissed || []), [S.dismissed]);
   /* Frozen on mount: if this tracked live, every row would stop being new the
@@ -355,7 +360,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
   /* editable, because a resume's dates can't see freelance work or a gap */
   const myYears = S.myYears != null ? Number(S.myYears) : yearsFromResume(S.resume);
   const scored = useMemo(() => {
-    const ctx = { S, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj };
+    const ctx = { S: { ...S, resume: scoringResume }, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj };
     const board = (data?.jobs || []).map((j) => scoreJob(j, ctx));
     /* your own tracked targets, scored the same way, so a company you added by
        hand sits next to a live posting rather than in a separate table */
@@ -363,7 +368,7 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
       .filter((a) => a.status !== "Rejected" && a.status !== "Withdrawn")
       .map((a) => scoreJob(appAsRow(a, S), ctx));
     return [...board, ...mine];
-  }, [data, apps, S, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj]);
+  }, [data, apps, S, scoringResume, myLevel, resumeTokens, hasClearance, hasResume, myYears, floorAdj]);
 
   /* What the timeline's "open right now" should actually mean: targets whose
      boards VERIFIABLY have matching roles today. Unreadable boards are unknown,
