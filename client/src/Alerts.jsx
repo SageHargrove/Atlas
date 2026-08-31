@@ -114,10 +114,12 @@ export default function Alerts({ toast }) {
 
   if (!info.ready) return (
     <div className="note">
-      Push isn't configured on this server. Generate a VAPID key pair and set
-      <code> VAPID_PUBLIC</code>, <code>VAPID_PRIVATE</code> and <code>VAPID_SUBJECT</code> in
-      the server's <code>.env</code>, then restart:
-      <pre className="pre" style={{ marginTop: 8 }}>npx web-push generate-vapid-keys</pre>
+      Push isn't available on this server. Keys normally generate themselves on first
+      boot, so this usually means <code>web-push</code> isn't installed (run
+      <code> npm install</code> and restart) or the data directory isn't writable.
+      Setting <code>VAPID_PUBLIC</code>, <code>VAPID_PRIVATE</code> and
+      <code> VAPID_SUBJECT</code> in the server's <code>.env</code> also works and
+      always wins.
     </div>
   );
 

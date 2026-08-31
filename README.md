@@ -307,9 +307,17 @@ gets muted within a week, and then you miss the real one too. So:
 Alerts are evaluated right after each bank sync, and hourly for the time-based ones
 like a bill coming due. It is off until you turn it on, per device.
 
-Push needs a VAPID key pair. Generate one with `npx web-push generate-vapid-keys`,
-put it in `.env` as `VAPID_PUBLIC`, `VAPID_PRIVATE` and `VAPID_SUBJECT`, and restart.
-Without it the panel just says push is not configured. On iPhone, notifications work
+**The sync itself runs on its own.** Every account with a SimpleFIN connection is
+synced in the background every ~6 hours (`AUTO_SYNC_HOURS` tunes it, `AUTO_SYNC=0`
+turns it off server-wide, and the Bank card has a per-user toggle), and the alert
+pass rides along — so "you got paid" arrives without anyone opening the app or
+tapping Sync now. The button still exists for when you want the answer right now,
+and manual and automatic syncs share one clock, so neither doubles the other up.
+
+Push keys take care of themselves: if no VAPID pair is configured, the server
+generates one on first boot and keeps it next to the data files, so push works
+out of the box. Setting `VAPID_PUBLIC`, `VAPID_PRIVATE` and `VAPID_SUBJECT` in
+`.env` still wins if you want to bring your own. On iPhone, notifications work
 only once the app is added to the home screen, which is an Apple restriction rather
 than a limit here.
 
