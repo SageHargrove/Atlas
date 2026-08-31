@@ -234,11 +234,22 @@ const cookieOpts = () => ({
   secure: !!process.env.FORCE_SECURE_COOKIE,
   maxAge: SESSION_MAX_AGE,
 });
+/* Sliding renewal: sessions used to be issued once and die exactly 30 days
+   later, so a person using the app daily still got logged out on day 30 for
+   no visible reason. Now any authenticated request on a session older than a
+   day re-issues the cookie, so only a real month of absence logs you out.
+   The epoch rides along unchanged — "log out everywhere" still works,
+   because currentUser above already refused a stale epoch. */
+const SESSION_RENEW_AFTER = 24 * 3600 * 1000;
 const auth = (req, res, next) => {
   const u = currentUser(req);
   if (!u) return res.status(401).json({ error: "Not logged in" });
   req.userId = u.id;
   req.user = u;
+  const s = parseSession(req.cookies.cache_session);
+  if (s && Date.now() - s.iat > SESSION_RENEW_AFTER) {
+    res.cookie("cache_session", sign(u.id + "|" + Date.now() + "|" + (u.sessionEpoch || 0)), cookieOpts());
+  }
   next();
 };
 
