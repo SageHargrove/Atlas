@@ -10,7 +10,8 @@ import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
 import { startPolling, initCache, pollAll, requestFullPoll, pollStatus, getCache, parseBoardUrl, discoverBoard, RECOMMENDED, SEED_SOURCES, velocityFor } from "./jobs.js";
-import { pushReady, publicKey, defaultSettings, evaluate, send as sendPush, bundle as bundleAlerts } from "./alerts.js";
+import { pushReady, publicKey, defaultSettings, evaluate, send as sendPush, bundle as bundleAlerts, ensureVapid } from "./alerts.js";
+import { autoSyncConfig, dueForAutoSync } from "./autosync.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
@@ -18,6 +19,8 @@ dotenv.config({ path: path.join(__dirname, "..", ".env") });
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 /* data files hold financial records + bank tokens — keep the directory private (owner-only) */
 try { fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 }); fs.chmodSync(DATA_DIR, 0o700); } catch {}
+/* push works out of the box: generate + persist VAPID keys if none were configured */
+ensureVapid(DATA_DIR);
 const USERS_PATH = path.join(DATA_DIR, "users.json");
 const app = express();
 app.disable("x-powered-by");
@@ -231,11 +234,22 @@ const cookieOpts = () => ({
   secure: !!process.env.FORCE_SECURE_COOKIE,
   maxAge: SESSION_MAX_AGE,
 });
+/* Sliding renewal: sessions used to be issued once and die exactly 30 days
+   later, so a person using the app daily still got logged out on day 30 for
+   no visible reason. Now any authenticated request on a session older than a
+   day re-issues the cookie, so only a real month of absence logs you out.
+   The epoch rides along unchanged — "log out everywhere" still works,
+   because currentUser above already refused a stale epoch. */
+const SESSION_RENEW_AFTER = 24 * 3600 * 1000;
 const auth = (req, res, next) => {
   const u = currentUser(req);
   if (!u) return res.status(401).json({ error: "Not logged in" });
   req.userId = u.id;
   req.user = u;
+  const s = parseSession(req.cookies.cache_session);
+  if (s && Date.now() - s.iat > SESSION_RENEW_AFTER) {
+    res.cookie("cache_session", sign(u.id + "|" + Date.now() + "|" + (u.sessionEpoch || 0)), cookieOpts());
+  }
   next();
 };
 
@@ -1494,11 +1508,15 @@ app.post("/api/simplefin/claim", auth, authLimiter, async (req, res) => {
   } catch (e) { console.error("simplefin save failed:", e.message); res.status(500).json({ error: "Claimed the token but couldn't save the connection." }); }
 });
 
-app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
+/* The whole sync as a function of a user id, because two callers need it: the
+   button, and the background scheduler at the bottom of this file. Failures
+   carry a code so the endpoint can keep answering with the same statuses it
+   always has. */
+async function simplefinSyncUser(uid, daysReq) {
   let conns;
-  try { conns = readData(req.userId).simplefin || []; }
-  catch (e) { console.error("simplefin sync read failed:", e.message); return res.status(500).json({ error: "Could not read your data file" }); }
-  if (!conns.length) return res.status(400).json({ error: "No SimpleFIN connection yet" });
+  try { conns = readData(uid).simplefin || []; }
+  catch (e) { console.error("simplefin sync read failed:", e.message); throw Object.assign(new Error("Could not read your data file"), { code: "READ" }); }
+  if (!conns.length) throw Object.assign(new Error("No SimpleFIN connection yet"), { code: "NOCONN" });
 
   /* PHASE 1 — network, no lock held (a slow sync must not block the browser's autosave) */
   const sets = [];
@@ -1509,7 +1527,7 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
      120 days was neither — it silently capped how far back Atlas could ever see,
      which meant every average, median and month-over-month figure was computed on
      a window nobody chose. */
-  const days = Math.min(SF_MAX_DAYS, Math.max(30, Number(req.body?.days) || SF_SYNC_DAYS));
+  const days = Math.min(SF_MAX_DAYS, Math.max(30, Number(daysReq) || SF_SYNC_DAYS));
   try {
     for (const c of conns) {
       const url = decSecret(c.accessToken);
@@ -1520,15 +1538,15 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
     }
   } catch (e) {
     console.error("simplefin sync error:", e.message);
-    return res.status(502).json({ error: e.message });
+    throw Object.assign(new Error(e.message), { code: "NET" });
   }
 
   /* PHASE 2 — merge into current on-disk state under the lock (brief) */
   let newTx = 0, updAcc = 0, updHold = 0, autoCat = 0, xferPairs = 0;
   const retyped = [];
   try {
-    await withLock("data:" + req.userId, () => {
-      const d = readData(req.userId);
+    await withLock("data:" + uid, () => {
+      const d = readData(uid);
       d.accounts = d.accounts || []; d.txns = d.txns || [];
       d.invest = d.invest || { holdings: [], watch: [] };
       d.invest.holdings = d.invest.holdings || []; d.invest.watch = d.invest.watch || [];
@@ -1632,7 +1650,7 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
       d.history.sort((x, y) => x.date.localeCompare(y.date));
       d.lastSync = new Date().toISOString();
       d._rev = (d._rev || 0) + 1;
-      writeData(req.userId, d);
+      writeData(uid, d);
     });
     /* How deep the bank actually went is a property of the bank, not of Atlas, and
        it decides how much of the app can be trusted — so report it rather than
@@ -1640,13 +1658,32 @@ app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
     const got = sets.flatMap((s) => (s.accounts || []).flatMap((a) => (a.transactions || []).map((t) => Number(t.posted) || 0)))
       .filter(Boolean).sort((x, y) => x - y);
     const iso = (u) => new Date(u * 1000).toISOString().slice(0, 10);
-    res.json({ ok: true, newTx, updAcc, updHold, autoCat, xferPairs, retyped, warnings: warnings.slice(0, 3),
-      askedDays: days, pulled: got.length, oldest: got.length ? iso(got[0]) : null, newest: got.length ? iso(got[got.length - 1]) : null });
+    return { ok: true, newTx, updAcc, updHold, autoCat, xferPairs, retyped, warnings: warnings.slice(0, 3),
+      askedDays: days, pulled: got.length, oldest: got.length ? iso(got[0]) : null, newest: got.length ? iso(got[got.length - 1]) : null };
+  } catch (e) {
+    if (e.code) throw e;                                    // NET from the fetch above
+    console.error("simplefin merge failed:", e.message);
+    throw Object.assign(new Error("Synced but couldn't save — your existing data was left untouched"), { code: "MERGE" });
+  }
+}
+
+app.post("/api/simplefin/sync", auth, syncLimiter, async (req, res) => {
+  try {
+    const summary = await simplefinSyncUser(req.userId, req.body?.days);
+    res.json(summary);
     /* New transactions are where most alerts come from, so evaluate right after
        a sync - but AFTER responding, because a push round-trip must never make
        the sync button feel slower. */
     runAlerts(req.userId).catch((e) => console.error("alerts after sync failed:", e.message));
-  } catch (e) { console.error("simplefin merge failed:", e.message); res.status(500).json({ error: "Synced but couldn't save — your existing data was left untouched" }); }
+  } catch (e) {
+    res.status(e.code === "NOCONN" ? 400 : e.code === "NET" ? 502 : 500).json({ error: e.message });
+  }
+});
+
+/* Whether this server syncs on its own, so the Bank card can say so. */
+app.get("/api/simplefin/auto", auth, (req, res) => {
+  const a = autoSyncConfig();
+  res.json({ on: a.on, hours: a.hours });
 });
 
 app.delete("/api/simplefin/:id", auth, async (req, res) => {
@@ -1735,6 +1772,46 @@ if (pushReady && process.env.ALERT_SWEEP !== "0") {
   const t = setInterval(sweep, 60 * 60 * 1000);
   t.unref();
   setTimeout(sweep, 90 * 1000).unref();   // once shortly after boot, not during it
+}
+
+/* ---------------- background bank sync ----------------
+   The alerts above are only as fresh as the data under them, and bank data
+   that updates when a human remembers a button is stale exactly when it
+   matters: "you got paid" should not wait for the app to be opened. So every
+   user with a SimpleFIN connection is synced on a cadence, and the alert run
+   afterwards is the same one a manual sync triggers — same rules, same
+   once-ever keys, so automation cannot make the channel noisier, only
+   earlier. AUTO_SYNC=0 turns it off server-wide; AUTO_SYNC_HOURS tunes it;
+   a user can opt out in the Bank card (settings.autoSync = false).
+
+   The tick is deliberately more frequent than the cadence: dueForAutoSync
+   gates on lastSync, so a 15-minute tick just means a due user is picked up
+   promptly, not that anyone syncs every 15 minutes. A failing connection is
+   retried at most hourly (lastSync never advanced, but lastTry did) — an
+   outage at the bank must not turn into a hammering. */
+const AUTO_SYNC = autoSyncConfig();
+if (AUTO_SYNC.on) {
+  const lastTry = new Map();                     // uid -> ms of last attempt (in-memory; reset on restart is fine)
+  const autoTick = async () => {
+    let files = [];
+    try { files = fs.readdirSync(DATA_DIR).filter((f) => f.startsWith("data-") && f.endsWith(".json")); }
+    catch (e) { return console.error("auto-sync scan failed:", e.message); }
+    for (const f of files) {
+      const uid = f.slice(5, -5);
+      if (Date.now() - (lastTry.get(uid) || 0) < 55 * 60 * 1000) continue;
+      let d;
+      try { d = readData(uid); } catch { continue; }        // corrupt file: the user's own requests will surface it
+      if (!dueForAutoSync(d, Date.now(), AUTO_SYNC.hours)) continue;
+      lastTry.set(uid, Date.now());
+      try {
+        const s = await simplefinSyncUser(uid);
+        if (s.newTx || s.updAcc) console.log("auto-sync: " + s.newTx + " new txns, " + s.updAcc + " balances updated");
+        await runAlerts(uid);
+      } catch (e) { console.error("auto-sync failed for a user:", e.message); }
+    }
+  };
+  setInterval(autoTick, 15 * 60 * 1000).unref();
+  setTimeout(autoTick, 2 * 60 * 1000).unref();   // shortly after boot, not during it
 }
 
 /* bind to loopback only — Caddy (same host) is the sole ingress; never listen on a public interface */

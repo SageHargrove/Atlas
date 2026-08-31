@@ -815,12 +815,24 @@ const ChartBox = ({ data, dataKey, xKey, height = 180, color = "var(--up)", glow
 
 /* ---------------- bank sync (SimpleFIN) ---------------- */
 
-function BankSync({ d, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
+function BankSync({ d, setD, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [sfBusy, setSfBusy] = useState(false);
   const [sfMsg, setSfMsg] = useState("");
+  /* whether this server syncs in the background, and on what cadence */
+  const [auto, setAuto] = useState(null);
+  useEffect(() => {
+    fetch("/api/simplefin/auto").then((r) => (r.ok ? r.json() : null)).then(setAuto).catch(() => {});
+  }, []);
+  const agoShort = (iso) => {
+    const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+    if (!Number.isFinite(m) || m < 0) return "";
+    if (m < 60) return m + "m ago";
+    const h = Math.round(m / 60);
+    return h < 48 ? h + "h ago" : Math.round(h / 24) + "d ago";
+  };
   const conns = d.simplefin || [];
   const legacy = d.teller || [];
 
@@ -895,6 +907,17 @@ function BankSync({ d, syncBusy, syncMsg, onSync, onRemoveBank, onReload }) {
             </button>
           </div>
           <div className="note">Routine syncs look back 4 months. <b>Backfill history</b> asks for everything — how far it reaches is up to each bank, and it will tell you the date it got to.</div>
+          {auto?.on && (
+            <label className="note" style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", margin: "6px 0 0" }}>
+              <input type="checkbox" checked={d.settings?.autoSync !== false}
+                onChange={(e) => setD((p) => ({ ...p, settings: { ...p.settings, autoSync: e.target.checked } }))} />
+              <span>
+                <b>Auto-sync</b> every ~{auto.hours}h on the server
+                {d.settings?.autoSync !== false && d.lastSync ? " — last ran " + agoShort(d.lastSync) : ""}.
+                Alerts ride along, so "you got paid" arrives without opening the app.
+              </span>
+            </label>
+          )}
         </>
       )}
       {sfMsg && <div className={"note " + (sfMsg.startsWith("Sync failed") ? "bad" : "good")}>{sfMsg}</div>}
@@ -960,7 +983,7 @@ function Overview({ d, setD, config, syncBusy, syncMsg, onSync, onRemoveBank, on
 
   return (
     <>
-      <BankSync d={d} syncBusy={syncBusy} syncMsg={syncMsg}
+      <BankSync d={d} setD={setD} syncBusy={syncBusy} syncMsg={syncMsg}
         onSync={onSync} onRemoveBank={onRemoveBank} onReload={onReload} />
       <div className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>

@@ -16,17 +16,61 @@
      3. A threshold alert fires on the CROSSING, not on the state. Being below
         your low-balance line for a fortnight is one notification, not fourteen. */
 
-import webpush from "web-push";
+/* web-push is only needed to deliver. The rules engine below must stay
+   importable on a clone that has never run npm install, so the tests can run
+   against it the way every other pure module here is tested. */
+let webpush = null;
+try { webpush = (await import("web-push")).default; } catch { /* not installed */ }
 
-const PUB = process.env.VAPID_PUBLIC || "";
-const PRIV = process.env.VAPID_PRIVATE || "";
+import fs from "fs";
+import path from "path";
+
+let PUB = process.env.VAPID_PUBLIC || "";
+let PRIV = process.env.VAPID_PRIVATE || "";
 const SUBJECT = process.env.VAPID_SUBJECT || "mailto:atlas@localhost";
-export const pushReady = !!(PUB && PRIV);
+export let pushReady = !!(webpush && PUB && PRIV);
 if (pushReady) {
   try { webpush.setVapidDetails(SUBJECT, PUB, PRIV); }
   catch (e) { console.error("VAPID setup failed:", e.message); }
 }
 export const publicKey = () => PUB;
+
+/* Zero-config VAPID. Push used to require minting a key pair by hand and
+   pasting it into .env, which in practice meant push stayed off. If no keys
+   were configured, generate a pair once and keep it next to the data files
+   (0600, same privacy as everything else there) — subscriptions are bound to
+   the public key, so the pair must survive restarts, which is why this is a
+   file and not an in-memory default. Env keys, even half-set, win: a
+   misconfiguration should stay visible, not be papered over. */
+export function ensureVapid(dataDir, gen = webpush?.generateVAPIDKeys?.bind(webpush)) {
+  if (PUB || PRIV) return pushReady;
+  if (!webpush || !gen) return false;
+  const p = path.join(dataDir, "vapid.json");
+  let keys = null;
+  try { keys = JSON.parse(fs.readFileSync(p, "utf8")); } catch { /* first run */ }
+  let minted = false;
+  if (!keys?.publicKey || !keys?.privateKey) { keys = gen(); minted = true; }
+  /* validate BEFORE persisting — a pair that web-push rejects must never
+     become the file the next boot trusts */
+  try { webpush.setVapidDetails(SUBJECT, keys.publicKey, keys.privateKey); }
+  catch (e) {
+    if (minted) { console.error("VAPID setup failed:", e.message); return false; }
+    /* the persisted pair is unusable (corrupt, truncated, hand-edited) —
+       mint fresh. Subscriptions bound to the old key die, but they were
+       already undeliverable. */
+    keys = gen(); minted = true;
+    try { webpush.setVapidDetails(SUBJECT, keys.publicKey, keys.privateKey); }
+    catch (e2) { console.error("VAPID setup failed:", e2.message); return false; }
+  }
+  if (minted) {
+    try { fs.writeFileSync(p, JSON.stringify(keys), { mode: 0o600 }); }
+    /* if the pair cannot be persisted it must not be used: a key that dies
+       with the process would orphan every subscription on restart */
+    catch (e) { console.error("could not persist VAPID keys:", e.message); return false; }
+  }
+  PUB = keys.publicKey; PRIV = keys.privateKey; pushReady = true;
+  return true;
+}
 
 const SENT_CAP = 400;                  // bounded: this lives in the user's data file
 const DEBT = ["Credit card", "Auto loan", "Student loan", "Mortgage", "Personal loan", "Other debt"];
