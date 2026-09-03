@@ -473,6 +473,38 @@ export function careersUrl(src) {
 
 /* A careers URL identifies the board exactly, where guessing a Workday tenant
    does not. Paste the link, get the adapter — no tokens to look up by hand. */
+/* A board saved by a user is spliced into request hostnames by the adapters
+   above (workday: `<tenant>.<wd>.myworkdayjobs.com`; recruitee/jazzhr:
+   `<token>.host`). Without validation, a `tenant` of
+   `169.254.169.254/latest/meta-data/?x=` turns a poll into a server-side
+   request to the cloud metadata endpoint, and the postings it returns are
+   rendered to every user from the shared cache — an SSRF-and-inject in one.
+   So every field is held to the same character class parseBoardUrl produces,
+   and a board that fails any check is dropped, not requested. */
+const ADAPTER_KINDS = new Set([
+  "greenhouse", "lever", "ashby", "workday", "smartrecruiters",
+  "workable", "recruitee", "jazzhr",
+]);
+const TOKENish = /^[a-z0-9][a-z0-9_.-]{0,62}$/i;
+const SITEish = /^[A-Za-z0-9_-]{1,64}$/;
+export function sanitizeBoard(src) {
+  if (!src || typeof src !== "object") return null;
+  const kind = String(src.kind || "");
+  if (!ADAPTER_KINDS.has(kind)) return null;
+  const company = String(src.company || "").slice(0, 80);
+  if (!company.trim()) return null;
+  const out = { company, kind, cat: /^[a-z-]{1,24}$/i.test(String(src.cat || "")) ? src.cat : "other" };
+  if (kind === "workday") {
+    if (!TOKENish.test(String(src.tenant || "")) || !/^wd\d$/.test(String(src.wd || "")) || !SITEish.test(String(src.site || "")))
+      return null;
+    out.tenant = src.tenant; out.wd = src.wd; out.site = src.site;
+  } else {
+    if (!TOKENish.test(String(src.token || ""))) return null;
+    out.token = src.token;
+  }
+  return out;
+}
+
 export function parseBoardUrl(raw, company) {
   const u = String(raw || "").trim();
   let m;
