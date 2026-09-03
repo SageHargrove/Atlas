@@ -6,7 +6,7 @@
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
     "build": "npm run build -w client",
     "start": "npm run start -w server",
-    "test": "node test/classify.test.mjs && node test/city.test.mjs && node test/jobs.test.mjs && node test/years.test.mjs && node test/odds.test.mjs && node test/offer.test.mjs && node test/tax.test.mjs && node test/forecast.test.mjs && node test/certs.test.mjs && node test/alerts.test.mjs && node test/autosync.test.mjs"
+    "test": "node test/classify.test.mjs && node test/city.test.mjs && node test/jobs.test.mjs && node test/years.test.mjs && node test/odds.test.mjs && node test/offer.test.mjs && node test/tax.test.mjs && node test/forecast.test.mjs && node test/certs.test.mjs && node test/alerts.test.mjs && node test/autosync.test.mjs && node test/jobsecurity.test.mjs"
   },
   "workspaces": ["server", "client"],
   "devDependencies": { "concurrently": "^9.0.0" }

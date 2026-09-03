@@ -9,7 +9,7 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 import { fileURLToPath } from "url";
-import { startPolling, initCache, pollAll, requestFullPoll, pollStatus, getCache, parseBoardUrl, discoverBoard, RECOMMENDED, SEED_SOURCES, velocityFor } from "./jobs.js";
+import { startPolling, initCache, pollAll, requestFullPoll, pollStatus, getCache, parseBoardUrl, discoverBoard, RECOMMENDED, SEED_SOURCES, velocityFor, sanitizeBoard } from "./jobs.js";
 import { pushReady, publicKey, defaultSettings, evaluate, send as sendPush, bundle as bundleAlerts, ensureVapid } from "./alerts.js";
 import { autoSyncConfig, dueForAutoSync } from "./autosync.js";
 
@@ -577,6 +577,15 @@ app.put("/api/data", auth, writeLimiter, async (req, res) => {
       if ((Number(req.body.rev) || 0) !== cur) { conflictRev = cur; return; }
       d.teller = existing.teller || [];
       d.simplefin = existing.simplefin || []; // server-authoritative; autosave can't touch credentials
+      /* Alert state, push devices and the sync clock are written by the server
+         (the hourly sweep, the push endpoints, bank sync), never by the
+         browser. Letting an autosave carry its last-loaded copy back would
+         overwrite the dedupe list and re-fire alerts, or resurrect a device
+         the user just removed. Settings changes go through /api/push/settings,
+         which is why the browser never needs to write these here. */
+      d.alerts = existing.alerts || {};
+      d.push = existing.push || [];
+      d.lastSync = existing.lastSync;
       d._rev = newRev = cur + 1;
       writeData(req.userId, d);
     });
@@ -666,9 +675,14 @@ const extraSources = () => {
     for (const f of fs.readdirSync(DATA_DIR)) {
       if (!f.startsWith("data-") || !f.endsWith(".json")) continue;
       const d = readJSON(path.join(DATA_DIR, f), null);
-      for (const s of d?.career?.settings?.boards || []) {
-        const k = String(s.company || "").toLowerCase();
-        if (!k || seen.has(k) || !s.kind) continue;
+      for (const raw of d?.career?.settings?.boards || []) {
+        /* validated before it can shape a request URL — an unchecked board is
+           an SSRF vector because the adapters splice tenant/token into the
+           hostname, and the poll's results are shared with every user */
+        const s = sanitizeBoard(raw);
+        if (!s) continue;
+        const k = s.company.toLowerCase();
+        if (seen.has(k)) continue;
         seen.add(k); out.push(s);
       }
     }
@@ -750,12 +764,16 @@ app.get("/api/jobs/status", auth, (req, res) => res.json(pollStatus()));
    so an alert run and a browser autosave can never interleave and lose one of
    the two. Returning false from the mutator skips the write entirely, which is
    the common case: most alert runs find nothing new. */
-function mutateUser(uid, fn) {
+function mutateUser(uid, fn, { bumpRev = true } = {}) {
   return withLock("data:" + uid, () => {
     const d = readData(uid);
     const out = fn(d);
     if (out === false) return out;
-    d._rev = (d._rev || 0) + 1;
+    /* A write that touches only server-authoritative fields (alerts, push)
+       must not advance the revision the browser holds, or the hourly alert
+       sweep would 409 the next thing the user typed and silently revert it.
+       Bank sync still bumps: it changes transactions the client must reload. */
+    if (bumpRev) d._rev = (d._rev || 0) + 1;
     writeData(uid, d);
     return out;
   });
@@ -792,7 +810,7 @@ app.post("/api/push/subscribe", auth, async (req, res) => {
       d.alerts = { ...(d.alerts || {}), settings: { ...defaultSettings(), ...(d.alerts?.settings || {}), on: true } };
       const { state } = evaluate(d, { silent: true });   // baseline, sends nothing
       d.alerts = state;
-    });
+    }, { bumpRev: false });
     res.json({ ok: true });
   } catch (e) { console.error("subscribe failed:", e.message); res.status(500).json({ error: "Could not save that device" }); }
 });
@@ -803,7 +821,7 @@ app.post("/api/push/unsubscribe", auth, async (req, res) => {
     await mutateUser(req.userId, (d) => {
       d.push = (d.push || []).filter((x) => x.endpoint !== endpoint);
       if (!d.push.length) d.alerts = { ...(d.alerts || {}), settings: { ...(d.alerts?.settings || {}), on: false } };
-    });
+    }, { bumpRev: false });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: "Could not remove that device" }); }
 });
@@ -828,7 +846,7 @@ app.put("/api/push/settings", auth, async (req, res) => {
       const { state } = evaluate(d, { silent: true });
       d.alerts = state;
       out = next;
-    });
+    }, { bumpRev: false });
     res.json({ ok: true, settings: out });
   } catch (e) { res.status(500).json({ error: "Could not save those settings" }); }
 });
@@ -837,7 +855,7 @@ app.post("/api/push/test", auth, pushTestLimiter, async (req, res) => {
   const d = readData(req.userId);
   if (!(d.push || []).length) return res.status(400).json({ error: "No device is subscribed yet" });
   const { sent, dead } = await sendPush(d.push, { title: "Atlas is set up", body: "Alerts will arrive here.", tag: "test" });
-  if (dead.length) await mutateUser(req.userId, (u) => { u.push = (u.push || []).filter((x) => !dead.includes(x.endpoint)); });
+  if (dead.length) await mutateUser(req.userId, (u) => { u.push = (u.push || []).filter((x) => !dead.includes(x.endpoint)); }, { bumpRev: false });
   res.json({ ok: true, sent });
 });
 
@@ -851,11 +869,11 @@ async function runAlerts(uid) {
     const { alerts, state } = evaluate(d);
     d.alerts = state;
     if (alerts.length) { payloadAlerts = alerts; subs = d.push; }
-  });
+  }, { bumpRev: false });
   if (!payloadAlerts) return 0;
   const { sent, dead } = await sendPush(subs, bundleAlerts(payloadAlerts));
   if (dead.length) {
-    await mutateUser(uid, (d) => { d.push = (d.push || []).filter((x) => !dead.includes(x.endpoint)); });
+    await mutateUser(uid, (d) => { d.push = (d.push || []).filter((x) => !dead.includes(x.endpoint)); }, { bumpRev: false });
   }
   return sent;
 }
