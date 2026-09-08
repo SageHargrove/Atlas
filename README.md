@@ -361,7 +361,7 @@ like a bill coming due. It is off until you turn it on, per device.
 **The sync itself runs on its own.** Every account with a SimpleFIN connection is
 synced in the background every ~6 hours (`AUTO_SYNC_HOURS` tunes it, `AUTO_SYNC=0`
 turns it off server-wide, and the Bank card has a per-user toggle), and the alert
-pass rides along — so "you got paid" arrives without anyone opening the app or
+pass rides along, so "you got paid" arrives without anyone opening the app or
 tapping Sync now. The button still exists for when you want the answer right now,
 and manual and automatic syncs share one clock, so neither doubles the other up.
 
