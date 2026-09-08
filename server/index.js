@@ -12,6 +12,7 @@ import { fileURLToPath } from "url";
 import { startPolling, initCache, pollAll, requestFullPoll, pollStatus, getCache, parseBoardUrl, discoverBoard, RECOMMENDED, SEED_SOURCES, velocityFor, sanitizeBoard } from "./jobs.js";
 import { pushReady, publicKey, defaultSettings, evaluate, send as sendPush, bundle as bundleAlerts, ensureVapid } from "./alerts.js";
 import { autoSyncConfig, dueForAutoSync } from "./autosync.js";
+import { geocode, route as driveRoute, haversineKm } from "./geo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
@@ -758,6 +759,39 @@ app.post("/api/jobs/refresh", auth, refreshLimiter, (req, res) => {
 /* Cheap, unlimited: the client polls this while a sweep runs so the button can
    say "checking Boeing - 34 of 72" instead of freezing for four minutes. */
 app.get("/api/jobs/status", auth, (req, res) => res.json(pollStatus()));
+
+/* ---------------- geography (housing) ----------------
+   Proxied so the CSP stays 'self' and no third party sees the user's IP.
+   Rate limited per client on top of geo.js's global one-lane throttle, since a
+   page that geocodes on every keystroke would otherwise queue for minutes. */
+const geoLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false,
+  message: { error: "Too many address lookups in a short time. Give it a minute." } });
+
+app.get("/api/geo/geocode", auth, geoLimiter, async (req, res) => {
+  const q = String(req.query.q || "").slice(0, 200).trim();
+  if (q.length < 4) return res.status(400).json({ error: "Type a fuller address" });
+  try {
+    const hit = await geocode(q);
+    if (!hit) return res.json({ found: false });
+    res.json({ found: true, ...hit });
+  } catch (e) { console.error("geocode failed:", e.message); res.status(502).json({ error: "The address service did not answer. Try again in a moment." }); }
+});
+
+/* Driving distance and time. Falls back to straight-line, LABELLED as such,
+   when the router is unavailable; a number with the wrong meaning is worse
+   than no number. */
+app.get("/api/geo/route", auth, geoLimiter, async (req, res) => {
+  const n = (v) => Number(v);
+  const from = { lat: n(req.query.flat), lon: n(req.query.flon) };
+  const to = { lat: n(req.query.tlat), lon: n(req.query.tlon) };
+  if (![from.lat, from.lon, to.lat, to.lon].every(Number.isFinite)) return res.status(400).json({ error: "Bad coordinates" });
+  try {
+    const r = await driveRoute(from, to);
+    if (r) return res.json(r);
+  } catch (e) { console.error("route failed:", e.message); }
+  const km = Math.round(haversineKm(from, to) * 10) / 10;
+  res.json({ km, minutes: null, driving: false });
+});
 
 /* ---------------- push alerts ----------------
    Read-modify-write under the same "data:<uid>" lock every other writer uses,

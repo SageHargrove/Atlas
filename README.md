@@ -29,6 +29,7 @@ your goal dates. Neither half could answer that alone.
 | **Multi-user** | Invite gated. Every user's data lives in its own file, invisible to everyone else. |
 | **Installable** | Add it to a phone home screen and it behaves like a native app. |
 | **Phone alerts** | Push when a paycheck lands, a balance falls past a tier, a new subscription starts billing, or a bill lands that checking cannot cover. Each fires once, ever. |
+| **Housing and car** | The two purchases big enough for their own search, priced by the numbers a listing never shows: the real driving commute, the all-in monthly cost, who the seller is. |
 
 Built with React and Express. No database to run: each user is a JSON file with
 revision-checked writes, so two devices can never silently overwrite each other.
@@ -263,6 +264,56 @@ modeller that runs a real offer through your actual budget.
 
 ---
 
+## Housing and car
+
+The two purchases big enough to deserve their own search, and both are decided by
+numbers a listing never shows you. Neither has a feed: Zillow, Apartments.com,
+Autotrader and Marketplace block scraping and say so. You paste the listing in,
+and Atlas adds the numbers that actually decide it.
+
+### Housing
+
+Add every address you work at. Then every place you are considering. Each one is
+priced **all-in**: rent, your utilities estimate, and the real **driving commute**
+to every workplace, using the IRS all-in mileage rate (which includes wear and
+insurance, not just fuel). That total is shown as a percentage of your take-home
+with a colour band, and against what you pay now.
+
+Rent is the number a listing shows you. Total monthly cost is the number that
+decides it, and a place that saves $150 in rent and costs $220 in commute is the
+mistake this exists to catch. Each option also carries a type, beds and baths, a
+deposit, an availability date, and a **difficulty** read (easy, normal, competitive)
+so a place you probably will not get does not sit at the top of the list.
+
+Addresses are geocoded through OpenStreetMap and routed through OSRM, both proxied
+by the server so the browser never contacts a third party and the CSP stays at
+`'self'`. If the router is unavailable the distance is shown as straight line and
+labelled as such, because a number with the wrong meaning is worse than no number.
+
+### Car
+
+Start with **what you drive now**: year, make, mileage, and your miles per year. That
+gives a replacement read against the brand's typical service life, in years and
+miles at the pace you actually drive. A read, not a verdict: "early life, nothing
+to plan for yet" or "mid life, start a replacement fund now so the decision is
+yours and not a tow truck's."
+
+Set a budget as a **monthly payment** (rate, term and down payment become a sticker
+price through the same amortisation as the loan card) or as a flat cap. Mark your
+**preferred brands and models**. Then paste in the cars you are looking at, and each
+is scored out of 100 on price against budget, mileage, age, the brand's reliability
+tier, and **who is selling it**. A certified pre-owned car and the same car from a
+Marketplace stranger are not the same purchase, and the score says so.
+
+Preferred brands and models get a star and extra weight. They **never hide anything**,
+because the point of a preference is to notice the exception. Every score has a
+"why" that shows each component.
+
+The reliability tiers are a coarse built-in table reflecting the broad, stable
+consensus of the major surveys. Not live data, and deliberately coarse, because the
+per-model, per-year record is exactly what you should look up for the specific car
+in front of you.
+
 ## Phone alerts
 
 Atlas can notify your phone when a paycheck lands, when your balance falls past
@@ -380,7 +431,7 @@ Then:
 npm test
 ```
 
-376 assertions, no server or browser needed. They pull the real functions out of
+416 assertions, no server or browser needed. They pull the real functions out of
 the source rather than testing a copy, so they fail if the source drifts. They
 cover the bugs that were hardest to see, including card payments counted as both
 spending and income, short city names false matching ("LA" matching Dallas), and

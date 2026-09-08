@@ -9,6 +9,8 @@ import Retire from "./Retire.jsx";
 import Loan from "./Loan.jsx";
 import SplitRules from "./SplitRules.jsx";
 import Alerts from "./Alerts.jsx";
+import Housing from "./Housing.jsx";
+import Cars from "./Cars.jsx";
 import OfferImpact from "./OfferImpact.jsx";
 import Why from "./Why.jsx";
 import Forecast from "./Forecast.jsx";
@@ -403,6 +405,11 @@ const CSS = `
   border:1px solid var(--line2); border-radius:11px; padding:9px 11px; background:var(--panel2); flex-wrap:wrap; }
 .sgrow.ok{ border-color:var(--up); }
 .sgrow .pill{ font-size:10.5px; padding:1px 6px; border:1px solid var(--line2); border-radius:999px; color:var(--muted); }
+/* chips are used outside the finder now (car priorities), same look */
+.achip{ display:inline-flex; align-items:center; gap:5px; font-size:11.5px; padding:2px 5px 2px 9px;
+  border:1px solid var(--line2); border-radius:999px; color:var(--text); background:var(--panel2); }
+.achip button{ background:none; border:0; color:inherit; cursor:pointer; font-size:13px; line-height:1; padding:0 2px; opacity:.7; }
+.achip button:hover{ opacity:1; }
 .pre{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; background:var(--panel2);
   border:1px solid var(--line2); border-radius:8px; padding:8px 10px; overflow-x:auto; white-space:pre; margin:0; }
 .fh .jcard .jtop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
@@ -1835,6 +1842,19 @@ function Plan({ d, setD }) {
       <FoldWrap title="Purchase planner" sub="can I afford this, and when">
         <PurchasePlanner d={d} setD={setD} />
       </FoldWrap>
+
+      {/* The two purchases big enough to deserve their own search: where you
+          live and what you drive. Both are decided by numbers a listing never
+          shows you (the commute, the all-in cost, the seller), so both take the
+          listing as pasted and add the numbers that matter. */}
+      <Fold title="Housing" sub="every place you are considering, priced all-in with the real commute"
+        right={(d.housing?.options || []).length ? (d.housing.options.length + " place" + (d.housing.options.length === 1 ? "" : "s")) : null}>
+        <Housing d={d} setD={setD} />
+      </Fold>
+      <Fold title="Car" sub="what you drive now, when to replace it, and the ones you are looking at"
+        right={(d.cars?.options || []).length ? (d.cars.options.length + " listing" + (d.cars.options.length === 1 ? "" : "s")) : null}>
+        <Cars d={d} setD={setD} />
+      </Fold>
 
       <Fold title="What would an offer change?" sub="run a real offer through your actual budget and goals">
         <OfferImpact d={d} setD={setD} />
