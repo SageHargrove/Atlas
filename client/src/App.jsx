@@ -9,6 +9,7 @@ import Retire from "./Retire.jsx";
 import Loan from "./Loan.jsx";
 import SplitRules from "./SplitRules.jsx";
 import Alerts from "./Alerts.jsx";
+import { watchForStaleBuild } from "./report.js";
 import Housing from "./Housing.jsx";
 import Cars from "./Cars.jsx";
 import OfferImpact from "./OfferImpact.jsx";
@@ -410,6 +411,12 @@ const CSS = `
   border:1px solid var(--line2); border-radius:999px; color:var(--text); background:var(--panel2); }
 .achip button{ background:none; border:0; color:inherit; cursor:pointer; font-size:13px; line-height:1; padding:0 2px; opacity:.7; }
 .achip button:hover{ opacity:1; }
+/* An update banner has to outrank the modals, because the most likely reason
+   you are staring at a broken screen is that this screen is out of date. */
+.stale{ position:fixed; left:0; right:0; top:0; z-index:120; display:flex; gap:12px; align-items:center;
+  justify-content:center; padding:9px 14px; background:var(--gold); color:#12161f; font-size:13px; font-weight:600; }
+.stale button{ background:#12161f; color:#fff; border:0; border-radius:8px; padding:5px 12px; font-size:12.5px;
+  font-weight:600; cursor:pointer; }
 .pre{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; background:var(--panel2);
   border:1px solid var(--line2); border-radius:8px; padding:8px 10px; overflow-x:auto; white-space:pre; margin:0; }
 .fh .jcard .jtop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
@@ -2096,6 +2103,9 @@ function FinanceHQ({ config }) {
   const [saveNonce, setSaveNonce] = useState(0); // bump to force a retry of the autosave
   const [tab, setTab] = useState("dash");
   const [showSettings, setShowSettings] = useState(false);
+  /* null until the running bundle is known to be older than the deployed one */
+  const [stale, setStale] = useState(null);
+  useEffect(() => { watchForStaleBuild((reload) => setStale(() => reload)); }, []);
   const [showSecurity, setShowSecurity] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -2321,6 +2331,15 @@ function FinanceHQ({ config }) {
   return (
     <div className="fh" data-theme={d.settings.theme}>
       <style>{CSS}</style>
+      {/* Running old code and a broken feature look identical from the outside.
+          This is the app noticing the difference and saying which one it is. */}
+      {stale && (
+        <div className="stale">
+          <span>Atlas has been updated. This tab is running an older version, so some things will not work.</span>
+          <button onClick={() => stale()}>Reload now</button>
+          <button onClick={() => setStale(null)} style={{ background: "transparent", color: "#12161f" }}>Later</button>
+        </div>
+      )}
       <header>
         <div className="wrap hrow">
           <div className="brand"><Logo size={30} /><h1>Atlas</h1></div>

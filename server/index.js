@@ -760,6 +760,30 @@ app.post("/api/jobs/refresh", auth, refreshLimiter, (req, res) => {
    say "checking Boeing - 34 of 72" instead of freezing for four minutes. */
 app.get("/api/jobs/status", auth, (req, res) => res.json(pollStatus()));
 
+/* ---------------- build version ----------------
+   Vite fingerprints the main bundle, so its filename IS the build id. A client
+   can compare the script it is running against the one the server would serve
+   now and tell, with certainty, that it is out of date. No build-time config
+   and nothing to keep in sync: the filename already carries the answer.
+
+   This exists because "nothing happens when I click" and "you are running
+   last week's JavaScript" look identical from the outside, and the second one
+   is invisible unless the app checks. */
+let _mainBundle = null;
+function mainBundle() {
+  if (_mainBundle !== null) return _mainBundle;
+  try {
+    const html = fs.readFileSync(path.join(__dirname, "..", "client", "dist", "index.html"), "utf8");
+    const m = /\/assets\/(index-[A-Za-z0-9_.-]+\.js)/.exec(html);
+    _mainBundle = m ? m[1] : "";
+  } catch { _mainBundle = ""; }
+  return _mainBundle;
+}
+app.get("/api/version", (req, res) => {
+  res.set("cache-control", "no-store");
+  res.json({ main: mainBundle() });
+});
+
 /* ---------------- client error reports ----------------
    A self-hosted app has no error dashboard and no way to see the user's
    console. When a button "does nothing" the exception is sitting in a devtools
@@ -1791,8 +1815,19 @@ app.delete("/api/teller/:id", auth, async (req, res) => {
 app.all("/api/*", (req, res) => res.status(404).json({ error: "Not found" }));
 const dist = path.join(__dirname, "..", "client", "dist");
 if (fs.existsSync(dist)) {
-  app.use(express.static(dist));
-  app.get("*", (req, res) => res.sendFile(path.join(dist, "index.html")));
+  /* Hashed assets are immutable and can be cached hard. index.html names which
+     hashed assets to load, so caching IT is how a browser ends up running last
+     week's bundle forever. */
+  app.use(express.static(dist, {
+    setHeaders: (res, p) => {
+      if (p.endsWith("index.html")) res.set("cache-control", "no-store");
+      else if (p.includes(path.sep + "assets" + path.sep)) res.set("cache-control", "public, max-age=31536000, immutable");
+    },
+  }));
+  app.get("*", (req, res) => {
+    res.set("cache-control", "no-store");
+    res.sendFile(path.join(dist, "index.html"));
+  });
 }
 
 /* Body-parser failures reach Express's default handler, which answers with an
