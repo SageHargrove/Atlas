@@ -4,7 +4,7 @@
    and account names; a cache entry would leave financial data sitting in the
    browser's storage long after sign-out. Only the public app shell (hashed JS/CSS
    bundles and icons) is stored, so a stale cache can never show stale money. */
-const CACHE = "atlas-shell-v3";
+const CACHE = "atlas-shell-v4";
 const SHELL = ["/", "/icon-192.png", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {

@@ -1359,6 +1359,8 @@ export default function Career({ d, setD, config, toast }) {
   const [letterFor, setLetterFor] = useState(null);
   const [letterOut, setLetterOut] = useState("");
   const [letterBusy, setLetterBusy] = useState(false);
+  /* why the last AI action failed, shown inside the sheet that stays open */
+  const [err2, setErr2] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileTab, setProfileTab] = useState("resume");
   /* clicking a company anywhere on the page takes you to it in the finder,
@@ -1414,9 +1416,13 @@ export default function Career({ d, setD, config, toast }) {
   const tailorReq = useRef(0);
   const tailor = async (a) => {
     if (busy) return;
+    /* track() hands us the application; if it ever comes back empty, say so
+       rather than throwing inside the click handler, which looks like a dead
+       button because the exception never reaches the user */
+    if (!a) return toast("Couldn't open that role. Reload and try again.", "err");
     if (!S.resume.trim()) return toast("Upload a resume below first — tailoring rewrites it against the role.", "err");
     const req = ++tailorReq.current; // a slow response for company A must not land in company B's sheet
-    setTailorFor(a); setTailorOut(""); setBusy(true);
+    setTailorFor(a); setTailorOut(""); setErr2(""); setBusy(true);
     try {
       const out = (await callClaude(
         "Resume:\n" + S.resume.slice(0, 8000) +
@@ -1432,10 +1438,18 @@ export default function Career({ d, setD, config, toast }) {
       if (!out) throw new Error("the model returned nothing");
       setTailorOut(out);
     } catch (e) {
-      if (req !== tailorReq.current) return;
-      toast("Tailoring failed — " + e.message, "err"); setTailorFor(null);
+      if (req === tailorReq.current) {
+        /* keep the sheet OPEN and put the reason in it. Closing it and relying
+           on a toast that fades is what makes a failure read as "the button
+           does nothing". */
+        setErr2("Tailoring failed. " + e.message);
+        toast("Tailoring failed — " + e.message, "err");
+      }
+    } finally {
+      /* always, even for a superseded request: a busy flag that never clears
+         silently disables the button forever */
+      if (req === tailorReq.current) setBusy(false);
     }
-    if (req === tailorReq.current) setBusy(false);
   };
 
   /* A cover letter is a first draft, never a send-as-is artifact. It comes out
@@ -1445,10 +1459,11 @@ export default function Career({ d, setD, config, toast }) {
   const letterReq = useRef(0);
   const coverLetter = async (a) => {
     if (letterBusy) return;
+    if (!a) return toast("Couldn't open that role. Reload and try again.", "err");
     const base = readResumes(S)[0]?.text || "";
     if (!base.trim()) return toast("Upload a resume below first — the letter is built from it.", "err");
     const req = ++letterReq.current;
-    setLetterFor(a); setLetterOut(a.cover || ""); setLetterBusy(true);
+    setLetterFor(a); setLetterOut(a.cover || ""); setErr2(""); setLetterBusy(true);
     try {
       const out = (await callClaude(
         "Resume:\n" + base.slice(0, 7000) +
@@ -1466,10 +1481,13 @@ export default function Career({ d, setD, config, toast }) {
       if (!out) throw new Error("the model returned nothing");
       setLetterOut(out);
     } catch (e) {
-      if (req !== letterReq.current) return;
-      toast("Couldn't draft that letter — " + e.message, "err"); setLetterFor(null);
+      if (req === letterReq.current) {
+        setErr2("Couldn't draft that letter. " + e.message);
+        toast("Couldn't draft that letter — " + e.message, "err");
+      }
+    } finally {
+      if (req === letterReq.current) setLetterBusy(false);
     }
-    if (req === letterReq.current) setLetterBusy(false);
   };
 
   /* Glassdoor and Levels have real reported questions but block programmatic
@@ -1616,6 +1634,7 @@ export default function Career({ d, setD, config, toast }) {
       {tailorFor && (
         <Sheet title={"Tailored for " + tailorFor.company} onClose={() => setTailorFor(null)}>
           {busy ? <div className="note">Rewriting your bullets against this role…</div>
+                : err2 ? <div className="note bad">{err2}</div>
                 : <div className="aiout">{tailorOut}</div>}
           <div className="mrow">
             <button className="btn" onClick={() => { navigator.clipboard?.writeText(tailorOut); toast("Copied."); }}>Copy</button>
@@ -1648,6 +1667,7 @@ export default function Career({ d, setD, config, toast }) {
             other letter: generic praise, the job description read back to them, no specific you could only have written.
             Use this for the structure and the facts, then say it the way you'd say it.
           </div>
+          {err2 && <div className="note bad">{err2}</div>}
           {letterBusy ? <div className="note">Drafting from your resume…</div> : (
             <textarea className="in" style={{ minHeight: 300, fontSize: 13, lineHeight: 1.55 }}
               value={letterOut} onChange={(e) => setLetterOut(e.target.value.slice(0, 8000))} />

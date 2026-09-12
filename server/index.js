@@ -1179,11 +1179,19 @@ async function callAnthropic(prompt, search, uid) {
   return text;
 }
 
+/* Logged on both paths. A self-hosted app has no error dashboard, so when a
+   button looks dead the only way to tell "the click never arrived" from "the
+   model refused" is a line in the journal. Prompts are never logged: they carry
+   the resume. */
 app.post("/api/ai", auth, aiLimiter, async (req, res) => {
+  const t0 = Date.now();
+  const who = String(req.userId || "?").slice(0, 8);
   try {
-    res.json({ text: await callAnthropic(req.body.prompt || "", req.body.search, req.userId) });
+    const text = await callAnthropic(req.body.prompt || "", req.body.search, req.userId);
+    console.log("ai ok:", who, (Date.now() - t0) + "ms", String(text || "").length + " chars");
+    res.json({ text });
   } catch (e) {
-    if (!e.status) console.error("AI proxy error:", e.message);
+    console.error("ai failed:", who, (Date.now() - t0) + "ms", "status=" + (e.status || "none"), e.message);
     res.status(e.status || 500).json({ error: e.status ? e.message : "AI request failed" });
   }
 });
