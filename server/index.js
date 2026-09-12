@@ -760,6 +760,22 @@ app.post("/api/jobs/refresh", auth, refreshLimiter, (req, res) => {
    say "checking Boeing - 34 of 72" instead of freezing for four minutes. */
 app.get("/api/jobs/status", auth, (req, res) => res.json(pollStatus()));
 
+/* ---------------- client error reports ----------------
+   A self-hosted app has no error dashboard and no way to see the user's
+   console. When a button "does nothing" the exception is sitting in a devtools
+   panel nobody has open. This brings it to the journal instead. Message and
+   stack only: never the page state, which holds balances and a resume. */
+const clientLogLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 40, standardHeaders: true, legacyHeaders: false,
+  message: { error: "Too many reports" } });
+app.post("/api/clientlog", auth, clientLogLimiter, (req, res) => {
+  const who = String(req.userId || "?").slice(0, 8);
+  const where = String(req.body?.where || "?").slice(0, 60);
+  const msg = String(req.body?.message || "").slice(0, 300);
+  const stack = String(req.body?.stack || "").split(String.fromCharCode(10)).slice(0, 5).join(" | ").slice(0, 600);
+  console.error("client error:", who, "[" + where + "]", msg, "||", stack);
+  res.json({ ok: true });
+});
+
 /* ---------------- geography (housing) ----------------
    Proxied so the CSP stays 'self' and no third party sees the user's IP.
    Rate limited per client on top of geo.js's global one-lane throttle, since a

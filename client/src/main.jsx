@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
+import { installGlobalReporter } from "./report.js";
 
 /* Without this, any render-time error unmounts the tree and you get a blank white page. */
 class Boundary extends React.Component {
@@ -58,6 +59,8 @@ window.addEventListener("unhandledrejection", (e) => {
 /* Installable app + instant reopen. The worker caches only the public shell —
    never /api — so financial data is never written to browser storage.
    Requires HTTPS (or localhost); it's a no-op elsewhere. */
+installGlobalReporter();
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("SW registration failed:", e.message));

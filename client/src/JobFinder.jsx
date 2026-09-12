@@ -3,6 +3,7 @@ import { DEFAULT_CITIES, partnerLabel, partnerColor, CAT_GROWTH, cityMatch, mone
 import { SEED_LINKS } from "./Career.jsx";
 import { scoreOdds, oddsParts, explainRow, scoreFit, scoreGrowth, tokensOf, LEVEL_ORDER as ODDS_ORDER } from "./odds.js";
 import { withCerts } from "./certs.js";
+import { report } from "./report.js";
 export { yearsFromResume };
 
 /* ------------------------------------------------------------------
@@ -498,6 +499,24 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
      to exist as a tracked row first, and making the user do that in two steps
      is a step they'd skip. `quiet` suppresses the toast when something else is
      about to open on top of it. */
+  /* Every menu action goes through here. An exception thrown inside an onClick
+     is swallowed by React and logged to a console the user does not have open,
+     which is exactly what "I click it and genuinely nothing happens" looks
+     like. Now it says so, and tells the server why. */
+  const runAction = (label, fn) => {
+    setMenuId(null);
+    const fail = (e) => {
+      toast("Could not open " + label + ". " + (e?.message || "Unknown error") + " (reported)", "err");
+      report("jobmenu:" + label, e);
+    };
+    try {
+      /* these handlers are async, so a rejection would sail straight past a
+         plain try/catch and end up as silence again */
+      const r = fn();
+      if (r && typeof r.catch === "function") r.catch(fail);
+    } catch (e) { fail(e); }
+  };
+
   const track = (j, quiet) => {
     const app = {
       id: Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4),
@@ -1091,9 +1110,9 @@ export default function JobFinder({ S, apps, setCareer, toast, myLevel, onTailor
                   <button className="btn small" onClick={() => setMenuId(menuId === j.id ? null : j.id)} title="More">···</button>
                   {menuId === j.id && (
                     <div className="menu">
-                      <button onClick={() => { setMenuId(null); onTailor(track(j, true)); }}>✦ Tailor my resume to this</button>
-                      <button onClick={() => { setMenuId(null); onCoverLetter(track(j, true)); }}>✦ Draft a cover letter</button>
-                      <button onClick={() => { setMenuId(null); onImpact(track(j, true)); }}>What it pays me</button>
+                      <button onClick={() => runAction("tailor", () => onTailor(track(j, true)))}>✦ Tailor my resume to this</button>
+                      <button onClick={() => runAction("cover letter", () => onCoverLetter(track(j, true)))}>✦ Draft a cover letter</button>
+                      <button onClick={() => runAction("pay impact", () => onImpact(track(j, true)))}>What it pays me</button>
                       <hr />
                       <button onClick={() => { setMenuId(null); setWhy(whyId === j.id ? null : j.id); }}>Why this city</button>
                       {/* Cleared and defense-adjacent employers live on federal money,
